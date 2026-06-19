@@ -1,0 +1,11 @@
+Metadata-Version: 2.1
+Name: chiledist
+Version: 0.1.0
+Summary: Análisis distrital de Chile con datos APC 2023 (INE). Compatible con ALARM/redist (Harvard).
+Home-page: UNKNOWN
+License: UNKNOWN
+Description: UNKNOWN
+Platform: UNKNOWN
+Requires-Python: >=3.8
+Provides-Extra: dev
+Provides-Extra: redistricting

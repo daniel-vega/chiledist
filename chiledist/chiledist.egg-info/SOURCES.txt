@@ -1,0 +1,7 @@
+README.md
+setup.py
+chiledist.egg-info/PKG-INFO
+chiledist.egg-info/SOURCES.txt
+chiledist.egg-info/dependency_links.txt
+chiledist.egg-info/requires.txt
+chiledist.egg-info/top_level.txt

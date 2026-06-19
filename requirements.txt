@@ -1,0 +1,31 @@
+# chiledist — dependencias del proyecto
+# Generado para Python 3.11
+# Versiones verificadas durante el desarrollo del proyecto
+
+# ── Geoespacial ───────────────────────────────────────────────────────────────
+geopandas==1.1.3
+pyogrio==0.12.1
+shapely==2.1.2
+fiona==1.10.1
+pyproj==3.7.2
+
+# ── Datos y álgebra ───────────────────────────────────────────────────────────
+pandas==3.0.3
+numpy==2.4.6
+scipy==1.17.1
+
+# ── Grafos ────────────────────────────────────────────────────────────────────
+networkx==3.6.1
+
+# ── Visualización ────────────────────────────────────────────────────────────
+matplotlib==3.11.0
+
+# ── Análisis espacial ─────────────────────────────────────────────────────────
+libpysal==4.14.1
+esda                    # autocorrelación espacial (Moran, LISA, G*)
+
+# ── Machine learning (dependencia de gerrychain) ──────────────────────────────
+scikit-learn==1.9.0
+
+# ── Redistritaje ─────────────────────────────────────────────────────────────
+gerrychain==0.3.2
