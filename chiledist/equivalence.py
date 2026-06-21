@@ -346,5 +346,48 @@ POPULATION_FIELDS = {
 # Constantes CRS (importables desde cualquier módulo)
 # ──────────────────────────────────────────────────────────────────────────────
 
-CRS_METRIC = "EPSG:32719"   # UTM zona 19S — cubre todo Chile
+CRS_METRIC = "EPSG:32719"   # UTM zona 19S — cubre todo Chile continental
 CRS_GEO    = "EPSG:4326"    # WGS84 geográfico
+
+
+def get_optimal_crs(gdf) -> str:
+    """
+    Devuelve el CRS métrico (UTM) óptimo para un GeoDataFrame chileno.
+
+    Determina la zona UTM desde el centroide longitudinal de los datos.
+    Para Chile continental (incluye todas las regiones 1-16) devuelve
+    EPSG:32719 (UTM 19S). Para Isla de Pascua (lon ≈ -109°) devuelve
+    EPSG:32712 (UTM 12S).
+
+    Parameters
+    ----------
+    gdf : GeoDataFrame
+        Puede estar en cualquier CRS; se convierte internamente a EPSG:4326
+        solo para leer las coordenadas del bounding box.
+
+    Returns
+    -------
+    str  Cadena de CRS, ej. "EPSG:32719".
+
+    Examples
+    --------
+    >>> crs = get_optimal_crs(gdf_magallanes)
+    'EPSG:32719'
+    >>> crs = get_optimal_crs(gdf_easter_island)
+    'EPSG:32712'
+    """
+    import geopandas as gpd
+
+    if gdf.crs is None:
+        # Sin CRS asumimos geográfico; usamos bounds directamente
+        bounds = gdf.total_bounds          # (minx, miny, maxx, maxy)
+    elif gdf.crs.is_geographic:
+        bounds = gdf.total_bounds
+    else:
+        bounds = gdf.to_crs(CRS_GEO).total_bounds
+
+    center_lon = (bounds[0] + bounds[2]) / 2.0
+
+    # UTM zone = floor((lon + 180) / 6) + 1  (hemisferio sur: 326xx)
+    utm_zone = int((center_lon + 180.0) / 6.0) + 1
+    return f"EPSG:{32700 + utm_zone}"

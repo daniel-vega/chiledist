@@ -1,0 +1,28 @@
+name: experimental_apc_soft_cut
+description: >
+  Modo híbrido: APC como unidad mínima de decisión.
+  Partir comunas está permitido pero penalizado en el score del plan.
+  Permite estimar cuántas comunas habría que dividir para mejorar
+  el balance y la compacidad con un costo razonable.
+
+observation_unit: ID_DIST
+decision_unit: ID_DIST
+
+preserve:
+  units: [CUT]
+  mode: soft
+  split_penalty: 0.25
+  min_fragment_pop_share: 0.10
+
+population:
+  column: viviendas
+  tolerance: 0.05
+
+districts:
+  n_districts: 8
+
+sampler:
+  method: recom
+  n_steps: 10000
+  n_steps_warmup: 500
+  seed: 42

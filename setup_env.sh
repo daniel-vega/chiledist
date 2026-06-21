@@ -125,17 +125,18 @@ import sys
 issues = []
 
 checks = [
-    ("geopandas",   "geopandas"),
-    ("numpy",       "numpy"),
-    ("pandas",      "pandas"),
-    ("scipy",       "scipy"),
-    ("networkx",    "networkx"),
-    ("matplotlib",  "matplotlib"),
-    ("libpysal",    "libpysal"),
-    ("esda",        "esda"),
-    ("shapely",     "shapely"),
-    ("gerrychain",  "gerrychain"),
-    ("chiledist",   "chiledist"),
+    ("geopandas",         "geopandas"),
+    ("numpy",             "numpy"),
+    ("pandas",            "pandas"),
+    ("scipy",             "scipy"),
+    ("networkx",          "networkx"),
+    ("matplotlib",        "matplotlib"),
+    ("libpysal",          "libpysal"),
+    ("esda",              "esda"),
+    ("shapely",           "shapely"),
+    ("gerrychain",        "gerrychain"),
+    ("chiledist",         "chiledist"),
+    ("chiledist.samplers","chiledist.samplers"),
 ]
 
 print()
@@ -143,9 +144,9 @@ for name, module in checks:
     try:
         m = __import__(module)
         version = getattr(m, "__version__", "?")
-        print(f"  ✓  {name:<15} {version}")
+        print(f"  ✓  {name:<22} {version}")
     except ImportError as e:
-        print(f"  ✗  {name:<15} NO INSTALADO ({e})")
+        print(f"  ✗  {name:<22} NO INSTALADO ({e})")
         issues.append(name)
 
 print()
@@ -154,6 +155,22 @@ if issues:
     sys.exit(1)
 else:
     print("Todos los paquetes instalados correctamente.")
+
+# Verificar funcionalidades clave de chiledist
+import chiledist as cd
+try:
+    crs = cd.get_optimal_crs.__module__   # smoke test — función debe existir
+    print(f"  ✓  cd.get_optimal_crs       disponible (equivalence)")
+except AttributeError:
+    print("  ✗  cd.get_optimal_crs       NO encontrado")
+    sys.exit(1)
+
+try:
+    _ = cd.ScoringConfig.default()
+    print(f"  ✓  cd.ScoringConfig         disponible (scenario_comparison)")
+except AttributeError:
+    print("  ✗  cd.ScoringConfig         NO encontrado")
+    sys.exit(1)
 PYCHECK
 
 # ── Instrucciones finales ─────────────────────────────────────────────────────
@@ -169,8 +186,112 @@ else
     echo "    source $ENV_NAME/bin/activate"
 fi
 echo ""
-echo "  Flujo de trabajo:"
-echo "    python scripts/setup.py --base-dir ./SHP_APC2023"
-echo "    python scripts/redistritaje.py   --base-dir ./SHP_APC2023 --regiones 13"
-echo "    python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones 13"
+echo "════════════════════════════════════════════════════════════════"
+echo "  FLUJO DE TRABAJO CHILEDIST"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "  ── 1. SETUP ─────────────────────────────────────────────────"
+echo "  # Inicializa matrices, grafos y figuras nacionales"
+echo "  python scripts/setup.py --base-dir ./SHP_APC2023"
+echo ""
+echo "  # Sin figuras (más rápido)"
+echo "  python scripts/setup.py --base-dir ./SHP_APC2023 --skip-viz"
+echo ""
+echo "  ── 2. REDISTRITAJE ──────────────────────────────────────────"
+echo "  # Escenarios disponibles: legal | apc_free | apc_soft"
+echo ""
+echo "  # Modo legal — comunas indivisibles (Ley 18.700)"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario legal"
+echo ""
+echo "  # APC libre — máxima compacidad posible"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario apc_free"
+echo ""
+echo "  # APC con penalización de splits"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario apc_soft"
+echo ""
+echo "  # Con población del Censo 2024 — join exacto por distrito (recomendado)"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario legal \\"
+echo "      --pop-source manzana --census-path datos/Base_manzana_entidad_CPV24.csv"
+echo ""
+echo "  # Con padrón electoral SERVEL"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario legal \\"
+echo "      --pop-source padron --padron-path datos/padron_2024.csv"
+echo ""
+echo "  # Escenario personalizado desde YAML"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario-file scenarios/mi_escenario.yml"
+echo ""
+echo "  # Todas las regiones"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones todas --scenario legal"
+echo ""
+echo "  # Parámetros personalizados"
+echo "  python scripts/redistritaje.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --scenario apc_free \\"
+echo "      --n-distritos 8 --pop-tol 0.15 --n-steps 10000 --seed 42"
+echo ""
+echo "  ── 3. COMPARACIÓN DE ESCENARIOS ─────────────────────────────"
+echo "  # Corre los 3 escenarios sobre la misma región y compara"
+echo "  python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 13"
+echo ""
+echo "  # Varias regiones"
+echo "  python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 5,13"
+echo ""
+echo "  # Solo comparar resultados ya existentes (sin re-ejecutar)"
+echo "  python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 \\"
+echo "      --regiones 13 --skip-run"
+echo ""
+echo "  ── 4. AUTOCORRELACIÓN ESPACIAL ──────────────────────────────"
+echo "  # Región específica: Moran, LISA, G*, correlograma"
+echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones 13"
+echo ""
+echo "  # Todas las regiones por separado"
+echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones todas"
+echo ""
+echo "  # Chile completo a nivel APC ~2.768 nodos"
+echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional"
+echo ""
+echo "  # Chile completo a nivel comunal ~345 nodos"
+echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional_comunal"
+echo ""
+echo "  # Variables y parámetros personalizados"
+echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional \\"
+echo "      --variables viviendas,densidad_viv_km2,polsby_popper \\"
+echo "      --max-order 7 --permutaciones 999"
+echo ""
+echo "  ── 5. BUNDLE IMC PLAN LAB ───────────────────────────────────"
+echo "  # Bundle distrital nacional (todas las regiones)"
+echo "  python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 --level distrital"
+echo ""
+echo "  # Bundle comunal nacional"
+echo "  python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 --level comunal"
+echo ""
+echo "  # Bundle solo para una región"
+echo "  python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \\"
+echo "      --level distrital --regiones 13"
+echo ""
+echo "  # Sin cálculo de compacidad (más rápido)"
+echo "  python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \\"
+echo "      --level comunal --no-compacidad"
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "  SALIDAS"
+echo "════════════════════════════════════════════════════════════════"
+echo "  datos/nacional/matrices/                  → matrices sparse, índices"
+echo "  datos/nacional/figuras/                   → mapas y grafos nacionales"
+echo "  datos/R13_*/redistritaje/legal/            → planes ReCom escenario legal"
+echo "  datos/R13_*/redistritaje/apc_free/         → planes ReCom escenario APC libre"
+echo "  datos/R13_*/redistritaje/apc_soft/         → planes ReCom escenario APC soft"
+echo "  datos/R13_*/comparacion/                   → tabla, tradeoff plots, boxplots"
+echo "  datos/R13_*/autocorrelacion/               → Moran, LISA, G*, correlograma"
+echo "  datos/nacional/redistritaje_apc/           → redistritaje nacional APC"
+echo "  datos/nacional/redistritaje_comunal/       → redistritaje nacional comunal"
+echo "  datos/nacional/autocorrelacion/            → autocorr nacional APC"
+echo "  datos/nacional/autocorrelacion_comunal/    → autocorr nacional comunal"
+echo "  imc_bundle_distrital_nacional/             → bundle GeoJSON/JSON"
 echo ""

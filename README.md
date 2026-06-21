@@ -1,0 +1,1257 @@
+# chiledist
+
+Librería Python para redistritaje electoral y análisis distrital de Chile usando datos cartográficos oficiales del INE (APC 2023 y Censo 2024). Implementa redistritaje ReCom, comparación de escenarios, asignación de escaños por D'Hondt, diagnósticos de convergencia y exportación para el paquete `redist` (R/ALARM Harvard).
+
+---
+
+## Contexto
+
+### ¿Qué es el APC 2023?
+
+La **Actualización Precensal 2023 (APC 2023)** es el operativo cartográfico del INE realizado entre marzo y septiembre de 2023 como preparación para el Censo 2024. Levantó el total de edificaciones del país al más bajo nivel geográfico posible.
+
+Los datos están disponibles como shapefiles organizados en **16 carpetas regionales** (`SHP_APC2023_R01` a `SHP_APC2023_R16`), cada una con 8 capas:
+
+| Capa | Tipo | Descripción |
+|------|------|-------------|
+| `Comunal.shp` | Polígono | 345 comunas del país |
+| `Distrital.shp` | Polígono | ~2.768 distritos censales |
+| `Limite_Urbano_Censal.shp` | Polígono | Separación urbano/rural |
+| `Aldea.shp` | Polígono | Centros rurales concentrados |
+| `Manzana_Urbana.shp` | Polígono | ~200k manzanas urbanas |
+| `Manzana_Aldea.shp` | Polígono | Manzanas en aldeas rurales |
+| `Eje_Vial.shp` | Línea | Red vial y caminera |
+| `Puntos_Edificacion_Rural.shp` | Punto | Edificaciones rurales |
+
+### Jerarquía censal Chile ↔ USA
+
+| Nivel | USA Census | Chile INE | Campo ID | Shapefile |
+|-------|-----------|-----------|----------|-----------|
+| 1 | State | Región | `COD_REGION` | — |
+| 2 | County | Provincia | `COD_PROVINCIA` | — |
+| 3 | Municipality | **Comuna** | `CUT` | `Comunal.shp` |
+| 4 | **Census Tract** | **Distrito APC** | `ID_DIST` | `Distrital.shp` |
+| 5 | Block Group | Zona Censal | `COD_ZONA` | — |
+| 6 | Census Block | **Manzana** | `MANZENT` | `Manzana_Urbana.shp` |
+
+El **Distrito APC** (`ID_DIST`) es la unidad recomendada para redistritaje. Se forma como `{CUT_5dígitos}_{COD_DISTRITO_3dígitos}`, por ejemplo `13101_021`.
+
+### Marco normativo y modos de análisis
+
+Chile opera bajo la **Ley 20.840 (2015)**: 28 distritos electorales con composición geográfica fija y magnitudes en rango [3, 8] escaños. Este mapa no cambia salvo reforma legislativa — no se redistribuye en cada elección.
+
+Chiledist no replica el mapa vigente: lo usa como referencia y genera **planes alternativos** para análisis comparado. La diferencia entre los modos es qué restricciones respetan:
+
+| Modo | Unidad mínima | Restricción comunal | Naturaleza |
+|------|--------------|---------------------|------------|
+| `legal` | CUT (comuna) | **Dura** — ningún distrito puede partir comunas (Ley 18.700) | Contrafactual con restricción legal |
+| `apc_soft` | ID\_DIST (APC) | **Blanda** — partir comunas tiene costo pero no es ilegal | Contrafactual híbrido |
+| `apc_free` | ID\_DIST (APC) | **Ninguna** — comunas divisibles libremente | Contrafactual puro; mide el costo de la restricción |
+
+Solo el modo `legal` respeta la restricción de la Ley 18.700. Los modos APC son instrumentos de análisis científico — no son propuestas legislativas.
+
+---
+
+## Instalación
+
+### Requisitos
+
+- Python >= 3.11
+
+### Entorno virtual (recomendado)
+
+```bash
+# Crear e instalar todo automáticamente
+bash setup_env.sh
+
+# O con nombre personalizado
+bash setup_env.sh mi_entorno
+
+# Activar
+source env/bin/activate       # Linux/macOS
+env\Scripts\activate          # Windows
+```
+
+### Instalación manual
+
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Verificar instalación
+
+```bash
+python -c "import chiledist as cd; cd.print_equivalence()"
+```
+
+---
+
+## Estructura del proyecto
+
+```
+chiledist/
+├── chiledist/                      # Librería principal
+│   ├── __init__.py                 # API pública
+│   ├── equivalence.py              # Tabla USA ↔ Chile, CRS, get_optimal_crs
+│   ├── loader.py                   # Carga de capas APC y build_national
+│   ├── graph.py                    # Grafos de adyacencia y matrices sparse
+│   ├── metrics.py                  # Compacidad y balance poblacional
+│   ├── viz.py                      # Visualización de capas, grafos y planes
+│   ├── config.py                   # ScenarioConfig + escenarios predefinidos + YAML
+│   ├── hierarchy.py                # Contracción APC → CUT, validación de jerarquía
+│   ├── constraints.py              # Restricciones gerrychain + penalización splits
+│   ├── split_metrics.py            # Métricas de comunas partidas por plan
+│   ├── scenario_comparison.py      # Comparación multi-escenario + visualizaciones
+│   ├── electoral.py                # D'Hondt, magnitudes de escaño, proporcionalidad
+│   ├── samplers/                   # Muestreo modular (ReCom · SMC · diagnósticos)
+│   │   ├── __init__.py
+│   │   ├── recom.py                # Cadenas de Markov ReCom (gerrychain)
+│   │   ├── smc.py                  # Bridge R/redist para SMC (ALARM Harvard)
+│   │   └── diagnostics.py         # R-hat, ESS, ACF, multi-cadena
+│   ├── redistricting.py            # Re-exporta samplers.recom (compatibilidad)
+│   ├── diagnostics.py              # Re-exporta samplers.diagnostics + smc (compatibilidad)
+│   └── data/
+│       ├── __init__.py
+│       ├── census2024.py           # Loader Censo 2024 (comunal y manzana)
+│       └── servel.py               # Padrón electoral + resultados históricos
+│
+├── scripts/                        # Scripts de análisis operativos
+│   ├── setup.py                    # Inicialización del proyecto
+│   ├── redistritaje.py             # Redistritaje ReCom parametrizable por escenario
+│   ├── compare_scenarios.py        # Comparación formal de 3 escenarios
+│   ├── autocorrelacion.py          # Autocorrelación espacial
+│   └── export_imc_bundle.py        # Exportación bundle IMC Plan Lab
+│
+├── datos/                      # Salidas (generado automáticamente)
+│   ├── nacional/
+│   │   ├── matrices/           # .npz, .csv, R export
+│   │   ├── figuras/
+│   │   ├── redistritaje_apc/       # Redistritaje nacional a nivel APC (~2.768 nodos)
+│   │   ├── redistritaje_comunal/   # Redistritaje nacional a nivel comunal (345 nodos)
+│   │   ├── autocorrelacion/        # Autocorrelación nacional APC
+│   │   └── autocorrelacion_comunal/ # Autocorrelación nacional comunal
+│   └── R{N}_{NOMBRE}/              # Una carpeta por región (ej. R13_METROPOLITANA)
+│       ├── redistritaje/       # Redistritaje por región (--regiones N)
+│       └── autocorrelacion/
+│
+├── imc_bundle_{level}_{scope}/ # Bundle IMC Plan Lab
+│   ├── units.geojson
+│   ├── adjacency.json
+│   ├── metadata.json
+│   └── README.md
+│
+├── requirements.txt
+├── setup_env.sh
+├── setup.py
+└── README.md
+```
+
+---
+
+## Flujo de trabajo
+
+```
+1. setup.py              →  matrices nacionales, figuras, exportación R
+         ↓
+2. redistritaje.py        →  ensembles ReCom por escenario (legal / apc_free / apc_soft)
+                              con población desde APC, Censo 2024 o padrón SERVEL
+         ↓
+3. compare_scenarios.py   →  comparación formal: tabla, tradeoff plots, boxplots,
+                              frecuencia de comunas partidas
+         ↓
+4. autocorrelacion.py     →  Moran, LISA, G* (por región, nacional APC o comunal)
+         ↓
+5. export_imc_bundle.py   →  bundle GeoJSON/JSON para Plan Lab
+```
+
+---
+
+## Scripts de análisis
+
+### 1. setup.py — Inicialización
+
+Genera los datos base necesarios para todos los análisis posteriores.
+
+```bash
+# Inicialización completa
+python scripts/setup.py --base-dir ./SHP_APC2023
+
+# Sin figuras (más rápido)
+python scripts/setup.py --base-dir ./SHP_APC2023 --skip-viz
+
+# Sin manzanas (no agrega población)
+python scripts/setup.py --base-dir ./SHP_APC2023 --skip-manzanas
+```
+
+**Salidas en `datos/nacional/`:**
+
+```
+matrices/
+    matriz_distrital_matriz.npz     # Matriz sparse 2.768×2.768
+    matriz_distrital_indice.csv     # Mapeo fila ↔ ID_DIST
+    matriz_distrital_islas.csv      # Conexiones artificiales de islas
+    matriz_comunal_matriz.npz       # Matriz sparse 345×345
+    matriz_comunal_indice.csv
+    poblacion_distritos.csv
+    compacidad_distritos.csv
+    resumen_regional.csv
+    chiledist_redist.R              # Script R para ALARM/redist
+figuras/
+    equivalencia_usa_chile.png
+    grafo_adyacencia_distrital.png
+    grafo_adyacencia_comunal.png
+    compacidad_distrital.png
+    mapa_distritos_tipo.png
+```
+
+---
+
+### 2. redistritaje.py — Redistritaje ReCom
+
+Genera ensembles de redistritaje usando ReCom. Soporta **tres escenarios** electorales y **cuatro fuentes de población**.
+
+#### Escenarios disponibles
+
+| `--scenario` | Unidad mínima | Preservación comunas | Naturaleza | Descripción |
+|--------------|---------------|----------------------|------------|-------------|
+| `legal` | `CUT` (comuna) | Dura | Contrafactual legal | Explora redistritajes que respetan la Ley 18.700 |
+| `apc_free` | `ID_DIST` (APC) | Ninguna | **Contrafactual científico** | Mide el costo de la restricción comunal |
+| `apc_soft` | `ID_DIST` (APC) | Blanda (penalización) | **Contrafactual científico** | APC con penalización configurable por splits |
+
+También se pueden cargar escenarios personalizados desde YAML con `--scenario-file`.
+
+#### Modos de región
+
+| `--regiones` | Descripción |
+|--------------|-------------|
+| `13` | Región específica |
+| `5,8,13` | Lista de regiones (separadas por coma) |
+| `todas` | Las 16 regiones en secuencia |
+| `nacional` | APC nacional directo (~2.768 nodos, lento) |
+| `nacional_comunal` | 345 comunas — contrafactual con restricción comunal |
+
+```bash
+# Modo legal (comunas indivisibles, Ley 18.700)
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 --scenario legal
+
+# APC libre
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 --scenario apc_free
+
+# APC con penalización de splits
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 --scenario apc_soft
+
+# Escenario personalizado desde YAML
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario-file scenarios/mi_escenario.yml
+
+# Con población real del Censo 2024 (Base manzana — join exacto por distrito)
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario legal \
+    --pop-source manzana \
+    --census-path datos/Base_manzana_entidad_CPV24.csv
+
+# Con tabla comunal del Censo 2024 (distribución proporcional)
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --pop-source censo2024 --census-path datos/censo2024_comunas.csv
+
+# Con padrón electoral SERVEL
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --pop-source padron --padron-path datos/padron_2024.csv
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es) a analizar |
+| `--scenario` | — | Escenario predefinido: `legal`, `apc_free`, `apc_soft` |
+| `--scenario-file` | — | Ruta a YAML de escenario personalizado |
+| `--decision-unit` | — | Override: `CUT` o `ID_DIST` |
+| `--preserve-mode` | — | Override: `hard`, `soft`, `none` |
+| `--split-penalty` | `0.25` | Peso de penalización en modo `soft` |
+| `--pop-source` | `viviendas` | Fuente de población: `viviendas`, `manzana`, `censo2024`, `padron` |
+| `--census-path` | — | CSV del Censo 2024 (para `manzana` o `censo2024`) |
+| `--padron-path` | — | CSV del padrón SERVEL (para `padron`) |
+| `--n-distritos` | `8` | Número de distritos electorales |
+| `--pop-tol` | _(del escenario)_ | Tolerancia poblacional; default = `pop_tolerance` del escenario (0.05). Usar `0.15` para regiones pequeñas. |
+| `--n-steps` | `10000` | Pasos de la cadena ReCom |
+| `--seed` | `42` | Semilla aleatoria |
+| `--skip-viz` | — | Omitir figuras |
+
+**Salidas en `datos/{REGION}/redistritaje/{SCENARIO}/`:**
+
+```
+ensemble_stats.csv             # Distribución completa del ensemble — resultado principal
+plan_referencia_detalle.csv    # Detalle por distrito del plan de referencia (visualización)
+comunas_partidas.csv           # Comunas partidas en el plan de referencia (modos APC)
+metricas_cadena.csv            # Métricas paso a paso de la cadena
+ref_vs_extremo.png             # Plan de referencia vs plan de menor score
+cadena_markov.png
+ensemble_distribucion.png
+ref_balance.png
+compacidad.png
+```
+
+#### Estados posibles en el resumen final
+
+| `status` | Significado |
+|----------|-------------|
+| `ok` | Análisis completado correctamente |
+| `sin_poblacion` | La región no tiene datos de viviendas |
+| `sin_particion` | No se encontró partición inicial válida (región muy pequeña o fragmentada) |
+| `sin_planes` | La cadena fue interrumpida antes de generar planes |
+| `sin_planes_validos` | La cadena corrió pero ningún plan cumple la tolerancia |
+| `error` | Error inesperado (ver traceback) |
+
+#### Comportamiento para regiones problemáticas
+
+Varias regiones tienen características geográficas que dificultan el redistritaje:
+
+- **Regiones pequeñas** (R01, R11, R15): pocos distritos APC. El script ajusta automáticamente `n_distritos = min(pedido, n_dist_apc // 4)`.
+- **Regiones insulares** (R10 Los Lagos, R11 Aysén, R12 Magallanes): muchas islas y componentes desconectados. El script conecta automáticamente las islas en el grafo gerrychain por distancia de centroides.
+- **`Failed to find a balanced cut`**: warning de gerrychain cuando el spanning tree es demasiado pequeño. El script habilita `pair_reselection=True` automáticamente si está disponible en la versión instalada, y aumenta `node_repeats` para regiones pequeñas.
+
+Si una región retorna `sin_particion`, la solución es pedir menos grupos:
+
+```bash
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 \
+    --regiones 15 --n-distritos 3   # Arica: 4 comunas → 3 grupos
+python scripts/redistritaje.py --base-dir ./SHP_APC2023 \
+    --regiones 11 --n-distritos 4   # Aysén: 10 comunas → 4 grupos
+```
+
+---
+
+### 3. compare_scenarios.py — Comparación de escenarios
+
+Corre los tres escenarios predefinidos sobre la misma región y produce una comparación formal con tabla de métricas, rankings y visualizaciones.
+
+```bash
+# Comparar los tres escenarios en la Región Metropolitana
+python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 13
+
+# Varias regiones
+python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 5,13
+
+# Solo comparar resultados ya existentes (sin re-ejecutar redistritaje)
+python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 13 --skip-run
+
+# Escenarios personalizados desde YAML
+python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario-files scenarios/A.yml,scenarios/B.yml
+
+# Con parámetros
+python scripts/compare_scenarios.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --n-distritos 8 --n-steps 5000 --seed 42
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es): número, lista o `todas` |
+| `--scenarios` | `legal,apc_free,apc_soft` | Escenarios a comparar |
+| `--scenario-files` | — | Rutas YAML separadas por coma (override `--scenarios`) |
+| `--n-distritos` | `8` | Número de distritos electorales |
+| `--n-steps` | `10000` | Pasos de la cadena ReCom |
+| `--skip-run` | — | Solo comparar resultados existentes, no re-ejecutar |
+| `--skip-viz` | — | Omitir figuras |
+
+**Salidas en `datos/{REGION}/comparacion/`:**
+
+```
+comparacion_escenarios.csv          # Tabla de métricas + deltas + ranking
+comunas_partidas_frecuencia.csv     # Frecuencia de comunas partidas por escenario
+tradeoff_balance_splits.png         # Gráfico balance vs comunas partidas
+tradeoff_compacidad_splits.png      # Gráfico compacidad vs comunas partidas
+boxplots_comparativos.png           # Distribuciones de métricas por escenario
+```
+
+---
+
+### 4. autocorrelacion.py — Autocorrelación espacial
+
+Calcula I de Moran global, LISA, Getis-Ord G* y correlograma espacial.
+Soporta los mismos **tres modos** que redistritaje.
+
+#### Modos disponibles
+
+| Modo `--regiones` | Opción | Unidad | Salida |
+|-------------------|--------|--------|--------|
+| `13` | B | APC región | `datos/R13_*/autocorrelacion/` |
+| `todas` | B | APC por región | una carpeta por región |
+| `nacional` | A | APC nacional ~2.768 nodos | `datos/nacional/autocorrelacion/` |
+| `nacional_comunal` | C | Comunas ~345 nodos | `datos/nacional/autocorrelacion_comunal/` |
+
+```bash
+# Región específica
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones 13
+
+# Varias regiones (análisis separado por cada una)
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones 5,8,13
+
+# Todas las regiones por separado
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones todas
+
+# Chile completo a nivel APC (Opción A)
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional
+
+# Chile completo a nivel comunal (Opción C)
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional_comunal
+
+# Variables y parámetros personalizados
+python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones nacional \
+    --variables viviendas,densidad_viv_km2,polsby_popper \
+    --max-order 7 --permutaciones 999
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es): número, lista, `todas`, `nacional`, `nacional_comunal` |
+| `--variables` | `viviendas,densidad_viv_km2,polsby_popper` | Variables a analizar |
+| `--max-order` | `7` | Orden máximo del correlograma |
+| `--permutaciones` | `999` | Permutaciones para inferencia |
+| `--skip-viz` | — | Omitir figuras |
+
+**Salidas por ejecución:**
+
+```
+moran_scatter.png           # Diagramas de dispersión de Moran por variable
+lisa_mapas.png              # Mapas LISA (HH/LL/LH/HL) con leyenda
+getisord_mapas.png          # Hotspots/coldspots G* + zoom automático
+correlograma.png            # Decaimiento I de Moran por orden de vecindad
+resultados.csv              # Índices LISA y G* por unidad
+moran_global.csv            # Resumen I de Moran global por variable
+```
+
+**Requiere:** `pip install esda`
+
+---
+
+### 5. export_imc_bundle.py — Bundle IMC Plan Lab
+
+Exporta un bundle geoespacial compatible con herramientas de redistritaje interactivo.
+
+```bash
+# Bundle distrital nacional
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 --level distrital
+
+# Bundle comunal nacional
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 --level comunal
+
+# Solo una región
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \
+    --level distrital --regiones 13
+
+# Varias regiones
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \
+    --level distrital --regiones 5,8,13
+
+# Sin compacidad (más rápido)
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \
+    --level comunal --no-compacidad
+
+# Directorio de salida personalizado
+python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 \
+    --level distrital --output-dir ./bundles
+```
+
+**Salidas en `imc_bundle_{level}_{scope}/`:**
+
+```
+units.geojson       # Geometrías + atributos en EPSG:4326
+adjacency.json      # Lista de pares adyacentes (imc-adjacency-v1)
+metadata.json       # Metadatos del bundle (imc-planlab-bundle-v1)
+README.md           # Documentación del bundle
+```
+
+**Campos en `units.geojson`:**
+
+```json
+{
+  "unit_id":          "13101_021",
+  "level":            "distrital",
+  "name":             "BARRIO INDUSTRIAL",
+  "region_id":        "13",
+  "region_name":      "REGIÓN METROPOLITANA DE SANTIAGO",
+  "ID_DIST":          "13101_021",
+  "CUT":              "13101",
+  "N_COMUNA":         "SANTIAGO",
+  "viviendas":        1250,
+  "population":       1250,
+  "polsby_popper":    0.612,
+  "compactness_mean": 0.587
+}
+```
+
+**Formato `adjacency.json`:**
+
+```json
+{
+  "format":        "imc-adjacency-v1",
+  "directed":      false,
+  "unit_id_field": "unit_id",
+  "edges": [["13101_021", "13101_022"], ["13101_021", "13102_005"]]
+}
+```
+
+El script valida antes de exportar: `unit_id` sin nulos ni duplicados, geometrías en EPSG:4326, edges sin self-loops ni duplicados, todos los IDs en edges presentes en units.
+
+---
+
+## API de la librería
+
+### Equivalencia censal
+
+```python
+import chiledist as cd
+
+cd.print_equivalence()             # Tabla completa USA ↔ Chile
+cd.describe_hierarchy("CHL")      # Jerarquía detallada Chile
+dist = cd.get_analog("USA", 4)    # Census Tract → Distrito APC
+print(dist.code_field)             # → ID_DIST
+```
+
+### Carga de datos
+
+```python
+# Capa única, todas las regiones
+distritos = cd.load_layer("distrital", base_dir="./SHP_APC2023")
+comunas   = cd.load_layer("comunal",   base_dir="./SHP_APC2023")
+
+# Capa única, región específica
+mz_rm = cd.load_layer("manzana_urbana", base_dir="./SHP_APC2023", regions=[13])
+
+# Cargar y construir grafo nacional
+resultado = cd.build_national(
+    layer="distrital",
+    base_dir="./SHP_APC2023",
+    strategy="block_diagonal",
+    save_prefix="distrital_nac",
+)
+G   = resultado["G"]
+adj = resultado["adj"]
+rm  = resultado["por_region"][13]
+
+# Agregar población desde manzanas
+pop = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
+```
+
+### Grafos y matrices
+
+```python
+# Política de islas: "nearest" | "threshold" | "none"
+G, adj, ids = cd.build_graph(
+    distritos, id_col="ID_DIST",
+    method="queen",
+    island_policy="nearest",       # conecta cada isla al vecino más cercano
+)
+
+# Solo conectar islas dentro de 30 km (útil para archipiélagos cercanos)
+G, adj, ids = cd.build_graph(
+    distritos, id_col="ID_DIST",
+    island_policy="threshold",
+    island_threshold_km=30.0,
+)
+
+# No conectar islas (útil para SMC o análisis de componentes)
+G, adj, ids = cd.build_graph(distritos, id_col="ID_DIST", island_policy="none")
+
+# CRS automático (detecta UTM óptima desde los datos)
+crs = cd.get_optimal_crs(distritos)   # "EPSG:32719" para Chile continental
+G, adj, ids = cd.build_graph(distritos, id_col="ID_DIST", crs_metric=crs)
+
+print(cd.graph_stats(G, adj))
+
+cd.save_graph(adj, ids, distritos, "ID_DIST", prefix="mi_matriz")
+adj, indice, G = cd.load_graph("mi_matriz")
+
+# Subir de nivel: manzanas → distritos → comunas
+G_dist, gdf_dist = cd.contract_graph(
+    G_manzanas, manzanas,
+    id_col="MANZENT", group_col="COD_DISTRITO",
+    agg_cols={"viviendas": "sum"},
+)
+```
+
+### Métricas
+
+```python
+metricas = cd.all_compactness(distritos, id_col="ID_DIST")
+# Columnas: polsby_popper, reock, convex_hull_ratio, schwartzberg, compactness_mean
+
+balance = cd.population_balance(
+    distritos, pop_col="viviendas", partition_col="CUT"
+)
+
+resumen = cd.spatial_summary(
+    distritos, id_col="ID_DIST",
+    pop_col="viviendas", group_col="N_REGION"
+)
+```
+
+### Visualización
+
+```python
+cd.plot_adjacency_graph(G, adj, indice, color_by="tipo", save_path="grafo.png")
+cd.plot_layer(distritos, color_col="TIPO_DISTRITO", save_path="mapa.png")
+cd.plot_plan(distritos, assignment=mi_plan, id_col="ID_DIST",
+             pop_col="viviendas", show_pop_balance=True, save_path="plan.png")
+cd.plot_compactness(distritos, metricas, id_col="ID_DIST",
+                    metric="polsby_popper", save_path="compacidad.png")
+```
+
+### Escenarios (config.py)
+
+`ScenarioConfig` define todos los parámetros de un análisis en un único dataclass. Tres escenarios predefinidos cubren los casos de uso principales.
+
+```python
+import chiledist as cd
+import dataclasses
+
+# Escenario legal (predefinido)
+sc = cd.SCENARIO_LEGAL
+print(sc.decision_unit)    # "CUT"
+print(sc.preserve_mode)    # "hard"
+print(sc.pop_col)          # "viviendas"
+
+# APC libre
+sc = cd.SCENARIO_APC_FREE  # decision_unit="ID_DIST", preserve_mode="none"
+
+# APC con penalización de comunas partidas
+sc = cd.SCENARIO_APC_SOFT  # decision_unit="ID_DIST", preserve_mode="soft", split_penalty=0.25
+
+# Override de campos — incluyendo política de islas y CRS
+sc_islas = dataclasses.replace(
+    cd.SCENARIO_APC_FREE,
+    island_policy="threshold",
+    island_threshold_km=30.0,  # solo conectar archipiélagos próximos
+)
+sc_crs = dataclasses.replace(
+    cd.SCENARIO_LEGAL,
+    crs_metric="EPSG:32719",   # forzar CRS en lugar de auto-detectar
+)
+sc_padron = dataclasses.replace(cd.SCENARIO_LEGAL, pop_col="inscritos")
+
+# Cargar desde YAML (sección "connectivity" para island_policy/crs_metric)
+sc = cd.load_scenario("scenarios/mi_escenario.yml")
+
+# Guardar a YAML
+cd.save_scenario(sc, "scenarios/custom.yml")
+```
+
+| Atributo | Tipo | Descripción |
+|----------|------|-------------|
+| `decision_unit` | `"CUT"` / `"ID_DIST"` | Unidad mínima del redistritaje |
+| `preserve_mode` | `"hard"` / `"soft"` / `"none"` | Restricción de integridad comunal |
+| `split_penalty` | `float` | Peso de penalización en modo `soft` (default 0.25) |
+| `pop_col` | `str` | Columna de población (`"viviendas"`, `"personas"`, `"inscritos"`) |
+| `pop_tolerance` | `float` | Tolerancia de desviación poblacional (default 0.05) |
+| `island_policy` | `"nearest"` / `"threshold"` / `"none"` | Conexión de islas al grafo |
+| `island_threshold_km` | `float` | Umbral de distancia para `island_policy="threshold"` (default 50 km) |
+| `crs_metric` | `str` / `None` | CRS métrico; `None` = auto-detectar con `get_optimal_crs` |
+| `name` | `str` | Nombre del escenario para rutas de salida |
+
+---
+
+### Jerarquía y restricciones (hierarchy.py, constraints.py)
+
+Funciones para contraer la capa APC a la unidad de decisión del escenario y para construir las restricciones gerrychain correspondientes.
+
+```python
+import chiledist as cd
+
+# Contraer distritos APC a comunas (decision_unit="CUT")
+comunas = cd.contract_to_decision_units(
+    gdf_apc,
+    scenario=cd.SCENARIO_LEGAL,
+    agg_cols={"viviendas": "sum", "polsby_popper": "mean"},
+)
+
+# Construir capa de decisión (contrae + recalcula métricas)
+gdf_dec = cd.build_decision_layer(gdf_apc, scenario=cd.SCENARIO_APC_SOFT)
+
+# Validar que la asignación respeta la jerarquía
+ok, violaciones = cd.validate_hierarchy(
+    gdf_apc, assignment, cut_col="CUT", id_col="ID_DIST"
+)
+
+# Propagar asignación distrital → nivel APC
+gdf_apc_with_plan = cd.propagate_district_assignment(
+    gdf_apc, gdf_dec, assignment_col="distrito"
+)
+```
+
+```python
+# Restricción dura: no partir comunas (hard)
+preserve_c = cd.make_preserve_constraint(partition, unit_col="CUT", mode="hard")
+
+# Updaters y restricciones completos para un escenario
+updaters    = cd.build_updaters_for_scenario(gdf, scenario=cd.SCENARIO_LEGAL)
+constraints = cd.build_constraints_for_scenario(partition, scenario=cd.SCENARIO_LEGAL)
+
+# Función de score con penalización de splits (modo soft)
+score = cd.score_with_split_penalty(partition, penalty=0.25)
+```
+
+---
+
+### Métricas de comunas partidas (split_metrics.py)
+
+Analiza cuántas comunas quedan divididas entre distritos en un plan dado.
+
+```python
+import chiledist as cd
+
+# Número de comunas partidas y fragmentos
+n_partidas, n_fragmentos = cd.count_split_units(
+    gdf_apc, assignment, unit_col="CUT", dist_col="distrito"
+)
+
+# Índice de severidad: ponderado por tamaño de fragmento
+isi = cd.split_severity_index(gdf_apc, assignment, unit_col="CUT", pop_col="viviendas")
+
+# Resumen detallado: qué comunas, cuántos fragmentos, fragmento más pequeño
+df_splits = cd.split_unit_summary(gdf_apc, assignment, unit_col="CUT")
+
+# Fragmentos menores al X% de la unidad original
+n_small = cd.small_fragment_count(gdf_apc, assignment, unit_col="CUT", min_frac=0.05)
+
+# Todas las métricas juntas (para añadir a ensemble_stats)
+metrics = cd.plan_split_metrics(gdf_apc, assignment, unit_col="CUT", pop_col="viviendas")
+# → {"n_comunas_partidas": 3, "n_fragmentos_extra": 5, "split_severity_index": 0.12, ...}
+```
+
+---
+
+### Fuentes de población (data/)
+
+Subpaquete para cargar datos de población desde el Censo 2024 o el padrón SERVEL.
+
+#### Censo 2024 — join exacto por distrito (recomendado)
+
+```python
+import chiledist.data.census2024 as c24
+
+# Cargar tabla manzana-entidad (Base_manzana_entidad_CPV24.csv, ~24 MB, TSV)
+mz = c24.load_manzana_censo2024(
+    "datos/Base_manzana_entidad_CPV24.csv",
+    sep="\t",
+    encoding="utf-8-sig",
+)
+# → DataFrame con columnas: CUT, COD_DISTRITO, n_per, n_hog
+
+# Join exacto: agrega "personas" y "hogares" por ID_DIST
+gdf = c24.join_manzana_to_apc(gdf_apc, mz)
+
+# Instrucciones de descarga desde INE
+c24.download_instructions()
+```
+
+#### Censo 2024 — distribución proporcional por comuna
+
+```python
+# Tabla comunal del Censo 2024
+census = c24.load_census2024("datos/censo2024_comunas.csv")
+
+# Distribuye proporcionalmente usando viviendas como proxy
+gdf = c24.join_census_to_apc(gdf_apc, census, proxy_col="viviendas")
+# → agrega columna "personas"
+```
+
+#### Padrón electoral SERVEL
+
+```python
+import chiledist.data.servel as sv
+
+# Cargar padrón comunal
+padron = sv.load_padron_electoral("datos/padron_2024.csv")
+
+# Join con distribución proporcional por viviendas
+gdf = sv.join_padron_to_apc(gdf_apc, padron, proxy_col="viviendas")
+# → agrega columna "inscritos"
+
+# Resultados electorales históricos por comuna
+resultados = sv.load_resultados_electorales("datos/resultados_2021.csv")
+```
+
+---
+
+### Comparación de escenarios (scenario_comparison.py)
+
+```python
+import chiledist as cd
+import dataclasses
+
+# Cargar ensembles desde disco (estructura generada por redistritaje.py)
+ensembles = cd.load_ensembles_from_disk(
+    output_base="datos",
+    region_code=13,
+    scenario_names=["legal", "apc_free", "apc_soft"],
+)
+# → {"legal": DataFrame, "apc_free": DataFrame, "apc_soft": DataFrame}
+
+# Tabla comparativa con medianas, p25, p75 y deltas respecto al baseline
+tabla = cd.compare_ensembles(ensembles, baseline="legal")
+
+# Delta de un escenario respecto al baseline
+tabla_delta = cd.scenario_delta(tabla, baseline="legal")
+
+# ── Ranking con puntaje compuesto ────────────────────────────────────────────
+
+# Configuración por defecto (desde PESOS_DEFAULT)
+ranking = cd.rank_scenarios(tabla)
+# → DataFrame con composite_score, rank, score_<col> por métrica
+
+# Priorizar compacidad (ScoringConfig)
+sc = cd.ScoringConfig.from_weights({"pp_promedio": 0.6, "max_dev_pob_pct": 0.4})
+ranking_custom = cd.rank_scenarios(tabla, scoring_config=sc)
+
+# Normalización por z-score en lugar de min-max
+sc_z = cd.ScoringConfig.from_weights(
+    {"pp_promedio": 0.5, "max_dev_pob_pct": 0.3, "n_comunas_partidas": 0.2},
+    normalization="zscore",
+)
+ranking_z = cd.rank_scenarios(tabla, scoring_config=sc_z)
+
+# ── Frontera de Pareto ───────────────────────────────────────────────────────
+
+# Pareto N-dimensional sobre puntos crudos
+import numpy as np
+pts = np.array([[0.1, 5, 3], [0.2, 3, 1], [0.3, 2, 4]])
+idx = cd.pareto_frontier_nd(pts, minimize=[True, True, False])
+# → índices de los puntos no dominados
+
+# Pareto sobre escenarios (columnas *_median de compare_ensembles)
+optimos = cd.pareto_optimal_scenarios(tabla)
+print(optimos["escenario"].tolist())   # escenarios no dominados por ningún otro
+
+# ── Visualizaciones ──────────────────────────────────────────────────────────
+
+# Scatter de tradeoff con frontera de Pareto por escenario
+cd.plot_tradeoff_frontier(
+    ensembles,
+    x_col="n_comunas_partidas",
+    y_col="max_dev_pob_pct",
+    save_path="tradeoff.png",
+)
+
+# Boxplots comparativos por métrica
+cd.plot_boxplots_comparativos(ensembles, save_path="boxplots.png")
+
+# Gráfico de araña multi-métrica (todos los ejes normalizados a [0,1]; 1=mejor)
+cd.plot_radar_comparativo(tabla, save_path="radar.png")
+
+# Tabla de frecuencia de comunas partidas por escenario
+freq = cd.split_frequency_table("datos/R13_METROPOLITANA/redistritaje")
+```
+
+| Símbolo | Descripción |
+|---------|-------------|
+| `ScoringConfig` | Dataclass: pesos + direcciones + normalización (`minmax`/`zscore`/`rank`) |
+| `compare_ensembles` | Tabla de medianas, p25/p75 y deltas por escenario |
+| `rank_scenarios` | Ranking compuesto ponderado; acepta `ScoringConfig` |
+| `pareto_frontier_nd` | Índices Pareto-óptimos en N dimensiones (arrays o DataFrame) |
+| `pareto_optimal_scenarios` | Filas Pareto-óptimas de la tabla de `compare_ensembles` |
+| `plot_tradeoff_frontier` | Scatter 2D con frontera de Pareto por escenario |
+| `plot_radar_comparativo` | Gráfico de araña multi-métrica normalizada |
+| `plot_boxplots_comparativos` | Boxplots de métricas por escenario |
+
+---
+
+### Electoral (electoral.py)
+
+Implementa el sistema electoral chileno: D'Hondt, magnitudes de escaño por distrito y métricas de proporcionalidad.
+
+```python
+import chiledist as cd
+
+# D'Hondt para un distrito
+resultado = cd.dhondt(
+    votes={"Chile Vamos": 45000, "Apruebo Dignidad": 38000, "PDG": 12000},
+    seats=5,
+    threshold=0.0,   # Chile no tiene umbral legal
+)
+# → {"Chile Vamos": 3, "Apruebo Dignidad": 2, "PDG": 0}
+
+# Asignar magnitudes de escaño (Hamilton acotado: min=3, max=8, total=155)
+pop = gdf_comunas.set_index("CUT")["personas"]
+magnitudes = cd.assign_seat_magnitudes(pop, total_seats=155, min_seats=3, max_seats=8)
+# → pd.Series CUT → n_escaños
+
+# Magnitudes vigentes Ley 20.840 Art. 179 — sin cambios en 2017, 2021, 2025 ni 2026
+# (Art. 179 bis prevé revisión decenial post-Censo; SERVEL aún no emite nueva tabla)
+print(cd.MAGNITUDES_LEGALES_LEY20840)  # {1: 3, 2: 3, ..., 28: 3}
+assert sum(cd.MAGNITUDES_LEGALES_LEY20840.values()) == 155
+# MAGNITUDES_LEGALES_2021 es un alias de la misma tabla (compatibilidad)
+
+# Correr D'Hondt en todos los distritos de un plan
+resultados = cd.run_electoral_plan(
+    assignment,         # dict unit_id → distrito_electoral
+    votes_df,           # DataFrame unidad × partido
+    magnitudes,         # pd.Series distrito → n_escaños
+)
+# → DataFrame: partido × escaños_ganados por cada distrito
+
+# Shares nacionales agregados
+shares = cd.national_shares(resultados)
+# → {"Chile Vamos": {"votos_pct": 42.3, "escanos_pct": 48.4}, ...}
+
+# Índices de proporcionalidad
+v = shares_votos   # pd.Series partido → %
+s = shares_escanos # pd.Series partido → %
+print(cd.gallagher_index(v, s))      # LSq — principal indicador
+print(cd.loosemore_hanby(v, s))      # LH
+print(cd.rae_index(v, s))            # Rae
+print(cd.effective_number_of_parties(v))  # NEP votos (Laakso-Taagepera)
+
+# Resumen completo
+tabla = cd.proportionality_summary(v, s)
+# → DataFrame: gallagher, loosemore_hanby, rae, enp_votos, enp_escanos
+
+# Métricas electorales de un plan (para añadir a ensemble_stats)
+metrics = cd.plan_electoral_metrics(assignment, votes_df, pop_by_unit)
+```
+
+---
+
+### Diagnósticos de convergencia (samplers/diagnostics.py)
+
+Herramientas para evaluar si la cadena MCMC ha convergido y para ejecutar análisis multi-cadena.
+
+> **Alcance de los diagnósticos.** R-hat < 1.1 indica que las cadenas paralelas se mezclaron bien (_convergencia_), pero **no** garantiza que la distribución empírica del ensemble represente la distribución objetivo (uniforme sobre planes válidos). Para esa validación, comparar con resultados SMC como referencia independiente.
+
+```python
+import chiledist as cd
+# o directamente: from chiledist.samplers.diagnostics import ...
+import numpy as np
+
+# Función de autocorrelación
+serie = ensemble_stats["pp_mean"].values
+acf = cd.autocorrelation_function(serie, max_lag=50)
+# → np.ndarray shape (51,), acf[0] = 1.0
+
+# Tamaño de muestra efectivo (considera correlaciones en la cadena)
+ess = cd.effective_sample_size(serie, max_lag=200)
+print(f"ESS = {ess:.1f} de {len(serie)} muestras")
+
+# Gelman-Rubin R-hat (requiere ≥ 2 cadenas)
+chains = [df1["pp_mean"].values, df2["pp_mean"].values, df3["pp_mean"].values]
+rhat = cd.gelman_rubin(chains)
+print(f"R-hat = {rhat:.4f} ({'converge' if rhat < cd.RHAT_THRESHOLD else 'NO converge'})")
+
+# Diagnósticos completos de varias métricas
+chain_metrics = pd.concat([df1.assign(cadena=0), df2.assign(cadena=1), df3.assign(cadena=2)])
+tabla = cd.mixing_diagnostics(chain_metrics, metrics=["pp_mean", "dev_norm", "cut_edges"])
+# → DataFrame: metrica, n_cadenas, n_muestras, rhat, convergido, ess_promedio, acf_lag1_promedio
+
+# Visualizaciones de diagnóstico
+cd.plot_trace(chain_metrics, metric="pp_mean", save_path="trace.png")
+cd.plot_acf(serie, max_lag=50, save_path="acf.png")
+cd.plot_gelman_rubin_evolution(chains, metric="pp_mean", save_path="rhat_evol.png")
+```
+
+#### Multi-cadena automático
+
+```python
+# Correr N cadenas con semillas distintas y calcular diagnósticos
+planes, chain_metrics = cd.run_multiple_chains(
+    gdf_apc,
+    n_chains=4,
+    scenario=cd.SCENARIO_APC_FREE,
+    n_distritos=8,
+    n_steps=5000,
+    base_seed=42,
+    output_dir="datos/R13/redistritaje/apc_free",
+)
+tabla = cd.mixing_diagnostics(chain_metrics)
+```
+
+#### Bridge R / redist (samplers/smc.py)
+
+```python
+# Exportar a GeoPackage + generar script R completo para SMC
+r_script = cd.generate_redist_script(
+    gdf_apc,
+    id_col="ID_DIST",
+    pop_col="personas",
+    n_districts=8,
+    output_dir="datos/R13/redist",
+    n_sims=1000,
+)
+# → "datos/R13/redist/run_redist.R" — ejecutar con Rscript
+
+# Importar resultados SMC desde R de vuelta a Python
+planes = cd.load_redist_results(
+    plans_csv="datos/R13/redist/plans.csv",
+    id_list=gdf_apc["ID_DIST"].tolist(),
+)
+# → list[dict] compatible con analyze_ensemble()
+```
+
+---
+
+## Redistritaje — Detalles técnicos
+
+### Algoritmo ReCom
+
+En cada paso de la cadena:
+1. Selecciona aleatoriamente dos distritos adyacentes
+2. Une sus unidades y construye un spanning tree aleatorio
+3. Corta el árbol para generar dos nuevos distritos balanceados
+4. Acepta el nuevo estado si cumple las restricciones
+
+**Implementación:** `gerrychain 0.3.2` con `functools.partial` para pasar argumentos explícitos.
+
+### Estrategia de dos fases
+
+```
+Fase 1 — Warm-up (~500 pasos, solo contigüidad):
+    Lleva la partición inicial desde la desviación de arranque
+    (~15-40%) hacia el rango objetivo. Se detiene cuando
+    la desviación baja al 1.5× la tolerancia objetivo.
+
+Fase 2 — Sampling (n_steps pasos, contigüidad + balance):
+    Explora el espacio de planes válidos. El epsilon de ReCom
+    se calibra a la desviación real post-warmup.
+```
+
+### Robustez para regiones difíciles
+
+El script implementa las siguientes estrategias automáticas:
+
+**Ajuste de `n_distritos`:** si se piden más grupos que `n_dist_apc // 4`, se baja automáticamente al máximo viable.
+
+**`node_repeats` dinámico:**
+
+| Tamaño región (APC) | `node_repeats` |
+|---------------------|----------------|
+| < 60 | 40 |
+| 60–99 | 30 |
+| 100–199 | 20 |
+| ≥ 200 | 10 |
+
+**`pair_reselection=True`:** si la versión instalada de gerrychain lo soporta, se habilita automáticamente. Permite elegir otro par de distritos cuando el spanning tree no encuentra cortes balanceados.
+
+**Conexión de islas en gerrychain:** `gc.Graph.from_geodataframe` construye su propio grafo sin respetar las conexiones artificiales de chiledist. El script conecta explícitamente los nodos aislados (grado 0) y los componentes desconectados por distancia de centroides.
+
+**`try/except` en warmup y cadena:** `IndexError` y `RuntimeError` de gerrychain son capturados. Si el warmup falla, continúa con la partición inicial. Si la cadena falla a mitad, guarda los planes generados hasta ese punto.
+
+### Restricciones implementadas
+
+| Restricción | Tipo | Parámetro |
+|-------------|------|-----------|
+| Contigüidad geográfica | Dura | `contiguous` |
+| Balance poblacional ±X% | Dura | `--pop-tol` |
+| No partir comunas (Ley 18.700) | Solo en modo `legal` / `nacional_comunal` | unidades mínimas = comunas (CUT) |
+| Compacidad | Blanda (análisis posterior) | `all_compactness()` |
+
+### Score del plan de referencia
+
+> **Nota metodológica.** En redistritaje MCMC, el resultado estadístico principal es la **distribución** del ensemble completo (`ensemble_stats.csv`), no un plan individual. El script selecciona un _plan de referencia_ conveniente para visualización usando el score heurístico a continuación. Este plan **no es** el plan "óptimo" ni el "correcto" — es simplemente representativo del extremo de la distribución con mejor balance/compacidad.
+
+```
+score = -dev_norm + pp_norm - cut_norm
+
+dev_norm = desviación_pob / max(desviaciones)   # menor es mejor
+pp_norm  = (PP - min_PP) / (max_PP - min_PP)    # mayor es mejor (cuando disponible)
+cut_norm = aristas_cortadas / max(aristas)       # menor es mejor
+```
+
+---
+
+## Autocorrelación espacial — Detalles técnicos
+
+### I de Moran global
+
+```
+I > 0  →  clustering   (valores similares agrupados espacialmente)
+I ≈ 0  →  aleatoriedad espacial
+I < 0  →  dispersión   (valores disímiles agrupados)
+```
+
+Resultados típicos Chile a nivel distrital nacional:
+
+| Variable | I de Moran | p-value |
+|----------|-----------|---------|
+| `viviendas` | 0.41 | < 0.001 |
+| `densidad_viv_km2` | 0.43 | < 0.001 |
+| `polsby_popper` | 0.49 | < 0.001 |
+
+### Mapas LISA
+
+| Cuadrante | Color | Significado geográfico en Chile |
+|-----------|-------|--------------------------------|
+| HH | Rojo | Clusters urbanos densos |
+| LL | Azul | Zonas rurales y Patagonia |
+| LH | Azul claro | Periferia de ciudades |
+| HL | Naranja | Ciudades intermedias aisladas |
+
+### Correlograma
+
+Implementado con multiplicación de matrices sparse (`A^k`) sin dependencia de `higher_order_sp` (movido en libpysal 4.x). Patrón Chile: decaimiento de ~0.41 (orden 1) a ~0.05 (orden 7) — autocorrelación significativa hasta ~100 km.
+
+---
+
+## Problemas conocidos y soluciones
+
+### gerrychain 0.3.2 en Python 3.11
+
+Los submódulos no son accesibles como atributos del objeto `gc`. Usar imports directos:
+
+```python
+from gerrychain.proposals   import recom
+from gerrychain.constraints import contiguous
+from gerrychain.accept      import always_accept
+from gerrychain.tree        import recursive_tree_part
+from functools import partial
+
+recom_proposal = partial(
+    recom,
+    pop_col="viviendas",
+    pop_target=ideal_pop,
+    epsilon=epsilon,
+    node_repeats=10,
+)
+```
+
+El updater de población debe llamarse exactamente `"population"`:
+
+```python
+updaters = {
+    "population": gc.updaters.Tally("viviendas", alias="population"),
+    "cut_edges":  gc.updaters.cut_edges,
+}
+```
+
+`within_percent_of_ideal_population` no acepta `pop_col=`:
+
+```python
+# Correcto en 0.3.2:
+pop_constraint = gc.constraints.within_percent_of_ideal_population(
+    partition, POP_TOL   # sin pop_col=
+)
+```
+
+### Error `aspect must be finite and positive`
+
+Ocurre al plotear con CRS geográfico. Usar `get_optimal_crs` para determinar automáticamente el UTM correcto:
+
+```python
+# Automático — elige UTM según el centroide longitudinal del GeoDataFrame
+crs = cd.get_optimal_crs(gdf)      # "EPSG:32719" para Chile continental
+gdf = gdf.to_crs(crs)
+gdf.plot(ax=ax)
+
+# Alternativa manual (UTM 19S cubre todo Chile continental)
+gdf = gdf.to_crs("EPSG:32719")
+gdf.plot(ax=ax)
+```
+
+### Islas sin vecinos en gerrychain
+
+`gc.Graph.from_geodataframe` ignora las conexiones de isla que chiledist establece en `build_graph`, por lo que puede dejar nodos de grado 0. `run_recom` aplica automáticamente la `island_policy` al grafo de gerrychain. Para controlar el comportamiento usa `island_policy` en `ScenarioConfig` o directamente en `run_recom`:
+
+```python
+# Conectar cada isla al vecino más cercano (comportamiento por defecto)
+plans = cd.run_recom(gdf, ..., island_policy="nearest")
+
+# Solo conectar archipiélagos dentro de 30 km
+plans = cd.run_recom(gdf, ..., island_policy="threshold", island_threshold_km=30.0)
+
+# No conectar islas (el grafo puede quedar desconectado — se emite warning)
+plans = cd.run_recom(gdf, ..., island_policy="none")
+```
+
+### `Failed to find a balanced cut` / `Cannot choose from an empty sequence`
+
+Ocurre en regiones con pocos nodos por grupo (spanning trees lineales sin aristas internas). Soluciones en orden de preferencia:
+
+1. Pedir menos grupos: `--n-distritos 3` para regiones con <40 APC
+2. El script ya habilita `pair_reselection=True` automáticamente si disponible
+3. El script ya aumenta `node_repeats` para regiones pequeñas
+4. Si retorna `sin_particion`, la región es estructuralmente inviable con ese número de grupos
+
+### Columnas truncadas en DBF
+
+El formato DBF trunca nombres a 10 caracteres. `loader.py` lo normaliza automáticamente. Si se carga manualmente:
+
+```python
+distritos = distritos.rename(columns={
+    "N_PROVINCI": "N_PROVINCIA",
+    "COD_DISTRI": "COD_DISTRITO",
+    "TIPO_DISTR": "TIPO_DISTRITO",
+})
+```
+
+### `higher_order_sp` no disponible (libpysal 4.x)
+
+El módulo fue movido. El correlograma de chiledist no depende de él — usa multiplicación de matrices sparse directamente:
+
+```python
+A_k = A.copy()
+for k in range(1, max_order + 1):
+    if k > 1:
+        A_next = A_k.dot(A)
+        A_k = (A_next > 0).astype(float)
+        A_k.setdiag(0)
+    W_norm = diags(1 / row_sums).dot(A_k)
+    w_k = WSP(W_norm).to_W()
+    mi_k = Moran(y, w_k, permutations=199)
+```
+
+---
+
+## Dependencias
+
+| Paquete | Versión | Uso |
+|---------|---------|-----|
+| geopandas | 1.1.3 | Lectura y manipulación de shapefiles |
+| pyogrio | 0.12.1 | Backend rápido de I/O geoespacial |
+| shapely | 2.1.2 | Geometrías y operaciones espaciales |
+| fiona | 1.10.1 | Lectura de formatos vectoriales |
+| pyproj | 3.7.2 | Reproyección de coordenadas |
+| pandas | 3.0.3 | Tablas y manipulación de datos |
+| numpy | 2.4.6 | Álgebra lineal y arrays |
+| scipy | 1.17.1 | Matrices sparse CSR |
+| networkx | 3.6.1 | Grafos y análisis de redes |
+| matplotlib | 3.11.0 | Visualización |
+| libpysal | 4.14.1 | Pesos espaciales Queen/Rook |
+| esda | — | I de Moran, LISA, G* |
+| scikit-learn | 1.9.0 | Dependencia de gerrychain |
+| gerrychain | 0.3.2 | Redistritaje ReCom |
+
+---
+
+## Limitaciones metodológicas
+
+- **`viviendas` como proxy de población.** El conteo de viviendas del APC 2023 es un proxy de población, no una medida directa. La relación viviendas/personas varía por densidad (≈2.1 en RM, ≈2.8 en zonas rurales). Usar Censo 2024 (`pop_col="personas"`) o padrón SERVEL (`pop_col="inscritos"`) para resultados publicables. El `ScenarioConfig.validate()` emite una advertencia al usar `viviendas` con restricciones activas.
+
+- **Contiguidad artificial de islas.** Las conexiones de isla (`island_policy`) garantizan factibilidad algorítmica, no contigüidad electoral. Los planes con unidades insulares (Chiloé, Aysén, Magallanes) deben verificarse manualmente antes de presentarlos como propuestas.
+
+- **Redistritaje regional ≠ redistritaje nacional.** Los análisis por región son independientes y no producen un plan nacional coherente. El modo `nacional_comunal` corre ReCom sobre 345 comunas con `n_districts` arbitrario — no reproduce el mapa de 28 distritos legales.
+
+- **El "plan de referencia" no es el plan óptimo.** Es un representante del extremo de mayor score heurístico del ensemble, útil para visualización. El resultado estadístico del análisis es la distribución completa (`ensemble_stats.csv`).
+
+- **R-hat < 1.1 indica convergencia, no representatividad distribucional.** Con propuestas ReCom y restricciones duras, la distribución empírica puede diferir de la uniforme sobre planes válidos. Para verificación, comparar con resultados SMC como referencia.
+
+- **Bridge SMC requiere R externo.** `generate_redist_script()` produce un script R pero no lo ejecuta. El flujo Python→R→Python requiere R instalado con el paquete `redist`. La librería emite una advertencia si `Rscript` no está en el PATH.
+
+- **Sin tests automatizados.** El proyecto no tiene suite de tests. Los resultados dependen de la integridad de los datos de entrada (APC 2023, Censo 2024, padrón SERVEL).
+
+---
+
+## Referencias
+
+### Software
+- **ALARM Project** — Algorithmic Redistricting and Mapping, Harvard: https://alarm-redist.org
+- **redist** (R) — SMC para redistritaje: https://redist.alarm-redist.org
+- **gerrychain** (Python) — ReCom MCMC: https://gerrychain.readthedocs.io
+
+### Metodología
+- DeFord, D., Duchin, M., & Solomon, J. (2021). Recombination: A family of Markov chains for redistricting. *Harvard Data Science Review*, 3(1).
+- McCartan, C., & Imai, K. (2023). Sequential Monte Carlo for sampling balanced and compact redistricting plans. *Annals of Applied Statistics*, 17(4).
+- Polsby, D. D., & Popper, R. D. (1991). The third criterion: Compactness as a procedural safeguard against partisan gerrymandering. *Yale Law & Policy Review*, 9(2), 301–353.
+- Gallagher, M. (1991). Proportionality, disproportionality and electoral systems. *Electoral Studies*, 10(1), 33–51.
+
+### Marco legal Chile
+- **Ley 18.700** — Ley Orgánica Constitucional sobre Votaciones Populares y Escrutinios
+- **Ley 20.840** — Reforma electoral 2015; Art. 179 define los 28 distritos y magnitudes vigentes
+- **APC 2023** — INE Chile: https://www.ine.gob.cl

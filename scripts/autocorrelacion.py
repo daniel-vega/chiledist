@@ -87,13 +87,18 @@ def parse_args():
 def parse_regiones(s: str) -> list[int] | str:
     """
     Parsea el argumento --regiones.
-    Retorna lista de enteros, o la string 'nacional' para análisis conjunto.
+    Retorna lista de enteros o una string especial:
+        "nacional"         → Opción A: APC nacional (~2.768 nodos)
+        "nacional_comunal" → Opción C: comunal nacional (~345 nodos)
+        lista de ints      → Opción B: análisis por región
     """
     s = s.strip().lower()
     if s == "todas":
         return list(range(1, 17))
     if s == "nacional":
-        return "nacional"   # señal especial para analizar todo Chile junto
+        return "nacional"
+    if s in ("nacional_comunal", "comunal"):
+        return "nacional_comunal"
     return [int(r.strip()) for r in s.split(",")]
 
 
@@ -676,6 +681,155 @@ def analizar_nacional(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Opción C — Autocorrelación nacional comunal (~345 nodos)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def analizar_nacional_comunal(
+    base_dir: str,
+    output_base: str,
+    variables_list: list,
+    max_order: int,
+    permutaciones: int,
+    skip_viz: bool,
+) -> dict:
+    """
+    Opción C: autocorrelación sobre las ~345 comunas nacionales.
+    Más rápido que el análisis APC. Útil para patrones a escala municipal.
+    """
+    try:
+        from libpysal.weights import WSP
+        from libpysal.weights.spatial_lag import lag_spatial
+        from esda.moran import Moran, Moran_Local
+        from esda.getisord import G_Local
+    except ImportError as e:
+        print(f"  ⚠ Dependencia faltante: {e}")
+        return {"region": "nacional_comunal", "status": "sin_esda"}
+
+    out_dir = os.path.join(output_base, "nacional", "autocorrelacion_comunal")
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"\n{'#'*60}")
+    print(f"  Autocorrelación NACIONAL COMUNAL (Opción C)")
+    print(f"  ~345 comunas — análisis a escala municipal")
+    print(f"  Output: {out_dir}")
+    print(f"{'#'*60}")
+
+    print("\n  Cargando capa comunal...")
+    comunas = cd.load_layer("comunal", base_dir=base_dir)
+
+    # Agregar población a nivel comunal
+    mz_urb = cd.load_layer("manzana_urbana", base_dir=base_dir)
+    mz_ald = cd.load_layer("manzana_aldea",  base_dir=base_dir)
+    pop_urb = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
+    pop_ald = cd.aggregate_population(mz_ald, level="distrito", source="aldea")
+    pop = (pop_urb.merge(pop_ald, on=["CUT","COD_DISTRITO"],
+                          how="outer", suffixes=("_urb","_ald")).fillna(0))
+    pop["viviendas"] = pop.get("viviendas_urb", 0) + pop.get("viviendas_ald", 0)
+    pop_com = pop.groupby("CUT")["viviendas"].sum().reset_index()
+    comunas = comunas.merge(pop_com, on="CUT", how="left").fillna({"viviendas": 0})
+    comunas["viviendas"] = comunas["viviendas"].astype(int)
+
+    # Área y densidad
+    comunas_m = comunas.to_crs("EPSG:32719")
+    comunas["area_km2"] = comunas_m.geometry.area / 1e6
+    comunas["densidad_viv_km2"] = (
+        comunas["viviendas"] / comunas["area_km2"].replace(0, np.nan)
+    ).fillna(0)
+
+    # Compacidad
+    metricas  = cd.all_compactness(comunas, id_col="CUT")
+    comunas   = comunas.merge(
+        metricas[["CUT","polsby_popper"]], on="CUT", how="left"
+    )
+
+    print(f"  Comunas: {len(comunas):,}  Viviendas: {comunas['viviendas'].sum():,}")
+
+    # Grafo
+    _, adj, ids = cd.build_graph(comunas, id_col="CUT", connect_islands=True)
+    indice = comunas[["CUT","N_COMUNA","N_REGION","N_PROVINCIA","viviendas"]].copy()
+    indice["fila_col"] = range(len(indice))
+    comunas = comunas.set_index("CUT").loc[indice["CUT"]].reset_index()
+
+    w = WSP(adj).to_W()
+    w.transform = "r"
+    print(f"  Pesos: {w.n} unidades · islas: {len(w.islands)}")
+
+    vars_disponibles = {
+        v: comunas[v].values.astype(float)
+        for v in variables_list if v in comunas.columns
+    }
+    if not vars_disponibles:
+        print(f"  ⚠ Ninguna variable disponible: {variables_list}")
+        return {"region": "nacional_comunal", "status": "sin_variables"}
+
+    # Moran Global
+    print(f"\n  Índice de Moran Global (comunal):")
+    resultados_moran = {}
+    for var_name, y in vars_disponibles.items():
+        mi  = Moran(y, w, permutations=permutaciones)
+        resultados_moran[var_name] = mi
+        sig = "***" if mi.p_sim<0.001 else "**" if mi.p_sim<0.01 else "*" if mi.p_sim<0.05 else "ns"
+        print(f"    {var_name:25s}: I={mi.I:.4f} {sig}  p={mi.p_sim:.4f}")
+
+    # LISA
+    print(f"\n  LISA (p < 0.05):")
+    lisa_results = {}
+    for var_name, y in vars_disponibles.items():
+        lisa = Moran_Local(y, w, permutations=permutaciones, seed=42)
+        lisa_results[var_name] = lisa
+        sig_mask = lisa.p_sim < 0.05
+        ql = {1:"HH",2:"LH",3:"LL",4:"HL"}
+        counts = {l: ((lisa.q == q) & sig_mask).sum() for q, l in ql.items()}
+        print(f"    {var_name:25s}: HH={counts['HH']:4d} LL={counts['LL']:4d} "
+              f"LH={counts['LH']:4d} HL={counts['HL']:4d}")
+        comunas[f"lisa_q_{var_name}"]   = lisa.q
+        comunas[f"lisa_p_{var_name}"]   = lisa.p_sim
+        comunas[f"lisa_sig_{var_name}"] = sig_mask
+
+    # G*
+    print(f"\n  Getis-Ord G*:")
+    w_b = WSP(adj).to_W()
+    for var_name, y in vars_disponibles.items():
+        g = G_Local(y, w_b, transform="b", permutations=permutaciones, seed=42)
+        comunas[f"gstar_{var_name}"]     = g.Zs
+        comunas[f"gstar_sig_{var_name}"] = g.p_sim < 0.05
+        hs = (g.Zs > 1.96) & (g.p_sim < 0.05)
+        cs = (g.Zs < -1.96) & (g.p_sim < 0.05)
+        print(f"    {var_name:25s}: hotspots={hs.sum():4d} coldspots={cs.sum():4d}")
+
+    # Guardar
+    cols_export = ["CUT","N_COMUNA","N_REGION","viviendas","area_km2","densidad_viv_km2"]
+    for v in vars_disponibles:
+        for s in [f"lisa_q_{v}",f"lisa_p_{v}",f"lisa_sig_{v}",
+                  f"gstar_{v}",f"gstar_sig_{v}"]:
+            if s in comunas.columns:
+                cols_export.append(s)
+    comunas[[c for c in cols_export if c in comunas.columns]].to_csv(
+        os.path.join(out_dir, "resultados.csv"), index=False)
+    pd.DataFrame([
+        {"variable": k, "moran_I": v.I, "p_sim": v.p_sim,
+         "tipo": "clustering" if v.I > 0 else "dispersión"}
+        for k, v in resultados_moran.items()
+    ]).to_csv(os.path.join(out_dir, "moran_global.csv"), index=False)
+    print(f"  Guardado: resultados.csv, moran_global.csv")
+
+    if not skip_viz:
+        _generar_figuras_autocorr(
+            comunas, adj, resultados_moran, lisa_results,
+            vars_disponibles, w, max_order, out_dir,
+            region_label="Chile comunal"
+        )
+
+    return {
+        "region": "nacional_comunal", "region_name": "Nacional Comunal",
+        "status": "ok", "n_distritos": len(comunas),
+        "moran_viviendas": resultados_moran.get(
+            "viviendas", type("",(),{"I":np.nan})()).I,
+        "out_dir": out_dir,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -695,8 +849,9 @@ def main():
 
     resultados = []
 
-    # ── Modo nacional ─────────────────────────────────────────────────────────
+    # ── Opción A: nacional APC ────────────────────────────────────────────────
     if regiones == "nacional":
+        print(f"\nModo: NACIONAL APC (Opción A) — ~2.768 distritos")
         try:
             res = analizar_nacional(
                 base_dir=base_dir,
@@ -709,13 +864,35 @@ def main():
             resultados.append(res)
         except Exception as e:
             import traceback
-            print(f"\n  ⚠ Error en análisis nacional: {e}")
+            print(f"\n  ⚠ Error en análisis nacional APC: {e}")
             traceback.print_exc()
             resultados.append({"region": "nacional", "status": "error",
                                 "error": str(e)})
 
-    # ── Modo por región ───────────────────────────────────────────────────────
+    # ── Opción C: nacional comunal ────────────────────────────────────────────
+    elif regiones == "nacional_comunal":
+        print(f"\nModo: NACIONAL COMUNAL (Opción C) — ~345 comunas")
+        try:
+            res = analizar_nacional_comunal(
+                base_dir=base_dir,
+                output_base=output_base,
+                variables_list=variables,
+                max_order=args.max_order,
+                permutaciones=args.permutaciones,
+                skip_viz=args.skip_viz,
+            )
+            resultados.append(res)
+        except Exception as e:
+            import traceback
+            print(f"\n  ⚠ Error en análisis nacional comunal: {e}")
+            traceback.print_exc()
+            resultados.append({"region": "nacional_comunal", "status": "error",
+                                "error": str(e)})
+
+    # ── Opción B: por región ──────────────────────────────────────────────────
     else:
+        if len(regiones) > 1:
+            print(f"\nModo: POR REGIÓN (Opción B) — {len(regiones)} regiones")
         for r in regiones:
             try:
                 res = analizar_region(
@@ -749,6 +926,14 @@ def main():
     resumen_path = os.path.join(output_base, "autocorrelacion_resumen.csv")
     df_res.to_csv(resumen_path, index=False)
     print(f"\nResumen guardado: {resumen_path}")
+    print(f"""
+Modos disponibles:
+  --regiones 13             → Región específica     (Opción B)
+  --regiones 5,8,13         → Varias regiones       (Opción B)
+  --regiones todas          → Todas por separado    (Opción B)
+  --regiones nacional       → Chile APC ~2768 nodos (Opción A)
+  --regiones nacional_comunal → Chile comunal ~345  (Opción C)
+""")
 
 
 if __name__ == "__main__":

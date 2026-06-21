@@ -39,8 +39,44 @@ Referencias
     gerrychain (Python):     https://gerrychain.readthedocs.io
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__  = "chiledist"
+
+# Configuración de escenarios
+from .config import (
+    ScenarioConfig,
+    SCENARIO_LEGAL,
+    SCENARIO_APC_FREE,
+    SCENARIO_APC_SOFT,
+    SCENARIOS,
+    load_scenario,
+    save_scenario,
+)
+
+# Jerarquía y contracción de unidades
+from .hierarchy import (
+    contract_to_decision_units,
+    build_decision_layer,
+    validate_hierarchy,
+    propagate_district_assignment,
+)
+
+# Restricciones para gerrychain
+from .constraints import (
+    make_preserve_constraint,
+    build_updaters_for_scenario,
+    build_constraints_for_scenario,
+    score_with_split_penalty,
+)
+
+# Métricas de comunas partidas
+from .split_metrics import (
+    count_split_units,
+    split_severity_index,
+    split_unit_summary,
+    small_fragment_count,
+    plan_split_metrics,
+)
 
 # Equivalencia USA-Chile
 from .equivalence import (
@@ -49,6 +85,7 @@ from .equivalence import (
     get_analog,
     describe_hierarchy,
     print_equivalence,
+    get_optimal_crs,
     EQUIVALENCE_TABLE,
     USA_UNITS,
     CHILE_UNITS,
@@ -95,13 +132,70 @@ from .metrics import (
     plan_summary,
 )
 
-# Redistritaje
-from .redistricting import (
+# Fuentes de población externas (Censo 2024 + SERVEL)
+from . import data as data
+
+# Comparación de escenarios
+from .scenario_comparison import (
+    ScoringConfig,
+    load_ensembles_from_disk,
+    compare_ensembles,
+    scenario_delta,
+    rank_scenarios,
+    pareto_frontier_nd,
+    pareto_optimal_scenarios,
+    plot_tradeoff_frontier,
+    plot_boxplots_comparativos,
+    plot_radar_comparativo,
+    split_frequency_table,
+    COLORES_DEFAULT,
+    NOMBRES_CORTOS,
+    METRICAS_STD,
+    PESOS_DEFAULT,
+)
+
+# Electoral: D'Hondt, magnitudes, proporcionalidad
+from .electoral import (
+    dhondt,
+    assign_seat_magnitudes,
+    aggregate_votes,
+    run_electoral_plan,
+    national_shares,
+    gallagher_index,
+    loosemore_hanby,
+    rae_index,
+    effective_number_of_parties,
+    proportionality_summary,
+    plan_electoral_metrics,
+    TOTAL_ESCANOS_CAMARA,
+    MIN_ESCANOS_DISTRITO,
+    MAX_ESCANOS_DISTRITO,
+    MAGNITUDES_LEGALES_LEY20840,
+    MAGNITUDES_LEGALES_2021,
+)
+
+# Muestreo: ReCom, SMC y diagnósticos de convergencia
+from . import samplers as samplers
+from .samplers import (
+    # recom
     initial_partition,
     run_recom,
     analyze_ensemble,
-    export_to_redist,
     chile_constraints,
+    # smc
+    export_to_redist,
+    generate_redist_script,
+    load_redist_results,
+    # diagnostics
+    autocorrelation_function,
+    effective_sample_size,
+    gelman_rubin,
+    mixing_diagnostics,
+    plot_trace,
+    plot_acf,
+    plot_gelman_rubin_evolution,
+    run_multiple_chains,
+    RHAT_THRESHOLD,
 )
 
 # Visualización
@@ -114,9 +208,22 @@ from .viz import (
 )
 
 __all__ = [
+    # config
+    "ScenarioConfig",
+    "SCENARIO_LEGAL", "SCENARIO_APC_FREE", "SCENARIO_APC_SOFT", "SCENARIOS",
+    "load_scenario", "save_scenario",
+    # hierarchy
+    "contract_to_decision_units", "build_decision_layer",
+    "validate_hierarchy", "propagate_district_assignment",
+    # constraints
+    "make_preserve_constraint", "build_updaters_for_scenario",
+    "build_constraints_for_scenario", "score_with_split_penalty",
+    # split_metrics
+    "count_split_units", "split_severity_index", "split_unit_summary",
+    "small_fragment_count", "plan_split_metrics",
     # equivalence
     "get_equivalence_table", "get_unit", "get_analog",
-    "describe_hierarchy", "print_equivalence",
+    "describe_hierarchy", "print_equivalence", "get_optimal_crs",
     "EQUIVALENCE_TABLE", "USA_UNITS", "CHILE_UNITS",
     "DBF_COLUMN_MAP", "POPULATION_FIELDS",
     # loader
@@ -130,9 +237,34 @@ __all__ = [
     "polsby_popper", "reock", "convex_hull_ratio", "schwartzberg",
     "all_compactness", "population_balance", "ideal_population",
     "spatial_summary", "cut_edges", "contiguity_check", "plan_summary",
-    # redistricting
-    "initial_partition", "run_recom", "analyze_ensemble",
-    "export_to_redist", "chile_constraints",
+    # data (subpaquete — acceder vía cd.data.census2024 / cd.data.servel)
+    "data",
+    # scenario_comparison
+    "ScoringConfig",
+    "load_ensembles_from_disk", "compare_ensembles", "scenario_delta",
+    "rank_scenarios", "pareto_frontier_nd", "pareto_optimal_scenarios",
+    "plot_tradeoff_frontier", "plot_boxplots_comparativos",
+    "plot_radar_comparativo", "split_frequency_table",
+    "COLORES_DEFAULT", "NOMBRES_CORTOS", "METRICAS_STD", "PESOS_DEFAULT",
+    # electoral
+    "dhondt", "assign_seat_magnitudes", "aggregate_votes",
+    "run_electoral_plan", "national_shares",
+    "gallagher_index", "loosemore_hanby", "rae_index",
+    "effective_number_of_parties", "proportionality_summary",
+    "plan_electoral_metrics",
+    "TOTAL_ESCANOS_CAMARA", "MIN_ESCANOS_DISTRITO", "MAX_ESCANOS_DISTRITO",
+    "MAGNITUDES_LEGALES_LEY20840", "MAGNITUDES_LEGALES_2021",
+    # diagnostics
+    "autocorrelation_function", "effective_sample_size", "gelman_rubin",
+    "mixing_diagnostics", "plot_trace", "plot_acf",
+    "plot_gelman_rubin_evolution", "run_multiple_chains",
+    "generate_redist_script", "load_redist_results", "RHAT_THRESHOLD",
+    # samplers (subpaquete — acceder vía cd.samplers.recom / .smc / .diagnostics)
+    "samplers",
+    # samplers.recom
+    "initial_partition", "run_recom", "analyze_ensemble", "chile_constraints",
+    # samplers.smc
+    "export_to_redist", "generate_redist_script", "load_redist_results",
     # viz
     "plot_adjacency_graph", "plot_layer", "plot_plan",
     "plot_compactness", "plot_equivalence_table",

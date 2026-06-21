@@ -17,7 +17,7 @@ import scipy.sparse as sp
 import networkx as nx
 from libpysal.weights import Queen, Rook
 
-from .equivalence import CRS_METRIC
+from .equivalence import CRS_METRIC, get_optimal_crs
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -28,8 +28,11 @@ def build_graph(
     gdf: gpd.GeoDataFrame,
     id_col: str,
     method: str = "queen",
-    connect_islands: bool = True,
+    island_policy: str = "nearest",
+    island_threshold_km: float = 50.0,
+    connect_islands: Optional[bool] = None,   # deprecated: use island_policy
     attr_cols: Optional[list] = None,
+    crs_metric: Optional[str] = None,
 ) -> tuple:
     """
     Construye un grafo de adyacencia desde un GeoDataFrame.
@@ -41,10 +44,21 @@ def build_graph(
         Columna con el identificador único.
     method : str
         'queen' o 'rook'.
-    connect_islands : bool
-        Si True, conecta unidades sin vecinos al vecino más cercano.
-    attr_cols : list[str], optional
+    island_policy : str
+        Política para unidades sin vecinos geométricos:
+        - ``"nearest"``   — conecta al vecino más cercano (default)
+        - ``"threshold"`` — conecta solo si distancia ≤ island_threshold_km
+        - ``"none"``      — no conecta; la isla queda aislada
+    island_threshold_km : float
+        Umbral de distancia en km para ``island_policy="threshold"``.
+    connect_islands : bool, opcional
+        **Deprecado.** Equivale a ``island_policy="nearest"`` (True) o
+        ``island_policy="none"`` (False). Tiene precedencia si se provee.
+    attr_cols : list[str], opcional
         Columnas adicionales como atributos de nodo.
+    crs_metric : str, opcional
+        CRS métrico para cálculo de centroides y distancias.
+        None = auto-detectar con ``get_optimal_crs``.
 
     Returns
     -------
@@ -52,6 +66,18 @@ def build_graph(
     adj     : sp.csr_matrix
     id_list : list
     """
+    # Compatibilidad hacia atrás: connect_islands bool → island_policy
+    if connect_islands is not None:
+        import warnings
+        warnings.warn(
+            "connect_islands está deprecado. Usa island_policy='nearest'/'none'.",
+            DeprecationWarning, stacklevel=2,
+        )
+        island_policy = "nearest" if connect_islands else "none"
+
+    if crs_metric is None:
+        crs_metric = get_optimal_crs(gdf)
+
     gdf = gdf.copy().reset_index(drop=True)
     gdf["geometry"] = gdf["geometry"].buffer(0)
 
@@ -62,14 +88,32 @@ def build_graph(
     id_index = {id_: i for i, id_ in enumerate(id_list)}
     n        = len(id_list)
 
-    # Identificar y conectar islas
+    # Identificar y conectar islas según la política configurada
     islands = [id_ for id_, nb in w.neighbors.items() if len(nb) == 0]
     connections = []
     if islands:
         print(f"  Unidades sin vecinos (islas): {len(islands)}")
-        if connect_islands:
-            w, connections = _connect_islands(gdf, id_col, id_index, w, islands)
-            print(f"  Islas conectadas por proximidad: {len(connections)}")
+        if island_policy == "none":
+            print(f"  island_policy='none': islas no conectadas.")
+        elif island_policy == "nearest":
+            w, connections = _connect_islands(
+                gdf, id_col, id_index, w, islands, crs_metric=crs_metric,
+            )
+            print(f"  Islas conectadas (nearest): {len(connections)}")
+        elif island_policy == "threshold":
+            w, connections = _connect_islands(
+                gdf, id_col, id_index, w, islands,
+                threshold_km=island_threshold_km, crs_metric=crs_metric,
+            )
+            n_conn   = len(connections)
+            n_noconn = len(islands) - n_conn
+            print(f"  Islas conectadas (threshold={island_threshold_km} km): "
+                  f"{n_conn} conectadas, {n_noconn} fuera de umbral.")
+        else:
+            raise ValueError(
+                f"island_policy '{island_policy}' no reconocida. "
+                "Opciones: 'nearest', 'threshold', 'none'."
+            )
 
     # Construir matriz sparse
     rows_idx, cols_idx = [], []
@@ -93,7 +137,7 @@ def build_graph(
     cols_to_add   = [c for c in cols_to_add if c in gdf.columns]
 
     # Reproyectar para centroides correctos
-    gdf_m     = gdf.to_crs(CRS_METRIC)
+    gdf_m     = gdf.to_crs(crs_metric)
     centroids = gdf_m.geometry.centroid
     xs        = centroids.x.tolist()
     ys        = centroids.y.tolist()
@@ -124,21 +168,28 @@ def _connect_islands(
     id_index: dict,
     w,
     islands: list,
+    threshold_km: Optional[float] = None,
+    crs_metric: str = CRS_METRIC,
 ) -> tuple:
     """
-    Conecta cada isla al vecino más cercano.
-    Usa distancias entre centroides (numpy vectorizado) — rápido y suficiente
-    para encontrar el vecino más próximo entre ~3k unidades.
+    Conecta islas al vecino más cercano.
+
+    Parameters
+    ----------
+    threshold_km : float, opcional
+        Si se provee, solo conecta si distancia_centroide ≤ threshold_km.
+        None = sin umbral (nearest, siempre conecta).
+    crs_metric : str
+        CRS métrico para cálculo de distancias entre centroides.
     """
-    gdf_m = gdf.to_crs(CRS_METRIC).reset_index(drop=True)
+    gdf_m = gdf.to_crs(crs_metric).reset_index(drop=True)
     w_lil = _weights_to_lil(w, id_index, len(id_index))
 
-    ids_array = gdf_m[id_col].tolist()
-
-    # Precomputar coordenadas de centroides como arrays numpy — O(1) por isla
+    ids_array  = gdf_m[id_col].tolist()
     centroids  = gdf_m.geometry.centroid
     cx         = centroids.x.to_numpy()
     cy         = centroids.y.to_numpy()
+    threshold_m = threshold_km * 1000.0 if threshold_km is not None else np.inf
 
     connections = []
 
@@ -146,17 +197,16 @@ def _connect_islands(
         i           = id_index[island_id]
         vecinos_act = set(w_lil[i])
 
-        # Distancia euclidiana vectorizada a todos los centroides
         dx   = cx - cx[i]
         dy   = cy - cy[i]
         dist = np.sqrt(dx * dx + dy * dy)
-
-        # Ordenar por distancia, excluir la propia isla
         orden = np.argsort(dist)
 
         for idx_cand in orden:
             if idx_cand == i:
                 continue
+            if dist[idx_cand] > threshold_m:
+                break          # ya ordenado: ningún candidato posterior estará más cerca
             cand_id = ids_array[idx_cand]
             j       = id_index.get(cand_id)
             if j is None or j in vecinos_act:
@@ -166,7 +216,7 @@ def _connect_islands(
             connections.append({
                 "isla":    island_id,
                 "vecino":  cand_id,
-                "dist_km": round(float(dist[idx_cand]) / 1000, 1),
+                "dist_km": round(float(dist[idx_cand]) / 1000.0, 1),
             })
             break
 

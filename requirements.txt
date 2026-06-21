@@ -29,3 +29,6 @@ scikit-learn==1.9.0
 
 # ── Redistritaje ─────────────────────────────────────────────────────────────
 gerrychain==0.3.2
+
+# Escenarios y configuracion
+pyyaml>=6.0
