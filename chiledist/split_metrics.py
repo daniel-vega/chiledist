@@ -257,6 +257,57 @@ def small_fragment_count(
     return len(small)
 
 
+def pop_afectada_pct(
+    assignment: dict,
+    gdf: gpd.GeoDataFrame,
+    unit_col: str,
+    id_col: str,
+    pop_col: str = "viviendas",
+) -> float:
+    """
+    Fracción de la población total que reside en unidades administrativas
+    que están divididas entre dos o más distritos en el plan.
+
+    Difiere de share_comunas_partidas (fracción de *comunas* partidas):
+    una sola comuna muy poblada partida puede tener share_comunas ~ 0.003
+    pero pop_afectada_pct ~ 0.20.  Este indicador es el más relevante para
+    una discusión legislativa sobre igualdad del voto.
+
+    Parameters
+    ----------
+    assignment : dict
+        {id_col_value: district_id}
+    gdf : gpd.GeoDataFrame
+        Con columnas id_col, unit_col y pop_col.
+    unit_col : str
+        Unidad cuya integridad se evalúa (ej. "CUT").
+    id_col : str
+        Unidad de decisión (ej. "ID_DIST").
+    pop_col : str
+        Columna de población.
+
+    Returns
+    -------
+    float en [0, 1].  0.0 = ninguna unidad partida; 1.0 = toda la población
+    reside en unidades divididas.
+    """
+    df = _build_assignment_df(assignment, gdf, unit_col, id_col)
+    if df.empty or pop_col not in gdf.columns:
+        return 0.0
+
+    pop_map   = dict(zip(gdf[id_col], gdf[pop_col]))
+    df["pop"] = df[id_col].map(pop_map).fillna(0)
+    total_pop = df["pop"].sum()
+    if total_pop == 0:
+        return 0.0
+
+    n_districts_per_unit = df.groupby(unit_col)["district"].nunique()
+    split_units = n_districts_per_unit[n_districts_per_unit > 1].index
+
+    pop_in_split = df[df[unit_col].isin(split_units)]["pop"].sum()
+    return round(float(pop_in_split / total_pop), 4)
+
+
 def plan_split_metrics(
     assignment: dict,
     gdf: gpd.GeoDataFrame,
@@ -281,15 +332,16 @@ def plan_split_metrics(
     Returns
     -------
     dict con:
-        n_comunas_partidas, share_comunas_partidas,
+        n_comunas_partidas, share_comunas_partidas, pop_afectada_pct,
         split_severity, small_fragments,
         comunas_mas_partidas (lista de CUT)
     """
     n_total = gdf[unit_col].nunique() if unit_col in gdf.columns else 0
 
-    n_split  = count_split_units(assignment, gdf, unit_col, id_col)
-    severity = split_severity_index(assignment, gdf, unit_col, id_col, pop_col)
-    small    = small_fragment_count(assignment, gdf, unit_col, id_col, pop_col)
+    n_split    = count_split_units(assignment, gdf, unit_col, id_col)
+    severity   = split_severity_index(assignment, gdf, unit_col, id_col, pop_col)
+    small      = small_fragment_count(assignment, gdf, unit_col, id_col, pop_col)
+    pop_affect = pop_afectada_pct(assignment, gdf, unit_col, id_col, pop_col)
 
     summary  = split_unit_summary(assignment, gdf, unit_col, id_col, pop_col)
     top_split = (
@@ -300,6 +352,7 @@ def plan_split_metrics(
     return {
         "n_comunas_partidas":     int(n_split),
         "share_comunas_partidas": round(n_split / n_total, 4) if n_total else 0.0,
+        "pop_afectada_pct":       pop_affect,
         "split_severity":         round(float(severity), 4),
         "small_fragments":        int(small),
         "comunas_mas_partidas":   top_split,

@@ -46,8 +46,9 @@ __author__  = "chiledist"
 from .config import (
     ScenarioConfig,
     SCENARIO_LEGAL,
-    SCENARIO_APC_FREE,
+    SCENARIO_APC_STRICT,
     SCENARIO_APC_SOFT,
+    SCENARIO_APC_FREE,
     SCENARIOS,
     load_scenario,
     save_scenario,
@@ -75,6 +76,7 @@ from .split_metrics import (
     split_severity_index,
     split_unit_summary,
     small_fragment_count,
+    pop_afectada_pct,
     plan_split_metrics,
 )
 
@@ -148,6 +150,9 @@ from .scenario_comparison import (
     plot_boxplots_comparativos,
     plot_radar_comparativo,
     split_frequency_table,
+    position_plan_vigente,
+    compare_sensitivity,
+    ranking_concordance,
     COLORES_DEFAULT,
     NOMBRES_CORTOS,
     METRICAS_STD,
@@ -157,9 +162,11 @@ from .scenario_comparison import (
 # Electoral: D'Hondt, magnitudes, proporcionalidad
 from .electoral import (
     dhondt,
+    dhondt_binivel,
     assign_seat_magnitudes,
     aggregate_votes,
     run_electoral_plan,
+    run_electoral_plan_binivel,
     national_shares,
     gallagher_index,
     loosemore_hanby,
@@ -167,6 +174,13 @@ from .electoral import (
     effective_number_of_parties,
     proportionality_summary,
     plan_electoral_metrics,
+    # malapportionment
+    personas_por_escano,
+    peso_relativo_del_voto,
+    comparar_magnitudes,
+    umbral_efectivo,
+    margen_ultimo_escano,
+    seat_bonus,
     TOTAL_ESCANOS_CAMARA,
     MIN_ESCANOS_DISTRITO,
     MAX_ESCANOS_DISTRITO,
@@ -174,12 +188,27 @@ from .electoral import (
     MAGNITUDES_LEGALES_2021,
 )
 
+# Persistencia reproducible
+from .persistence import (
+    PlanEnsemble,
+    new_run_id,
+    sha256_file,
+    get_package_versions,
+    save_assignments_parquet,
+    build_run_manifest,
+    save_run_manifest,
+)
+
+# Contenedor de datos cargados
+from .map import ChileDistMap
+
 # Muestreo: ReCom, SMC y diagnósticos de convergencia
 from . import samplers as samplers
 from .samplers import (
     # recom
     initial_partition,
     run_recom,
+    run_recom_chain,
     analyze_ensemble,
     chile_constraints,
     # smc
@@ -210,7 +239,8 @@ from .viz import (
 __all__ = [
     # config
     "ScenarioConfig",
-    "SCENARIO_LEGAL", "SCENARIO_APC_FREE", "SCENARIO_APC_SOFT", "SCENARIOS",
+    "SCENARIO_LEGAL", "SCENARIO_APC_STRICT",
+    "SCENARIO_APC_SOFT", "SCENARIO_APC_FREE", "SCENARIOS",
     "load_scenario", "save_scenario",
     # hierarchy
     "contract_to_decision_units", "build_decision_layer",
@@ -220,7 +250,7 @@ __all__ = [
     "build_constraints_for_scenario", "score_with_split_penalty",
     # split_metrics
     "count_split_units", "split_severity_index", "split_unit_summary",
-    "small_fragment_count", "plan_split_metrics",
+    "small_fragment_count", "pop_afectada_pct", "plan_split_metrics",
     # equivalence
     "get_equivalence_table", "get_unit", "get_analog",
     "describe_hierarchy", "print_equivalence", "get_optimal_crs",
@@ -245,13 +275,18 @@ __all__ = [
     "rank_scenarios", "pareto_frontier_nd", "pareto_optimal_scenarios",
     "plot_tradeoff_frontier", "plot_boxplots_comparativos",
     "plot_radar_comparativo", "split_frequency_table",
+    "position_plan_vigente", "compare_sensitivity", "ranking_concordance",
     "COLORES_DEFAULT", "NOMBRES_CORTOS", "METRICAS_STD", "PESOS_DEFAULT",
     # electoral
-    "dhondt", "assign_seat_magnitudes", "aggregate_votes",
-    "run_electoral_plan", "national_shares",
+    "dhondt", "dhondt_binivel",
+    "assign_seat_magnitudes", "aggregate_votes",
+    "run_electoral_plan", "run_electoral_plan_binivel", "national_shares",
     "gallagher_index", "loosemore_hanby", "rae_index",
     "effective_number_of_parties", "proportionality_summary",
     "plan_electoral_metrics",
+    # malapportionment
+    "personas_por_escano", "peso_relativo_del_voto", "comparar_magnitudes",
+    "umbral_efectivo", "margen_ultimo_escano", "seat_bonus",
     "TOTAL_ESCANOS_CAMARA", "MIN_ESCANOS_DISTRITO", "MAX_ESCANOS_DISTRITO",
     "MAGNITUDES_LEGALES_LEY20840", "MAGNITUDES_LEGALES_2021",
     # diagnostics
@@ -259,10 +294,16 @@ __all__ = [
     "mixing_diagnostics", "plot_trace", "plot_acf",
     "plot_gelman_rubin_evolution", "run_multiple_chains",
     "generate_redist_script", "load_redist_results", "RHAT_THRESHOLD",
+    # persistence
+    "PlanEnsemble", "new_run_id", "sha256_file", "get_package_versions",
+    "save_assignments_parquet", "build_run_manifest", "save_run_manifest",
+    # map
+    "ChileDistMap",
     # samplers (subpaquete — acceder vía cd.samplers.recom / .smc / .diagnostics)
     "samplers",
     # samplers.recom
-    "initial_partition", "run_recom", "analyze_ensemble", "chile_constraints",
+    "initial_partition", "run_recom", "run_recom_chain",
+    "analyze_ensemble", "chile_constraints",
     # samplers.smc
     "export_to_redist", "generate_redist_script", "load_redist_results",
     # viz

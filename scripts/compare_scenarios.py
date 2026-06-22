@@ -98,6 +98,16 @@ def load_scenarios_list(args) -> list:
 # Correr redistritaje para cada escenario
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _import_analizar_region():
+    """Importa analizar_region desde redistritaje.py usando ruta absoluta."""
+    import importlib.util
+    _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "redistritaje.py")
+    _spec = importlib.util.spec_from_file_location("redistritaje", _path)
+    _mod  = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    return _mod.analizar_region
+
+
 def run_all_scenarios(
     region_code: int,
     base_dir: str,
@@ -110,7 +120,7 @@ def run_all_scenarios(
     skip_viz: bool,
 ) -> list[dict]:
     """Corre redistritaje para todos los escenarios en la región."""
-    from scripts.redistritaje import analizar_region
+    analizar_region = _import_analizar_region()
 
     resultados = []
     for scenario in scenarios:
@@ -298,9 +308,7 @@ def main():
         print(f"{'#'*60}")
 
         if not args.skip_run:
-            # Importar dinámicamente para evitar circular
-            sys.path.insert(0, os.path.join(ROOT, "scripts"))
-            from redistritaje import analizar_region
+            analizar_region = _import_analizar_region()
 
             for scenario in scenarios:
                 import dataclasses

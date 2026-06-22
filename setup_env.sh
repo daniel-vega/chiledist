@@ -100,14 +100,18 @@ pip install "networkx==3.6.1" "matplotlib==3.11.0" --quiet
 
 # 4. Análisis espacial
 info "  [4/6] Análisis espacial..."
-pip install "libpysal==4.14.1" "esda" --quiet
+pip install "libpysal==4.14.1" "esda==2.6.0" --quiet
 
-# 5. Machine learning (dependencia de gerrychain)
-info "  [5/6] Scikit-learn..."
+# 5. Persistencia (parquet)
+info "  [5/7] Pyarrow (parquet)..."
+pip install "pyarrow>=14.0.0" --quiet
+
+# 6. Machine learning (dependencia de gerrychain)
+info "  [6/7] Scikit-learn..."
 pip install "scikit-learn==1.9.0" --quiet
 
-# 6. Redistritaje
-info "  [6/6] Gerrychain..."
+# 7. Redistritaje
+info "  [7/7] Gerrychain..."
 pip install "gerrychain==0.3.2" --quiet
 
 # ── Instalar chiledist en modo editable ───────────────────────────────────────
@@ -134,6 +138,7 @@ checks = [
     ("libpysal",          "libpysal"),
     ("esda",              "esda"),
     ("shapely",           "shapely"),
+    ("pyarrow",           "pyarrow"),
     ("gerrychain",        "gerrychain"),
     ("chiledist",         "chiledist"),
     ("chiledist.samplers","chiledist.samplers"),
@@ -172,6 +177,17 @@ except AttributeError:
     print("  ✗  cd.ScoringConfig         NO encontrado")
     sys.exit(1)
 PYCHECK
+
+# ── Verificar R (opcional, solo para flujo SMC) ───────────────────────────────
+if command -v Rscript &>/dev/null; then
+    R_VER=$(Rscript -e "cat(R.version\$major, R.version\$minor, sep='.')" 2>/dev/null || echo "?")
+    info "R disponible: $R_VER (recomendado para samplers.smc)"
+else
+    warning "Rscript no encontrado en PATH."
+    warning "  El flujo SMC (samplers.smc) requiere R con el paquete 'redist'."
+    warning "  Para instalar R: https://cran.r-project.org/"
+    warning "  Los flujos ReCom y de análisis funcionan sin R."
+fi
 
 # ── Instrucciones finales ─────────────────────────────────────────────────────
 echo ""
@@ -264,7 +280,32 @@ echo "  python scripts/autocorrelacion.py --base-dir ./SHP_APC2023 --regiones na
 echo "      --variables viviendas,densidad_viv_km2,polsby_popper \\"
 echo "      --max-order 7 --permutaciones 999"
 echo ""
-echo "  ── 5. BUNDLE IMC PLAN LAB ───────────────────────────────────"
+echo "  ── 5. ANÁLISIS H2: PARETO (split_penalty sweep) ────────────"
+echo "  # Barrido de split_penalty → frontera Pareto compacidad vs comunas partidas"
+echo "  python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13"
+echo ""
+echo "  ── 6. ANÁLISIS H3: MALAPPORTIONMENT ────────────────────────"
+echo "  # Desviación de magnitudes vigentes (Ley 20.840) vs ideal proporcional"
+echo "  python scripts/malapportionment.py --base-dir ./SHP_APC2023"
+echo ""
+echo "  ── 7. ANÁLISIS H4: ELECTORAL (D'Hondt binivel) ─────────────"
+echo "  # D'Hondt sobre ensemble; requiere CSV de resultados electorales"
+echo "  python scripts/electoral_analysis.py --base-dir ./SHP_APC2023 --regiones 13 \\"
+echo "      --votes-path datos/resultados_2021.csv"
+echo ""
+echo "  ── 8. ANÁLISIS H5: MULTI-CADENAS (convergencia) ────────────"
+echo "  # 4 cadenas ReCom independientes + R-hat, ESS, mezcla"
+echo "  python scripts/run_chains.py --base-dir ./SHP_APC2023 --regiones 13 \\"
+echo "      --scenario apc_soft --n-chains 4 --sensitivity"
+echo ""
+echo "  ── 9. ANÁLISIS H5: PIPELINE SMC (R/redist) ─────────────────"
+echo "  # Paso 1: generar script R y GeoPackage"
+echo "  python scripts/smc_pipeline.py --base-dir ./SHP_APC2023 --regiones 13 \\"
+echo "      --n-sims 500"
+echo "  # Luego ejecutar en R: Rscript datos/R13_.../smc/run_redist.R"
+echo "  # Paso 2 (post-R): comparar SMC vs ReCom (ver --compare en script)"
+echo ""
+echo "  ── 10. BUNDLE IMC PLAN LAB ──────────────────────────────────"
 echo "  # Bundle distrital nacional (todas las regiones)"
 echo "  python scripts/export_imc_bundle.py --base-dir ./SHP_APC2023 --level distrital"
 echo ""
@@ -282,16 +323,20 @@ echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "  SALIDAS"
 echo "════════════════════════════════════════════════════════════════"
-echo "  datos/nacional/matrices/                  → matrices sparse, índices"
-echo "  datos/nacional/figuras/                   → mapas y grafos nacionales"
-echo "  datos/R13_*/redistritaje/legal/            → planes ReCom escenario legal"
-echo "  datos/R13_*/redistritaje/apc_free/         → planes ReCom escenario APC libre"
-echo "  datos/R13_*/redistritaje/apc_soft/         → planes ReCom escenario APC soft"
-echo "  datos/R13_*/comparacion/                   → tabla, tradeoff plots, boxplots"
-echo "  datos/R13_*/autocorrelacion/               → Moran, LISA, G*, correlograma"
-echo "  datos/nacional/redistritaje_apc/           → redistritaje nacional APC"
-echo "  datos/nacional/redistritaje_comunal/       → redistritaje nacional comunal"
-echo "  datos/nacional/autocorrelacion/            → autocorr nacional APC"
-echo "  datos/nacional/autocorrelacion_comunal/    → autocorr nacional comunal"
-echo "  imc_bundle_distrital_nacional/             → bundle GeoJSON/JSON"
+echo "  datos/nacional/matrices/                        → matrices sparse, índices"
+echo "  datos/nacional/figuras/                         → mapas y grafos nacionales"
+echo "  datos/R13_*/redistritaje/legal_comunas/         → planes ReCom escenario legal"
+echo "  datos/R13_*/redistritaje/contrafactual_apc_libre/ → planes ReCom APC libre"
+echo "  datos/R13_*/redistritaje/contrafactual_apc_soft/  → planes ReCom APC soft"
+echo "  datos/R13_*/comparacion/                        → tabla, tradeoff plots, boxplots"
+echo "  datos/R13_*/pareto/                             → sweep Pareto H2"
+echo "  datos/R13_*/chains/                             → multi-cadenas H5"
+echo "  datos/R13_*/smc/                                → pipeline SMC H5"
+echo "  datos/R13_*/autocorrelacion/                    → Moran, LISA, G*, correlograma"
+echo "  datos/nacional/redistritaje_apc/                → redistritaje nacional APC"
+echo "  datos/nacional/redistritaje_comunal/            → redistritaje nacional comunal"
+echo "  datos/nacional/autocorrelacion/                 → autocorr nacional APC"
+echo "  datos/nacional/autocorrelacion_comunal/         → autocorr nacional comunal"
+echo "  datos/nacional/malapportionment/                → malapportionment H3"
+echo "  imc_bundle_distrital_nacional/                  → bundle GeoJSON/JSON"
 echo ""

@@ -1,27 +1,27 @@
 name: legal_comunas
-description: >
-  Modo legal vigente: comunas indivisibles (Ley 18.700).
-  Unidad de decisión = CUT. Grafo operativo a nivel comunal.
-  Los datos APC se agregan a nivel de comuna antes de correr ReCom.
-
+description: 'Régimen vigente (Ley 18.700): comunas indivisibles. Unidad de decisión
+  = CUT. Baseline de comparación para H1.'
 observation_unit: ID_DIST
 decision_unit: CUT
-
 preserve:
-  units: [CUT]
+  units:
+  - CUT
   mode: hard
   split_penalty: 0.0
   min_fragment_pop_share: 0.0
-
 population:
   column: viviendas
   tolerance: 0.05
-
+  source: null
 districts:
   n_districts: 8
-
 sampler:
   method: recom
   n_steps: 10000
   n_steps_warmup: 500
   seed: 42
+connectivity:
+  contiguity: queen
+  island_policy: nearest
+  island_threshold_km: 50.0
+  crs_metric: null

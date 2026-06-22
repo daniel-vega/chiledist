@@ -40,6 +40,8 @@ Uso:
 """
 
 import argparse
+import dataclasses
+import datetime
 import os
 import sys
 import warnings
@@ -59,6 +61,13 @@ from functools import partial
 
 import chiledist as cd
 from chiledist.config import ScenarioConfig, SCENARIOS, load_scenario
+from chiledist.persistence import (
+    new_run_id,
+    sha256_file,
+    build_run_manifest,
+    save_run_manifest,
+)
+from chiledist.samplers.recom import run_recom_chain
 
 
 REGION_NOMBRES = {
@@ -221,8 +230,6 @@ def build_scenario(args) -> ScenarioConfig:
         cfg = load_scenario(args.scenario_file)
     elif args.scenario:
         cfg = SCENARIOS[args.scenario]
-        # Crear copia mutable
-        import dataclasses
         cfg = dataclasses.replace(cfg)
     else:
         cfg = ScenarioConfig(
@@ -234,7 +241,6 @@ def build_scenario(args) -> ScenarioConfig:
         )
 
     # Overrides manuales
-    import dataclasses
     changes = {}
     if args.decision_unit:
         changes["decision_unit"] = args.decision_unit
@@ -291,7 +297,6 @@ def analizar_region(
         )
 
     # Sincronizar parámetros desde args si no vienen del escenario
-    import dataclasses
     scenario = dataclasses.replace(
         scenario,
         n_districts=n_distritos,
@@ -300,12 +305,23 @@ def analizar_region(
         seed=seed,
     )
 
+    # Identificador único de esta corrida
+    run_id          = new_run_id()
+    timestamp_start = datetime.datetime.now().isoformat(timespec="seconds")
+
     region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
     # Subcarpeta por escenario dentro de redistritaje/
     out_dir = os.path.join(
         output_base, region_name, "redistritaje", scenario.name
     )
     os.makedirs(out_dir, exist_ok=True)
+
+    # Directorio de la corrida específica (timestamped + run_id prefix)
+    ts_str  = timestamp_start.replace(":", "").replace("-", "").replace("T", "_")
+    run_dir = os.path.join(out_dir, f"run_{ts_str}_{run_id[:8]}")
+    os.makedirs(run_dir, exist_ok=True)
+    run_dir_figuras = os.path.join(run_dir, "figuras")
+    os.makedirs(run_dir_figuras, exist_ok=True)
 
     print(f"\n{'#'*60}")
     print(f"  Región {region_code:02d} — {region_name}")
@@ -350,7 +366,6 @@ def analizar_region(
 
     # Respetar pop_col del escenario si ya está definido y existe en el GDF;
     # de lo contrario usar el resuelto por pop_source.
-    import dataclasses
     if scenario.pop_col != "viviendas" and scenario.pop_col in distritos.columns:
         pass  # el escenario ya tenía pop_col correcto
     elif _resolved_pop_col != "viviendas":
@@ -549,10 +564,12 @@ def analizar_region(
         total_steps=N_WARMUP,
     )
 
-    warmed_state = partition
+    warmed_state       = partition
+    n_warmup_efectivo  = 0
     try:
         for step_w, state_w in enumerate(chain_warmup):
-            warmed_state = state_w
+            warmed_state      = state_w
+            n_warmup_efectivo = step_w + 1
             pop_w = list(state_w["population"].values())
             dev_w = max(abs(p - ideal_pop)/ideal_pop for p in pop_w) * 100
             if dev_w <= pop_tol * 100 * 1.5:
@@ -602,30 +619,32 @@ def analizar_region(
           f"{n_distritos_eff} distritos · ±{pop_tol*100:.0f}% · "
           f"preserve={scenario.preserve_mode}...")
 
-    planes      = []
-    metricas_mc = []
-    try:
-        for step, state in enumerate(chain):
-            planes.append(dict(state.assignment))
-            pop_vals = list(state["population"].values())
-            max_dev  = max(abs(p - ideal_pop)/ideal_pop for p in pop_vals) * 100
-            n_cuts   = len(state["cut_edges"])
-            metricas_mc.append({
-                "step":        step,
-                "cut_edges":   n_cuts,
-                "max_dev_pct": round(max_dev, 3),
-            })
-            if step % max(1, n_steps // 10) == 0:
-                print(f"    Paso {step:6,} | cortes: {n_cuts:4d} | "
-                      f"desv: {max_dev:.2f}%")
-    except (IndexError, RuntimeError) as e:
-        print(f"  ⚠ Cadena interrumpida en paso {len(planes)}: {e}")
-        if not planes:
-            return {"region": region_code, "status": "sin_planes",
-                    "scenario": scenario.name, "error": str(e)}
-        print(f"  Continuando con {len(planes)} planes generados")
+    # IDs en el mismo orden que los nodos del grafo (necesario para reconstruir
+    # asignaciones y para guardar assignments.parquet con unit IDs reales)
+    ids_ordenados = gdf_dec[id_col].tolist()
 
-    # Filtrar planes válidos
+    # Delegar el bucle al módulo canónico — single source of truth para el muestreo
+    planes, metricas_mc, n_steps_ejecutados = run_recom_chain(
+        chain=chain,
+        n_steps=n_steps,
+        id_col=id_col,
+        ids_ordenados=ids_ordenados,
+        graph=graph,
+        ideal_pop=ideal_pop,
+        output_dir=run_dir,
+        run_id=run_id,
+        scenario_name=scenario.name,
+        chain_id=0,
+    )
+
+    if not planes:
+        return {"region": region_code, "status": "sin_planes",
+                "scenario": scenario.name}
+
+    # Filtrar planes válidos — rastrear tolerancia efectiva para el manifiesto
+    pop_tol_effective     = pop_tol
+    pop_tol_fallback_used = False
+
     planes_validos = [p for p, m in zip(planes, metricas_mc)
                       if m["max_dev_pct"] <= pop_tol * 100]
     if not planes_validos:
@@ -635,9 +654,13 @@ def analizar_region(
             if planes_validos:
                 print(f"  Usando tolerancia ±{tol_f*100:.0f}%: "
                       f"{len(planes_validos)} planes")
+                pop_tol_effective     = tol_f
+                pop_tol_fallback_used = True
                 break
     if not planes_validos:
-        planes_validos = planes
+        planes_validos        = planes
+        pop_tol_effective     = 1.0
+        pop_tol_fallback_used = True
 
     n_generados = len(metricas_mc)
     print(f"  Planes válidos: {len(planes_validos)}/{n_generados}")
@@ -647,9 +670,7 @@ def analizar_region(
         return {"region": region_code, "status": "sin_planes_validos",
                 "scenario": scenario.name, "n_generados": n_generados}
 
-    # ── Reconstruir asignaciones con IDs de cadena ────────────────────────────
-    ids_ordenados = gdf_dec[id_col].tolist()
-
+    # ── Reconstruir asignaciones con IDs de unidad ───────────────────────────
     def reconstruir_asignacion(plan_dict, graph, ids_list):
         result = {}
         for node, distrito in plan_dict.items():
@@ -695,8 +716,9 @@ def analizar_region(
         split_sample_size = min(50, len(planes))
         split_indices = np.linspace(0, len(planes)-1,
                                      split_sample_size, dtype=int)
-        n_splits_list  = []
-        severity_list  = []
+        n_splits_list   = []
+        severity_list   = []
+        pop_affect_list = []
         for si in split_indices:
             a_s = reconstruir_asignacion(planes[si], graph, ids_ordenados)
             sm  = cd.plan_split_metrics(
@@ -705,20 +727,26 @@ def analizar_region(
             )
             n_splits_list.append(sm["n_comunas_partidas"])
             severity_list.append(sm["split_severity"])
+            pop_affect_list.append(sm["pop_afectada_pct"])
 
         # Asignar al ensemble con interpolación simple
         df_ensemble["n_comunas_partidas"] = np.nan
         df_ensemble["split_severity"]     = np.nan
+        df_ensemble["pop_afectada_pct"]   = np.nan
         for ii, si in enumerate(split_indices):
             df_ensemble.loc[si, "n_comunas_partidas"] = n_splits_list[ii]
             df_ensemble.loc[si, "split_severity"]     = round(severity_list[ii], 4)
+            df_ensemble.loc[si, "pop_afectada_pct"]   = round(pop_affect_list[ii], 4)
 
         print(f"  Comunas partidas (mediana): "
               f"{np.nanmedian(n_splits_list):.1f} / "
               f"{gdf_dec['CUT'].nunique()}")
+        print(f"  Pob. afectada (mediana):    "
+              f"{np.nanmedian(pop_affect_list)*100:.1f}%")
     else:
         df_ensemble["n_comunas_partidas"] = 0
         df_ensemble["split_severity"]     = 0.0
+        df_ensemble["pop_afectada_pct"]   = 0.0
 
     # ── Plan de referencia: seleccionado por score heurístico para visualización ─
     # NOTA: en MCMC redistributing el resultado estadístico ES la distribución
@@ -809,15 +837,21 @@ def analizar_region(
                                   "pop_total","split_severity"]]
                   .head(10).to_string(index=False))
         split_summary.to_csv(
-            os.path.join(out_dir, "comunas_partidas.csv"), index=False
+            os.path.join(run_dir, "comunas_partidas.csv"), index=False
         )
 
     # ── Guardar CSVs ──────────────────────────────────────────────────────────
     df_mc = pd.DataFrame(metricas_mc)
+    # Primario: en run_dir (con run_id)
+    df_mc.to_csv(os.path.join(run_dir, "metricas_cadena.csv"), index=False)
+    df_ensemble.to_csv(os.path.join(run_dir, "ensemble_stats.csv"), index=False)
+    pop_summary.to_csv(os.path.join(run_dir, "plan_referencia_detalle.csv"), index=False)
+    # Compatibilidad retroactiva: ensemble_stats y metricas_cadena también en out_dir
     df_mc.to_csv(os.path.join(out_dir, "metricas_cadena.csv"), index=False)
     df_ensemble.to_csv(os.path.join(out_dir, "ensemble_stats.csv"), index=False)
-    pop_summary.to_csv(os.path.join(out_dir, "plan_referencia_detalle.csv"),
-                       index=False)
+
+    # ── Guardar scenario.yml en run_dir ───────────────────────────────────────
+    cd.save_scenario(scenario, os.path.join(run_dir, "scenario.yml"))
 
     # ── Visualizaciones ───────────────────────────────────────────────────────
     if not skip_viz:
@@ -872,7 +906,7 @@ def analizar_region(
             fontsize=11, fontweight="bold"
         )
         plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "ref_vs_extremo.png"),
+        plt.savefig(os.path.join(run_dir_figuras, "ref_vs_extremo.png"),
                     dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close()
 
@@ -896,7 +930,7 @@ def analizar_region(
         fig2.suptitle(f"Cadena de Markov ReCom — {region_name} [{scenario.name}]",
                       fontsize=11, fontweight="bold")
         plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "cadena_markov.png"),
+        plt.savefig(os.path.join(run_dir_figuras, "cadena_markov.png"),
                     dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close()
 
@@ -936,7 +970,7 @@ def analizar_region(
             fontsize=11, fontweight="bold"
         )
         plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "ensemble_distribucion.png"),
+        plt.savefig(os.path.join(run_dir_figuras, "ensemble_distribucion.png"),
                     dpi=150, bbox_inches="tight", facecolor=BG)
         plt.close()
 
@@ -946,7 +980,7 @@ def analizar_region(
             id_col=id_col, pop_col=pop_col,
             title=f"{region_name} [{scenario.name}] — Plan de referencia (id={ref_plan_id})",
             show_pop_balance=True,
-            save_path=os.path.join(out_dir, "ref_balance.png"),
+            save_path=os.path.join(run_dir_figuras, "ref_balance.png"),
         )
         plt.close("all")
 
@@ -956,15 +990,43 @@ def analizar_region(
             gdf_dec, metricas_dist, id_col=id_col,
             metric="polsby_popper",
             title=f"{region_name} [{scenario.name}] — Compacidad",
-            save_path=os.path.join(out_dir, "compacidad.png"),
+            save_path=os.path.join(run_dir_figuras, "compacidad.png"),
         )
         plt.close("all")
 
-        print(f"\n  Figuras guardadas en {out_dir}/")
+        print(f"\n  Figuras guardadas en {run_dir_figuras}/")
 
     # ── Resumen final ─────────────────────────────────────────────────────────
     n_split_ref = int(df_ensemble.loc[ref_idx, "n_comunas_partidas"]) \
         if not pd.isna(df_ensemble.loc[ref_idx, "n_comunas_partidas"]) else 0
+
+    timestamp_end = datetime.datetime.now().isoformat(timespec="seconds")
+
+    # ── run_manifest.json ─────────────────────────────────────────────────────
+    try:
+        manifest = build_run_manifest(
+            run_id=run_id,
+            timestamp_start=timestamp_start,
+            timestamp_end=timestamp_end,
+            scenario=scenario,
+            pop_source=pop_source,
+            pop_col_effective=pop_col,
+            pop_tolerance_requested=pop_tol,
+            pop_tolerance_effective=pop_tol_effective,
+            pop_tolerance_fallback_used=pop_tol_fallback_used,
+            n_steps_requested=n_steps,
+            n_steps_executed=n_steps_ejecutados,
+            n_steps_warmup=n_warmup_efectivo,
+            n_plans_generated=n_generados,
+            n_plans_valid=len(planes),
+            region_code=region_code,
+            region_name=region_name,
+            n_units=n_units,
+            n_islands_found=len(islands_gc),
+        )
+        save_run_manifest(manifest, run_dir)
+    except Exception as e:
+        warnings.warn(f"No se pudo guardar run_manifest.json: {e}")
 
     return {
         "region":         region_code,
@@ -979,6 +1041,8 @@ def analizar_region(
         "ref_desv":       df_ensemble.loc[ref_idx, "max_dev_pob_pct"],
         "comunas_partidas_ref": n_split_ref,
         "out_dir":        out_dir,
+        "run_dir":        run_dir,
+        "run_id":         run_id,
     }
 
 

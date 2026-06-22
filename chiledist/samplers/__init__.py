@@ -30,6 +30,7 @@ Uso rápido
 from .recom import (
     initial_partition,
     run_recom,
+    run_recom_chain,
     analyze_ensemble,
     chile_constraints,
 )
@@ -54,7 +55,8 @@ from .diagnostics import (
 
 __all__ = [
     # recom
-    "initial_partition", "run_recom", "analyze_ensemble", "chile_constraints",
+    "initial_partition", "run_recom", "run_recom_chain",
+    "analyze_ensemble", "chile_constraints",
     # smc
     "export_to_redist", "generate_redist_script", "load_redist_results",
     # diagnostics

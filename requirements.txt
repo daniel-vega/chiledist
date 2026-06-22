@@ -22,7 +22,10 @@ matplotlib==3.11.0
 
 # ── Análisis espacial ─────────────────────────────────────────────────────────
 libpysal==4.14.1
-esda                    # autocorrelación espacial (Moran, LISA, G*)
+esda==2.6.0             # autocorrelación espacial (Moran, LISA, G*)
+
+# ── Persistencia de planes ────────────────────────────────────────────────────
+pyarrow>=14.0.0         # requerido por PlanEnsemble.save() / assignments.parquet
 
 # ── Machine learning (dependencia de gerrychain) ──────────────────────────────
 scikit-learn==1.9.0

@@ -242,6 +242,114 @@ def run_recom(
     return plans
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Bucle canónico de la cadena ReCom (delegado desde scripts/redistritaje.py)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def run_recom_chain(
+    chain,
+    n_steps: int,
+    id_col: str,
+    ids_ordenados: list,
+    graph,
+    ideal_pop: float,
+    output_dir: Optional[str] = None,
+    run_id: Optional[str] = None,
+    scenario_name: str = "",
+    chain_id: int = 0,
+) -> tuple:
+    """
+    Ejecuta un gerrychain.MarkovChain ya configurado y recolecta planes + métricas.
+
+    Implementación canónica del bucle ReCom. Es la única fuente de verdad para
+    el muestreo; scripts/redistritaje.py delega aquí en lugar de reimplementar.
+
+    Parameters
+    ----------
+    chain : gc.MarkovChain
+        Cadena configurada (propuesta + restricciones + estado inicial).
+    n_steps : int
+        Pasos totales a ejecutar.
+    id_col : str
+        Columna identificadora de unidades ('ID_DIST' o 'CUT').
+    ids_ordenados : list
+        Lista ordenada de unit IDs (misma posición que los nodos del grafo).
+    graph : gc.Graph
+        Grafo gerrychain; usado para resolver node_idx → unit_id.
+    ideal_pop : float
+        Población ideal por distrito (para calcular max_dev_pct).
+    output_dir : str, opcional
+        Si se indica, guarda assignments.parquet en este directorio.
+    run_id : str, opcional
+        UUID de la corrida; se incluye en assignments.parquet.
+    scenario_name : str
+        Nombre del escenario; se incluye en assignments.parquet.
+    chain_id : int
+        Índice de cadena (0 para ejecución única).
+
+    Returns
+    -------
+    tuple (planes, metricas_mc, n_executed)
+        planes : list[dict]   — {node_idx: district} por paso
+        metricas_mc : list[dict]  — métricas por paso
+        n_executed : int      — pasos realmente ejecutados
+    """
+    planes: list[dict]      = []
+    metricas_mc: list[dict] = []
+
+    try:
+        for step, state in enumerate(chain):
+            planes.append(dict(state.assignment))
+            pop_vals = list(state["population"].values())
+            max_dev  = (max(abs(p - ideal_pop) / ideal_pop for p in pop_vals) * 100
+                        if ideal_pop > 0 else 0.0)
+            n_cuts   = len(state["cut_edges"])
+            metricas_mc.append({
+                "step":        step,
+                "cut_edges":   n_cuts,
+                "max_dev_pct": round(max_dev, 3),
+            })
+            if step % max(1, n_steps // 10) == 0:
+                print(f"    Paso {step:6,} | cortes: {n_cuts:4d} | "
+                      f"desv: {max_dev:.2f}%")
+    except (IndexError, RuntimeError) as e:
+        print(f"  ⚠ Cadena interrumpida en paso {len(planes)}: {e}")
+        if not planes:
+            return [], [], 0
+
+    n_executed = len(planes)
+
+    # Guardar assignments.parquet si se solicitó
+    if output_dir and planes:
+        try:
+            from ..persistence import save_assignments_parquet
+
+            # Construir id_map: node_idx → unit_id
+            id_map: dict = {}
+            for node in graph.nodes():
+                id_val = graph.nodes[node].get(id_col)
+                if id_val is None and isinstance(node, int) and node < len(ids_ordenados):
+                    id_val = ids_ordenados[node]
+                id_map[node] = id_val
+
+            save_assignments_parquet(
+                planes=planes,
+                id_map=id_map,
+                run_id=run_id or "",
+                scenario_name=scenario_name,
+                output_dir=output_dir,
+                chain_id=chain_id,
+            )
+        except Exception as e:
+            warnings.warn(
+                f"No se pudo guardar assignments.parquet: {e}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    return planes, metricas_mc, n_executed
+
+
 def _make_initial_assignment(gdf, id_col, pop_col, n_districts, graph):
     """Genera una asignación inicial aleatoria válida."""
     try:

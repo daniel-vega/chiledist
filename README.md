@@ -120,6 +120,11 @@ chiledist/
 │   ├── setup.py                    # Inicialización del proyecto
 │   ├── redistritaje.py             # Redistritaje ReCom parametrizable por escenario
 │   ├── compare_scenarios.py        # Comparación formal de 3 escenarios
+│   ├── pareto_sweep.py             # H2: barrido split_penalty → frontera Pareto
+│   ├── malapportionment.py         # H3: malapportionment con magnitudes legales
+│   ├── electoral_analysis.py       # H4: D'Hondt binivel sobre ensemble
+│   ├── run_chains.py               # H5: N cadenas ReCom + diagnósticos de convergencia
+│   ├── smc_pipeline.py             # H5: bridge Python → R/redist → Python
 │   ├── autocorrelacion.py          # Autocorrelación espacial
 │   └── export_imc_bundle.py        # Exportación bundle IMC Plan Lab
 │
@@ -157,12 +162,17 @@ chiledist/
 2. redistritaje.py        →  ensembles ReCom por escenario (legal / apc_free / apc_soft)
                               con población desde APC, Censo 2024 o padrón SERVEL
          ↓
-3. compare_scenarios.py   →  comparación formal: tabla, tradeoff plots, boxplots,
-                              frecuencia de comunas partidas
+3. compare_scenarios.py   →  H1: comparación formal: tabla, tradeoff plots, boxplots
          ↓
-4. autocorrelacion.py     →  Moran, LISA, G* (por región, nacional APC o comunal)
+4. pareto_sweep.py        →  H2: barrido split_penalty → frontera Pareto
+   malapportionment.py    →  H3: malapportionment con magnitudes Ley 20840
+   electoral_analysis.py  →  H4: D'Hondt binivel sobre ensemble
+   run_chains.py          →  H5: N cadenas ReCom + mixing_diagnostics + sensibilidad
+   smc_pipeline.py        →  H5: bridge Python → R/redist → comparación SMC vs ReCom
          ↓
-5. export_imc_bundle.py   →  bundle GeoJSON/JSON para Plan Lab
+5. autocorrelacion.py     →  Moran, LISA, G* (por región, nacional APC o comunal)
+         ↓
+6. export_imc_bundle.py   →  bundle GeoJSON/JSON para Plan Lab
 ```
 
 ---
@@ -496,6 +506,190 @@ El script valida antes de exportar: `unit_id` sin nulos ni duplicados, geometrí
 
 ---
 
+### 6. pareto_sweep.py — H2: Frontera de Pareto
+
+Barre valores de `split_penalty` para la frontera Pareto entre balance poblacional y fragmentación comunal.
+
+```bash
+# Barrido estándar para la RM con 5 valores de penalty
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13
+
+# Rango y resolución personalizados
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --penalties 0.0,0.1,0.2,0.5,1.0,2.0
+
+# Solo calcular (sin re-ejecutar redistritaje)
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 --skip-run
+
+# Sin figura
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 --skip-viz
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es) a analizar |
+| `--penalties` | `0.0,0.1,0.25,0.5,1.0` | Valores de `split_penalty` (coma-separados) |
+| `--n-steps` | `10000` | Pasos de la cadena por escenario |
+| `--skip-run` | — | Solo leer CSVs existentes |
+| `--skip-viz` | — | Omitir figura de frontera |
+
+**Salidas en `datos/{REGION}/pareto/`:**
+
+```
+pareto_sweep_results.csv   # penalty, métricas medianas, is_pareto, point_type
+pareto_frontier.png        # scatter compacidad vs comunas partidas con frontera marcada
+```
+
+> Para variantes `apc_soft`, el campo `point_type="reference_plan"` indica que la métrica corresponde al plan seleccionado por el score (no la mediana del ensemble), ya que variaciones de `split_penalty` solo afectan la selección del plan de referencia, no la distribución de la cadena.
+
+---
+
+### 7. malapportionment.py — H3: Malapportionment
+
+Calcula la desviación poblacional de las magnitudes vigentes (Ley 20.840) respecto a una distribución proporcional ideal.
+
+```bash
+# Malapportionment nacional con magnitudes Ley 20.840
+python scripts/malapportionment.py --base-dir ./SHP_APC2023
+
+# Con Censo 2024 como fuente de población
+python scripts/malapportionment.py --base-dir ./SHP_APC2023 \
+    --pop-source manzana --census-path datos/Base_manzana_entidad_CPV24.csv
+
+# Sin figuras
+python scripts/malapportionment.py --base-dir ./SHP_APC2023 --skip-viz
+```
+
+**Salidas en `datos/nacional/malapportionment/`:**
+
+```
+malapportionment_distritos.csv   # distritio, magnitud_legal, escanos_ideal, desviacion_pct
+malapportionment_lorenz.png      # curva de Lorenz escaños vs población
+malapportionment_scatter.png     # magnitud observada vs magnitud ideal por distrito
+```
+
+---
+
+### 8. electoral_analysis.py — H4: Análisis D'Hondt binivel
+
+Aplica D'Hondt a cada plan del ensemble para obtener la distribución de escaños por partido bajo distintos mapas distritales.
+
+```bash
+# Análisis electoral sobre ensemble de la RM (elección de referencia)
+python scripts/electoral_analysis.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --votes-path datos/resultados_eleccion.csv
+
+# Comparar los 3 escenarios
+python scripts/electoral_analysis.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --votes-path datos/resultados_eleccion.csv --scenarios legal,apc_free,apc_soft
+
+# Sin figuras
+python scripts/electoral_analysis.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --votes-path datos/resultados_eleccion.csv --skip-viz
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es) a analizar |
+| `--scenarios` | `legal,apc_free,apc_soft` | Escenarios a comparar |
+| `--votes-path` | — | CSV con resultados electorales por unidad y partido |
+| `--skip-viz` | — | Omitir figuras |
+
+**Salidas en `datos/{REGION}/electoral/`:**
+
+```
+electoral_results.csv         # plan × partido → escaños ganados
+gallagher_distribution.csv    # distribución índice LSq por escenario
+electoral_boxplots.png        # distribución de escaños por partido y escenario
+gallagher_violin.png          # LSq por escenario
+```
+
+---
+
+### 9. run_chains.py — H5: Multi-cadena ReCom
+
+Corre N cadenas ReCom independientes con distintas semillas y calcula diagnósticos de convergencia (R-hat, ESS, mezcla).
+
+```bash
+# 4 cadenas con seeds 42, 43, 44, 45
+python scripts/run_chains.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario apc_soft --n-chains 4
+
+# Con análisis de sensibilidad a pesos de scoring
+python scripts/run_chains.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario apc_soft --n-chains 4 --sensitivity
+
+# Solo diagnosticar cadenas ya corridas (sin re-ejecutar)
+python scripts/run_chains.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --scenario apc_soft --skip-run
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región(es) a analizar |
+| `--scenario` | `apc_soft` | Escenario base |
+| `--n-chains` | `4` | Número de cadenas independientes |
+| `--base-seed` | `42` | Semilla base; cadena k usa `base_seed + k` |
+| `--n-steps` | `10000` | Pasos por cadena |
+| `--sensitivity` | — | Análisis de sensibilidad a pesos de scoring |
+| `--skip-run` | — | Solo leer CSVs existentes |
+| `--skip-viz` | — | Omitir figuras |
+
+**Salidas en `datos/{REGION}/chains/{SCENARIO}/`:**
+
+```
+seed_XXXX/metricas_cadena.csv     # métricas paso a paso por cadena
+seed_XXXX/ensemble_stats.csv      # estadísticas del ensemble por cadena
+mixing_diagnostics.csv            # R-hat, ESS, convergencia por métrica
+trace_plots.png                   # trazas superpuestas de las N cadenas
+rhat_evolution.png                # evolución del R-hat en ventana deslizante
+sensitivity_ks.csv                # test KS entre cadenas por métrica (--sensitivity)
+sensitivity_ranking.csv           # concordancia de rankings bajo 4 configuraciones de pesos
+```
+
+---
+
+### 10. smc_pipeline.py — H5: Bridge Python → R/redist
+
+Genera el script R para muestreo SMC con `redist` (ALARM Harvard) y, una vez ejecutado en R, importa los resultados para compararlos con el ensemble ReCom.
+
+```bash
+# Paso 1: generar script R y archivo GeoPackage para la RM
+python scripts/smc_pipeline.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --n-sims 500 --output-dir datos/R13_METROPOLITANA/smc
+
+# El script imprime el comando para ejecutar en R:
+#   Rscript datos/R13_METROPOLITANA/smc/run_redist.R
+
+# Paso 2 (después de correr el R): comparar SMC vs ReCom
+python scripts/smc_pipeline.py --base-dir ./SHP_APC2023 --regiones 13 \
+    --compare --plans-csv datos/R13_METROPOLITANA/smc/chiledist_smc_planes.csv \
+    --recom-ensemble datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_soft/ensemble_stats.csv
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--regiones` | `13` | Región a analizar |
+| `--n-sims` | `500` | Simulaciones SMC en R |
+| `--output-dir` | `datos/{REGION}/smc` | Directorio de salida |
+| `--compare` | — | Activar comparación SMC vs ReCom |
+| `--plans-csv` | — | CSV de planes SMC generado por R |
+| `--recom-ensemble` | — | CSV del ensemble ReCom para comparar |
+
+**Salidas:**
+
+```
+run_redist.R                  # Script R listo para ejecutar
+chiledist_redist.gpkg         # GeoPackage con geometrías y población para R
+smc_vs_recom_ks.csv           # test KS por métrica (SMC vs ReCom)
+smc_vs_recom_ks.png           # visualización KS stats
+smc_vs_recom_ranking.csv      # concordancia de rankings (Kendall τ, Spearman ρ)
+```
+
+**Requiere:** R con paquete `redist` instalado. Ver instrucciones en https://alarm-redist.org.
+
+---
+
 ## API de la librería
 
 ### Equivalencia censal
@@ -768,8 +962,8 @@ padron = sv.load_padron_electoral("datos/padron_2024.csv")
 gdf = sv.join_padron_to_apc(gdf_apc, padron, proxy_col="viviendas")
 # → agrega columna "inscritos"
 
-# Resultados electorales históricos por comuna
-resultados = sv.load_resultados_electorales("datos/resultados_2021.csv")
+# Resultados electorales por comuna (última elección parlamentaria observada)
+resultados = sv.load_resultados_electorales("datos/resultados_eleccion.csv")
 ```
 
 ---
@@ -937,15 +1131,15 @@ chains = [df1["pp_mean"].values, df2["pp_mean"].values, df3["pp_mean"].values]
 rhat = cd.gelman_rubin(chains)
 print(f"R-hat = {rhat:.4f} ({'converge' if rhat < cd.RHAT_THRESHOLD else 'NO converge'})")
 
-# Diagnósticos completos de varias métricas
-chain_metrics = pd.concat([df1.assign(cadena=0), df2.assign(cadena=1), df3.assign(cadena=2)])
-tabla = cd.mixing_diagnostics(chain_metrics, metrics=["pp_mean", "dev_norm", "cut_edges"])
+# Diagnósticos completos de varias métricas — recibe list[pd.DataFrame]
+cadenas = [df1, df2, df3]
+tabla = cd.mixing_diagnostics(cadenas, metrics=["max_dev_pct", "cut_edges"])
 # → DataFrame: metrica, n_cadenas, n_muestras, rhat, convergido, ess_promedio, acf_lag1_promedio
 
 # Visualizaciones de diagnóstico
-cd.plot_trace(chain_metrics, metric="pp_mean", save_path="trace.png")
+cd.plot_trace(cadenas, metrics=["max_dev_pct", "cut_edges"], save_path="trace.png")
 cd.plot_acf(serie, max_lag=50, save_path="acf.png")
-cd.plot_gelman_rubin_evolution(chains, metric="pp_mean", save_path="rhat_evol.png")
+cd.plot_gelman_rubin_evolution(cadenas, metrics=["max_dev_pct"], save_path="rhat_evol.png")
 ```
 
 #### Multi-cadena automático
@@ -980,7 +1174,7 @@ r_script = cd.generate_redist_script(
 
 # Importar resultados SMC desde R de vuelta a Python
 planes = cd.load_redist_results(
-    plans_csv="datos/R13/redist/plans.csv",
+    plans_csv="datos/R13/redist/chiledist_smc_planes.csv",
     id_list=gdf_apc["ID_DIST"].tolist(),
 )
 # → list[dict] compatible con analyze_ensemble()
@@ -1235,6 +1429,59 @@ for k in range(1, max_order + 1):
 - **Bridge SMC requiere R externo.** `generate_redist_script()` produce un script R pero no lo ejecuta. El flujo Python→R→Python requiere R instalado con el paquete `redist`. La librería emite una advertencia si `Rscript` no está en el PATH.
 
 - **Sin tests automatizados.** El proyecto no tiene suite de tests. Los resultados dependen de la integridad de los datos de entrada (APC 2023, Censo 2024, padrón SERVEL).
+
+---
+
+## Estado de madurez
+
+### Funciones de la librería — validadas con suite automatizada
+
+| Módulo | Función | Tests | Estado |
+|--------|---------|-------|--------|
+| `electoral` | `dhondt` | 8 | ✓ validado |
+| `electoral` | `dhondt_binivel` | 5 | ✓ validado |
+| `electoral` | `personas_por_escano` | 7 | ✓ validado |
+| `electoral` | `peso_relativo_del_voto` | 7 | ✓ validado |
+| `electoral` | `comparar_magnitudes` | 9 | ✓ validado |
+| `electoral` | `plan_electoral_metrics` | 24 | ✓ validado |
+| `split_metrics` | `pop_afectada_pct` | 7 | ✓ validado |
+| `split_metrics` | `plan_split_metrics` | 9 | ✓ validado |
+| `scenario_comparison` | `pareto_frontier_nd` | 10 | ✓ validado |
+| `scenario_comparison` | `ranking_concordance` | 8 | ✓ validado |
+| `scenario_comparison` | `compare_sensitivity` | 10 | ✓ validado |
+
+Total: **180 tests** pasan en CI sin datos externos (`pytest tests/ -q`).
+
+### Scripts — ejecutables en modo demo o con fixtures
+
+| Script | Modo sin datos reales | Estado |
+|--------|-----------------------|--------|
+| `malapportionment.py` | `--demo --skip-viz` | ✓ validado |
+| `electoral_analysis.py` | `--demo --skip-viz` | ✓ validado |
+| `pareto_sweep.py` | `--skip-run --no-anchors` con fixture CSVs | ✓ validado |
+| `run_chains.py` | funciones internas con DataFrames sintéticos | ✓ validado |
+| `compare_scenarios.py` | `--skip-run` con ensemble CSVs existentes | integración manual |
+| `redistritaje.py` | requiere SHP_APC2023 | solo con datos reales |
+| `smc_pipeline.py` | requiere SHP_APC2023 + R/redist | solo con datos reales |
+
+### Análisis completos (H1–H5) — requieren datos externos
+
+Todos los análisis de las hipótesis del paper dependen de los datos del INE/SERVEL
+que **no se distribuyen con esta librería**:
+
+| Datos | Fuente | Usado en |
+|-------|--------|----------|
+| SHP_APC2023 (shapefiles de distritos APC) | INE — solicitar en geodatos.ine.cl | redistritaje.py, smc_pipeline.py (H1, H5) |
+| Base_manzana_entidad_CPV24.csv (~24 MB) | INE — Censo 2024 | redistritaje.py con `--censo-path` |
+| Resultados electorales por CUT y partido (cualquier elección: 2021, 2025, …) | SERVEL — Open Data | malapportionment.py, electoral_analysis.py (H3, H4) |
+
+Para reproducir H1–H5 en su totalidad, sigue el flujo descrito en `setup_env.sh`.
+
+### Limitaciones conocidas del estado actual
+
+- `run_chains.py`: `_chain_output_dir()` importa `REGIONES_APC` desde `chiledist.data`, símbolo que no existe en v2.1 → `ImportError` al intentar correr el CLI completo. Las funciones internas (`load_chain_metrics`, `run_convergence_diagnostics`) funcionan correctamente.
+- `pareto_sweep.py` con `--skip-run` y sin fixture CSVs: imprime advertencia y termina sin crear output (comportamiento correcto, no es un error).
+- Los tests de scripts subprocess son lentos (~80 s) porque cada test arranca un proceso Python nuevo. Se recomienda ejecutar la suite completa una vez, no en modo `--watch`.
 
 ---
 
