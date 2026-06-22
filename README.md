@@ -1106,6 +1106,367 @@ metrics = cd.plan_electoral_metrics(assignment, votes_df, pop_by_unit)
 
 ---
 
+### Fair share y distancia al ideal fraccional (fairshare.py)
+
+Mide qué tan lejos está una asignación entera (D'Hondt) del ideal fraccional que satisface
+simultáneamente proporcionalidad nacional y respeto a las magnitudes distritales.
+
+```python
+import chiledist as cd
+import chiledist.fairshare as fs
+
+# ── Fair share matrix ─────────────────────────────────────────────────────────
+
+# Método biproporcional (Balinski–Ramírez): satisface cuotas Hamilton + magnitudes
+Q = fs.fair_share_matrix(
+    votes_by_dist,           # salida de aggregate_votes(): district, partido, votos
+    magnitudes,              # pd.Series {distrito: n_escaños}
+    method="biproportional", # default — recomendado para H6
+)
+# → DataFrame partido × distrito con valores fraccionales
+# Σ columna j = magnitud j  ✓
+# Σ fila i    = cuota Hamilton del partido i  ✓
+
+# Método distrital (más simple; NO garantiza cuotas nacionales)
+Q_d = fs.fair_share_matrix(votes_by_dist, magnitudes, method="district")
+
+# ── Convertir resultado D'Hondt a matriz ─────────────────────────────────────
+
+results = cd.run_electoral_plan(votes_by_dist, magnitudes)
+N = fs.results_to_matrix(results)   # DataFrame partido × distrito (enteros)
+
+# También funciona con run_electoral_plan_binivel (D'Hondt binivel)
+results_bi = cd.run_electoral_plan_binivel(votes_by_dist, magnitudes)
+N_bi = fs.results_to_matrix(results_bi)
+
+# ── Distancias ────────────────────────────────────────────────────────────────
+
+# L1: escaños totales fuera de lugar
+l1 = fs.l1_distance_fair_share(N, Q)                # valor absoluto
+l1_norm = fs.l1_distance_fair_share(N, Q, normalize=True)  # ÷ total_escaños ∈ [0,2]
+
+# L2: norma de Frobenius (penaliza más las desviaciones grandes)
+l2 = fs.l2_distance_fair_share(N, Q)
+rmse = fs.l2_distance_fair_share(N, Q, normalize=True)     # RMSE por celda
+
+# Celda con mayor desviación
+worst = fs.max_cell_deviation(N, Q)
+# → {'max_dev': 1.5, 'partido': 'UDI', 'distrito': 3, 'n_obs': 4.0,
+#    'q_ideal': 2.5, 'direction': 'sobre'}
+
+# ── Resumen completo (compatible con ensemble_stats) ─────────────────────────
+
+summary = fs.fair_share_summary(N, Q, label="legal_vigente")
+# → dict con claves:
+#   plan, l1, l1_norm, l2, rmse,
+#   max_dev, max_dev_partido, max_dev_distrito, max_dev_direction,
+#   n_celdas, n_sobre, n_sub, n_exacto, share_sobre
+
+# Para agregar al ensemble:
+import numpy as np
+rows = []
+for asgn, lbl in zip(ensemble_assignments, labels):
+    vd = cd.aggregate_votes(votes_long, asgn, unit_col="CUT")
+    Nk = fs.results_to_matrix(cd.run_electoral_plan(vd, magnitudes))
+    Qk = fs.fair_share_matrix(vd, magnitudes)
+    rows.append(fs.fair_share_summary(Nk, Qk, label=lbl))
+df_h6 = pd.DataFrame(rows)
+print(f"L1_norm mediana del ensemble: {df_h6['l1_norm'].median():.4f}")
+```
+
+| Función | Input | Output | Hipótesis |
+|---------|-------|--------|-----------|
+| `fair_share_matrix()` | `votes_df`, `magnitudes` | DataFrame partido × distrito (fraccional) | H6 |
+| `results_to_matrix()` | `results` (salida D'Hondt) | DataFrame partido × distrito (entero) | H6 |
+| `l1_distance_fair_share()` | `N`, `Q` | `float` — escaños fuera de lugar | H6 |
+| `l2_distance_fair_share()` | `N`, `Q` | `float` — norma de Frobenius | H6 |
+| `max_cell_deviation()` | `N`, `Q` | `dict` — celda más distante | H6 |
+| `fair_share_summary()` | `N`, `Q`, `label` | `dict` — todas las métricas | H6 |
+
+---
+
+### Malapportionment geográfico (malapportionment.py)
+
+Índices de malapportionment comparables internacionalmente. Complementa
+`personas_por_escano` / `peso_relativo_del_voto` (distritales) con escalares globales
+que permiten comparar planes entre sí y con sistemas de otros países. Implementa H9.
+
+```python
+import chiledist as cd
+import chiledist.malapportionment as mala
+import pandas as pd
+
+pop_d = pd.Series({1: 500_000, 2: 300_000, 3: 200_000})
+mag   = pd.Series({1: 3, 2: 3, 3: 2})
+
+# ── Índices escalares ─────────────────────────────────────────────────────────
+
+# Índice de Samuels-Snyder M = (1/2) Σ|s_i - p_i|
+# Rango [0, 1];  M=0 ↔ proporcionalidad perfecta
+ss = cd.samuels_snyder_index(pop_d, mag)
+print(f"Samuels-Snyder M = {ss:.4f}")
+
+# Loosemore-Hanby aplicado a geografía (idéntico a SS; alias semántico)
+lh = cd.loosemore_hanby_malapportionment(pop_d, mag)
+
+# Coeficiente de Gini de la distribución de PxE
+# pop_weighted=True (default): pondera por prob. de que un ciudadano al azar habite en ese distrito
+gini = cd.gini_personas_por_escano(pop_d, mag, pop_weighted=True)
+print(f"Gini PxE (pop-ponderado) = {gini:.4f}")
+
+# Ratio máximo-mínimo de personas/escaño
+mmr = cd.max_min_representation_ratio(pop_d, mag)
+print(f"Ratio máx/mín = {mmr['ratio']:.2f}  "
+      f"(D{mmr['max_district']} subrep. / D{mmr['min_district']} sobrerep.)")
+print(f"CV = {mmr['cv']:.4f}")
+
+# ── Resumen completo ──────────────────────────────────────────────────────────
+
+summary = cd.malapportionment_summary(pop_d, mag, label="mi_plan")
+# Claves: plan, n_districts, total_seats, total_pop,
+#         samuels_snyder, loosemore_hanby_M, gini_pop_weighted, gini_unweighted,
+#         max_min_ratio, cv, mean_pxe, std_pxe, max_pxe, max_district,
+#         min_pxe, min_district
+
+# ── Comparar múltiples planes ─────────────────────────────────────────────────
+
+plans = {
+    "legal":    {1: 1, 2: 1, 3: 2, 4: 2},
+    "apc_soft": {1: 1, 2: 2, 3: 1, 4: 2},
+}
+pop_units = pd.Series({1: 400_000, 2: 300_000, 3: 200_000, 4: 100_000})
+
+comparison = cd.compare_malapportionment_plans(
+    plans,
+    pop_by_unit=pop_units,
+    # magnitudes=None → assign_seat_magnitudes por plan (total=155, min=3, max=8)
+)
+print(comparison[["samuels_snyder", "gini_pop_weighted", "max_min_ratio"]])
+
+# ── Comparación internacional ─────────────────────────────────────────────────
+
+# Benchmarks integrados: Chile_legal_2021, USA_House_2023,
+#                        Argentina_2019, Brasil_2018, España_2019
+tabla = cd.international_comparison(
+    custom={"Chile_APC_soft": summary},
+    include_benchmarks=True,
+)
+print(tabla[["samuels_snyder", "max_min_ratio", "cv", "type"]])
+
+# ── Visualizaciones ───────────────────────────────────────────────────────────
+
+# Histograma de distribución PxE
+cd.plot_pxe_distribution(pop_d, mag, label="mi_plan")
+
+# Ranking de distritos (barra horizontal, coloreado: sub vs sobrerrepresentado)
+cd.plot_malapportionment_ranking(pop_d, mag, label="mi_plan", top_n=20)
+
+# Dot-plot de comparación internacional
+cd.plot_international_comparison(
+    tabla,
+    metric="samuels_snyder",
+    metric_label="Índice de Samuels-Snyder (M)",
+    save_path="resultados/h9_comparacion_internacional.png",
+)
+```
+
+| Función | Input | Output | Hipótesis |
+|---------|-------|--------|-----------|
+| `samuels_snyder_index()` | `pop`, `mag` | `float` M ∈ [0, ~0.5] | H9 |
+| `loosemore_hanby_malapportionment()` | `pop`, `mag` | `float` (≡ SS; alias semántico) | H9 |
+| `gini_personas_por_escano()` | `pop`, `mag` | `float` Gini ∈ [0, 1) | H9 |
+| `max_min_representation_ratio()` | `pop`, `mag` | `dict` ratio, CV, extremos | H9 |
+| `malapportionment_summary()` | `pop`, `mag`, `label` | `dict` — todos los índices | H9 |
+| `compare_malapportionment_plans()` | `plans`, `pop_by_unit` | `DataFrame` — planes × índices | H9 |
+| `international_comparison()` | `custom`, benchmarks | `DataFrame` — países + planes | H9 |
+| `plot_pxe_distribution()` | `pop`, `mag` | `Figure` — histograma PxE | H9 |
+| `plot_malapportionment_ranking()` | `pop`, `mag` | `Figure` — ranking distritos | H9 |
+| `plot_international_comparison()` | `DataFrame` | `Figure` — dot-plot comparado | H9 |
+
+---
+
+### Barrido paramétrico y frontera Pareto continua (pareto_sweep.py)
+
+Construye la frontera Pareto real del espacio de tradeoffs operando sobre **planes individuales**
+—no medianas por escenario— con bandas bootstrap de incertidumbre y detección automática del
+knee point (punto de máxima eficiencia). Implementa H8.
+
+```python
+import chiledist as cd
+import numpy as np, pandas as pd
+
+penalties = np.linspace(0.0, 1.0, 11)
+
+# Cargar ensembles ya generados (uno por nivel de penalización)
+ensembles = {
+    p: pd.read_csv(f"datos/R13_METROPOLITANA/redistritaje/apc_soft_p{p:.2f}/ensemble_stats.csv")
+    for p in penalties
+}
+
+# ── Pool consolidado ──────────────────────────────────────────────────────────
+
+pool = cd.sweep_split_penalty(ensembles)
+# → DataFrame: columna 'penalty' + métricas de ensemble_stats
+# Una fila por plan (cada nivel aporta N planes al pool)
+
+# ── Frontera Pareto real (planes individuales) ────────────────────────────────
+
+frontier_res = cd.build_tradeoff_frontier(
+    pool,
+    x_metric="max_dev_pob_pct",
+    y_metric="n_comunas_partidas",
+    n_bootstrap=500,      # remuestreos para IC 90% y 50%
+    random_state=42,
+)
+print(f"Planes Pareto-óptimos: {frontier_res['metadata']['n_pareto']}")
+
+# Subconjunto de planes no dominados
+frontier_df = frontier_res["frontier"]
+
+# Bandas bootstrap de la frontera
+boot_bands  = frontier_res["bootstrap_bands"]  # x_grid, y_p5, y_p25, y_p50, y_p75, y_p95
+
+# Estadísticas por penalización
+stats       = frontier_res["per_penalty_stats"]
+
+# ── Knee point: máxima eficiencia ─────────────────────────────────────────────
+
+knee = cd.detect_knee_point(
+    frontier_df,
+    method="normalized_distance",   # espacio normalizado [0,1]×[0,1]
+    diminishing_threshold=0.5,      # rendimientos decrecientes < 50% de la media
+)
+print(f"Penalty óptimo: {knee['knee_penalty']:.2f}")
+print(f"  max_dev_pob_pct    = {knee['knee_x']:.2f}%")
+print(f"  n_comunas_partidas = {knee['knee_y']:.1f}")
+if knee["diminishing_start_x"] is not None:
+    print(f"Rendimientos decrecientes desde x = {knee['diminishing_start_x']:.2f}")
+
+# ── Figura publicable ─────────────────────────────────────────────────────────
+
+fig = cd.plot_tradeoff_curve(
+    pool, frontier_res,
+    knee_result=knee,
+    show_density_bands=True,
+    show_diminishing=True,
+    save_path="resultados/h8_pareto_frontier.png",
+)
+
+# ── Resumen estadístico por nivel ─────────────────────────────────────────────
+
+summary = cd.summarize_tradeoff(pool, frontier_res, knee)
+# → DataFrame indexado por penalty; columnas {metric}_mean/std/p5/p95,
+#   n_planes, n_pareto, pct_pareto, is_knee
+print(summary[["n_planes", "pct_pareto", "is_knee"]])
+```
+
+| Función | Input | Output | Hipótesis |
+|---------|-------|--------|-----------|
+| `sweep_split_penalty()` | `dict {penalty: DataFrame}` | Pool de planes individuales | H8 |
+| `build_tradeoff_frontier()` | pool + métricas | `dict` — frontera + bandas bootstrap | H8 |
+| `detect_knee_point()` | frontier DataFrame | `dict` — knee + rendimientos decrecientes | H8 |
+| `plot_tradeoff_curve()` | pool + frontier + knee | `Figure` — scatter + frontera + IC | H8 |
+| `summarize_tradeoff()` | pool + frontier + knee | `DataFrame` — por nivel de penalización | H8 |
+
+---
+
+### Análisis distribucional electoral sobre ensembles (electoral_ensemble.py)
+
+Evalúa cómo se distribuyen las métricas electorales (Gallagher, ENP, prima de escaños) sobre
+el universo de planes de redistritaje. Permite determinar si el resultado del mapa vigente es
+típico o atípico respecto a planes alternativos plausibles (H7).
+
+```python
+import chiledist as cd
+import pandas as pd, json
+
+votes_df  = cd.data.servel.votos_por_comuna()
+pop       = cd.data.census2024.poblacion_comunal()["personas"]
+with open("datos/pacto_map_2025.json") as f:
+    pacto_map = json.load(f)
+
+# ── Correr ensemble electoral ─────────────────────────────────────────────────
+
+# ensemble_assignments: list[dict {CUT: n_circunscripcion}] (salida de H1)
+results = cd.run_electoral_ensemble(
+    ensemble_assignments,
+    votes_df,
+    pop,
+    magnitudes=pd.Series(cd.MAGNITUDES_LEGALES_LEY20840),
+    pacto_map=pacto_map,
+    unit_col="CUT",
+    include_seat_bonus=True,   # agrega columnas seat_bonus_{partido}
+)
+# → DataFrame: una fila por plan, indexado por plan_id
+# Columnas: gallagher, loosemore_hanby, rae, enp_votos, enp_escanos,
+#           n_partidos_con_escanos, seat_bonus_A, seat_bonus_B, ...
+
+# ── Resumen estadístico ───────────────────────────────────────────────────────
+
+summary = cd.summarize_electoral_ensemble(results)
+# → DataFrame indexado por métrica; columnas: mean, median, std, p5, p25, p75, p95, ci95_*, n
+
+# Gallagher: media, IC 95%
+gall_stats = cd.ensemble_gallagher(results)
+print(f"Gallagher: {gall_stats['mean']:.2f} (IC 95%: [{gall_stats['ci95_low']:.2f}, {gall_stats['ci95_high']:.2f}])")
+
+# ENP (votos y escaños)
+enp = cd.ensemble_enp(results)
+print(f"ENP escaños media: {enp['enp_escanos']['mean']:.2f}")
+
+# Prima de escaños por partido
+sb_all = cd.ensemble_seat_bonus(results)                  # DataFrame: partido × estadísticas
+sb_ps  = cd.ensemble_seat_bonus(results, partido="PS")   # dict para un partido específico
+
+# ── Gráficos ──────────────────────────────────────────────────────────────────
+
+import matplotlib.pyplot as plt
+
+obs_gallagher = 4.3   # valor observado del plan vigente
+
+# Histograma
+cd.plot_ensemble_histogram(results, metric="gallagher", observed=obs_gallagher)
+
+# Violin plots para varias métricas
+cd.plot_ensemble_violin(
+    results,
+    metrics=["gallagher", "enp_votos", "enp_escanos"],
+    observed={"gallagher": obs_gallagher, "enp_votos": 3.1, "enp_escanos": 2.8},
+)
+
+# ECDF — muestra el percentil del observado dentro del ensemble
+cd.plot_ensemble_ecdf(results, metric="gallagher", observed=obs_gallagher,
+                      save_path="resultados/h7_gallagher_ecdf.png")
+
+# ── Umbral efectivo (magnitudes variables) ────────────────────────────────────
+
+# Cuando magnitudes se calculan por plan (magnitudes=None en run_electoral_ensemble)
+from chiledist.electoral import assign_seat_magnitudes
+mags_list = [
+    assign_seat_magnitudes(
+        pd.Series({d: sum(pop.get(u, 0) for u, dd in a.items() if dd == d)
+                   for d in set(a.values())}),
+    )
+    for a in ensemble_assignments
+]
+threshold_df = cd.ensemble_effective_threshold(mags_list)
+# → DataFrame: distrito × estadísticas del umbral efectivo T_U = 1/(M+1)
+```
+
+| Función | Input | Output | Hipótesis |
+|---------|-------|--------|-----------|
+| `run_electoral_ensemble()` | ensemble + votes + pop + magnitudes + pacto_map | DataFrame plan × métricas electorales | H7 |
+| `ensemble_gallagher()` | ensemble_results | `dict` — estadísticas de distribución | H7 |
+| `ensemble_seat_bonus()` | ensemble_results | `DataFrame` o `dict` — prima de escaños | H7 |
+| `ensemble_enp()` | ensemble_results | `dict` — ENP votos y escaños | H7 |
+| `ensemble_effective_threshold()` | list de magnitudes | `DataFrame` — umbral por distrito | H7 |
+| `summarize_electoral_ensemble()` | ensemble_results | `DataFrame` — todas las métricas | H7 |
+| `plot_ensemble_histogram()` | ensemble_results, metric | `Figure` — histograma | H7 |
+| `plot_ensemble_violin()` | ensemble_results, metrics | `Figure` — violin plots | H7 |
+| `plot_ensemble_ecdf()` | ensemble_results, metric | `Figure` — ECDF | H7 |
+
+---
+
 ### Diagnósticos de convergencia (samplers/diagnostics.py)
 
 Herramientas para evaluar si la cadena MCMC ha convergido y para ejecutar análisis multi-cadena.
@@ -1449,8 +1810,38 @@ for k in range(1, max_order + 1):
 | `scenario_comparison` | `pareto_frontier_nd` | 10 | ✓ validado |
 | `scenario_comparison` | `ranking_concordance` | 8 | ✓ validado |
 | `scenario_comparison` | `compare_sensitivity` | 10 | ✓ validado |
+| `fairshare` | `fair_share_matrix` (district + biproportional) | 17 | ✓ validado |
+| `fairshare` | `results_to_matrix` | 6 | ✓ validado |
+| `fairshare` | `l1_distance_fair_share` | 6 | ✓ validado |
+| `fairshare` | `l2_distance_fair_share` | 5 | ✓ validado |
+| `fairshare` | `max_cell_deviation` | 6 | ✓ validado |
+| `fairshare` | `fair_share_summary` | 12 | ✓ validado |
+| `electoral_ensemble` | `run_electoral_ensemble` | 15 | ✓ validado |
+| `electoral_ensemble` | `ensemble_gallagher` | 5 | ✓ validado |
+| `electoral_ensemble` | `ensemble_seat_bonus` | 6 | ✓ validado |
+| `electoral_ensemble` | `ensemble_enp` | 4 | ✓ validado |
+| `electoral_ensemble` | `ensemble_effective_threshold` | 5 | ✓ validado |
+| `electoral_ensemble` | `summarize_electoral_ensemble` | 6 | ✓ validado |
+| `electoral_ensemble` | `plot_ensemble_histogram/violin/ecdf` | 12 | ✓ validado |
+| `electoral_ensemble` | `_dist_stats`, `_normalize_assignments` | 8 | ✓ validado |
+| `pareto_sweep` | `sweep_split_penalty` | 9 | ✓ validado |
+| `pareto_sweep` | `build_tradeoff_frontier` | 14 | ✓ validado |
+| `pareto_sweep` | `detect_knee_point` | 11 | ✓ validado |
+| `pareto_sweep` | `plot_tradeoff_curve` | 7 | ✓ validado |
+| `pareto_sweep` | `summarize_tradeoff` | 9 | ✓ validado |
+| `pareto_sweep` | constants (`SWEEP_METRICS`, `METRIC_DIRECTIONS`, `METRIC_LABELS`) | 4 | ✓ validado |
+| `malapportionment` | `samuels_snyder_index` | 10 | ✓ validado |
+| `malapportionment` | `loosemore_hanby_malapportionment` | 4 | ✓ validado |
+| `malapportionment` | `gini_personas_por_escano` | 10 | ✓ validado |
+| `malapportionment` | `max_min_representation_ratio` | 8 | ✓ validado |
+| `malapportionment` | `malapportionment_summary` | 8 | ✓ validado |
+| `malapportionment` | `compare_malapportionment_plans` | 6 | ✓ validado |
+| `malapportionment` | `international_comparison` | 7 | ✓ validado |
+| `malapportionment` | `BENCHMARK_MALAPPORTIONMENT` | 4 | ✓ validado |
+| `malapportionment` | `plot_pxe_distribution / ranking / international` | 9 | ✓ validado |
 
-Total: **180 tests** pasan en CI sin datos externos (`pytest tests/ -q`).
+Total: **421 tests** pasan en CI sin datos externos (`pytest tests/ -q`).
+(398 tests unitarios + 23 tests de integración de scripts; los tests de scripts requieren ~80 s por subprocesos.)
 
 ### Scripts — ejecutables en modo demo o con fixtures
 

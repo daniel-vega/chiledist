@@ -912,6 +912,691 @@ print(sens[["metrica", "ks_stat", "efecto", "mediana_a", "mediana_b", "delta_med
 
 ---
 
+## H6 — Distancia al ideal fraccional: fair share biproporcional
+
+### Pregunta
+
+> ¿Qué tan lejos están los planes generados del ideal fraccional de
+> representación biproporcional?
+> ¿Es el mapa vigente más o menos distante del ideal que los planes
+> del ensemble?  ¿Reduce el uso de APCs esa distancia?
+
+La *fair share matrix* **Q** es la única asignación fraccional que satisface
+simultáneamente:
+1. **Proporcionalidad nacional**: la suma de escaños de cada partido en Q
+   iguala su cuota Hamilton nacional (votos_i / votos_totales) × total_escaños.
+2. **Respeto a las magnitudes**: la suma de columna de Q iguala la magnitud
+   del distrito.
+
+Cualquier asignación entera **N** (salida de D'Hondt) difiere de Q por la
+imposibilidad aritmética de dividir escaños.  La distancia L1/L2 entre N y Q
+mide simultáneamente malapportionment y desproporcionalidad en una sola cifra.
+
+### Datos requeridos
+
+| Dato | Fuente | Dónde en ChileDist |
+|---|---|---|
+| Votos por APC y partido (elección de referencia) | SERVEL | `aggregate_votes()` + `datos/servel_2025_por_cut.csv` |
+| Magnitudes distritales | Integrado o ensemble | `cd.MAGNITUDES_LEGALES_LEY20840` o `assign_seat_magnitudes()` |
+| Resultados D'Hondt del plan | Ensemble o mapa vigente | `run_electoral_plan()` o `run_electoral_plan_binivel()` |
+| Pactos electorales (para binivel) | SERVEL (metadata) | Dict `{partido: pacto}` |
+
+### Comandos
+
+#### Paso 1 — Fair share de un plan y distancias básicas
+
+```python
+import pandas as pd
+import chiledist as cd
+import chiledist.fairshare as fs
+
+# Votos electorales por APC y partido (elección de referencia)
+votes_long = pd.read_csv("datos/servel_2025_por_cut.csv")   # CUT, partido, votos
+
+# Asignación APC → circunscripción (plan del ensemble o mapa vigente)
+assignment = {cut: distrito for cut, distrito in ...}
+
+# Paso 1a — agregar votos al nivel de circunscripción
+votes_by_dist = cd.aggregate_votes(votes_long, assignment, unit_col="CUT")
+
+# Paso 1b — magnitudes (usar legales para comparación con el mapa vigente)
+magnitudes = cd.MAGNITUDES_LEGALES_LEY20840
+
+# Paso 1c — fair share matrix (biproporcional, satisface ambas restricciones)
+Q = fs.fair_share_matrix(votes_by_dist, magnitudes, method="biproportional")
+print(Q.round(2))   # filas=partidos, columnas=circunscripciones
+
+# Paso 1d — asignación entera (D'Hondt sobre el mismo plan)
+results = cd.run_electoral_plan(votes_by_dist, magnitudes)
+N = fs.results_to_matrix(results)
+
+# Paso 1e — distancias
+print(f"L1:      {fs.l1_distance_fair_share(N, Q):.4f}  escaños fuera de lugar")
+print(f"L1_norm: {fs.l1_distance_fair_share(N, Q, normalize=True):.4f}  (fraccón de escaños, ∈ [0,2])")
+print(f"L2:      {fs.l2_distance_fair_share(N, Q):.4f}  (norma Frobenius)")
+print(f"RMSE:    {fs.l2_distance_fair_share(N, Q, normalize=True):.4f}  (por celda)")
+print(fs.max_cell_deviation(N, Q))   # celda más distante del ideal
+```
+
+#### Paso 2 — Comparar distancias entre escenarios (mapa vigente vs ensemble)
+
+```python
+import numpy as np
+
+# Distancia del mapa vigente
+N_vigente = fs.results_to_matrix(
+    cd.run_electoral_plan(votes_by_dist_vigente, cd.MAGNITUDES_LEGALES_LEY20840)
+)
+Q_vigente = fs.fair_share_matrix(votes_by_dist_vigente, cd.MAGNITUDES_LEGALES_LEY20840)
+l1_vigente = fs.l1_distance_fair_share(N_vigente, Q_vigente, normalize=True)
+print(f"Distancia del mapa vigente: L1_norm = {l1_vigente:.4f}")
+
+# Distribución de distancias en el ensemble
+l1_ensemble = []
+for asgn in ensemble_assignments:
+    vd = cd.aggregate_votes(votes_long, asgn, unit_col="CUT")
+    Nk = fs.results_to_matrix(cd.run_electoral_plan(vd, magnitudes))
+    Qk = fs.fair_share_matrix(vd, magnitudes)
+    l1_ensemble.append(fs.l1_distance_fair_share(Nk, Qk, normalize=True))
+
+l1_arr = np.array(l1_ensemble)
+print(f"Ensemble L1_norm: mediana={np.median(l1_arr):.4f}, "
+      f"p10={np.percentile(l1_arr, 10):.4f}, "
+      f"p90={np.percentile(l1_arr, 90):.4f}")
+
+# Percentil del mapa vigente en la distribución del ensemble
+pct = np.mean(l1_arr <= l1_vigente) * 100
+print(f"El mapa vigente está en el percentil {pct:.1f} del ensemble")
+# Si pct > 80: el mapa vigente está más lejos del ideal que la mayoría de los planes
+# Si pct < 50: el mapa vigente es competitivo con el ensemble
+```
+
+#### Paso 3 — Summary completo para agregar a ensemble_stats
+
+```python
+# El dict de fair_share_summary es compatible con ensemble_stats
+summary = fs.fair_share_summary(N, Q, label="legal_vigente")
+# Claves: plan, l1, l1_norm, l2, rmse, max_dev, max_dev_partido,
+#         max_dev_distrito, max_dev_direction, n_celdas, n_sobre, n_sub,
+#         n_exacto, share_sobre
+print(pd.Series(summary))
+
+# Para el ensemble: agregar como columnas en ensemble_stats.csv
+rows = []
+for asgn, label in zip(ensemble_assignments, ensemble_labels):
+    vd = cd.aggregate_votes(votes_long, asgn, unit_col="CUT")
+    Nk = fs.results_to_matrix(cd.run_electoral_plan(vd, magnitudes))
+    Qk = fs.fair_share_matrix(vd, magnitudes)
+    rows.append(fs.fair_share_summary(Nk, Qk, label=label))
+df_ens_fs = pd.DataFrame(rows)
+```
+
+#### Paso 4 — Método distrital vs biproporcional: ¿importa la elección del método?
+
+```python
+# Comparar métodos para el mismo plan
+Q_bip = fs.fair_share_matrix(votes_by_dist, magnitudes, method="biproportional")
+Q_dis = fs.fair_share_matrix(votes_by_dist, magnitudes, method="district")
+
+# ¿Difieren sustancialmente?
+diff = (Q_bip - Q_dis).abs()
+print(f"Diferencia máxima entre métodos: {diff.values.max():.4f} escaños")
+# Si < 0.1: la concentración geográfica de los partidos es baja
+# Si > 0.5: los partidos tienen concentración geográfica fuerte;
+#           preferir biproporcional para H6
+```
+
+### Qué observar en los resultados
+
+| Métrica | Umbral indicativo | Interpretación política |
+|---|---|---|
+| `l1_norm` del mapa vigente | > 0.10 | Más del 10% de los escaños (≈ 16 sobre 155) están fuera del ideal fraccional. |
+| Percentil vigente en ensemble | > 80 | El mapa vigente está significativamente más lejos del ideal que los planes generados. |
+| Diferencia mediana ensemble entre `legal` y `apc_soft` | > 0.05 en L1_norm | Usar APCs reduce la distancia al ideal en más de 5 puntos porcentuales de escaños. |
+| `max_dev` | > 2.0 | Un partido en un distrito tiene ≥ 2 escaños de desvío: el mapa amplifica (o elimina) representación localmente. |
+| `share_sobre` | > 0.5 | Más de la mitad de las celdas están sobre-asignadas: el sistema favorece concentrar representación. |
+
+### Interpretación política
+
+La distancia L1_norm mide la fracción de escaños que "estarían mal ubicados" si se distribuyera la representación de forma completamente proporcional —tanto a nivel nacional como distrital— a la vez. En el sistema chileno vigente, las fuentes de distancia son:
+
+1. **Malapportionment de magnitudes**: distritos con muchos votantes por escaño reciben menos representación de la que les correspondería, lo que se refleja en desviaciones de columna en la fair share matrix.
+
+2. **Desproporcionalidad de D'Hondt**: el método D'Hondt favorece a los partidos más votados dentro de cada distrito, desviando la asignación de la cuota fraccional.
+
+3. **Fragmentación geográfica de los votos**: cuando los votos de un partido están concentrados en ciertos distritos, la restricción de integridad produce mayores desviaciones respecto al ideal biproporcional.
+
+La hipótesis H6 separa el efecto de la *geografía* (¿son los planes APC mejores que el mapa vigente?) del efecto del *método electoral* (¿es D'Hondt responsable de la distancia, independientemente del mapa?).
+
+### Interpretación estadística
+
+- **L1** es una norma del espacio de matrices; su valor mínimo no-nulo es 2 × (n_partidos × n_distritos no resolubles) por la restricción de integridad.
+- **L2 / RMSE** penaliza desviaciones grandes en celdas individuales más que L1; útil para detectar partidos/distritos con representación sistémicamente distorsionada.
+- El **percentil del mapa vigente** en la distribución del ensemble es una prueba de hipótesis no-paramétrica: si cae por encima del percentil 95, rechazamos (al 5%) que el mapa vigente es una muestra aleatoria del espacio de mapas alternativos.
+- La comparación entre escenarios (legal vs apc_soft) es válida solo si las magnitudes se computan del mismo modo en ambos casos.
+
+### Limitaciones
+
+1. **Los votos están congelados**: Q se computa con los votos de la elección de referencia. El comportamiento electoral real bajo un nuevo mapa es desconocido; la fair share matrix es un contrafactual, no una predicción.
+
+2. **IPF requiere soporte positivo**: si un partido no tiene votos en algún distrito, Q[partido, distrito] = 0 por construcción. Esto es metodológicamente correcto (sin votos no hay cuota) pero puede inflar la distancia si el partido ganó escaños vía pacto.
+
+3. **Escala**: L1_norm ∈ [0, 2] en teoría, pero en la práctica los valores observables están entre 0 y ~0.3 para distribuciones electorales típicas chilenas. Un L1_norm de 0.15 no es "alto" en abstracto —hay que compararlo con el ensemble.
+
+4. **Biproporcional vs distrital**: el método `'district'` es más simple e intuitivo pero no respeta las cuotas nacionales. Para la hipótesis H6 se recomienda siempre `method='biproportional'`.
+
+---
+
+## H7 — Atipicidad electoral del mapa observado
+
+> **Pregunta:** ¿El resultado electoral observado bajo el mapa vigente es típico o atípico respecto al universo de planes de redistritaje plausibles?
+
+Un índice de Gallagher bajo, un ENP cercano al ideal o una prima de escaños equilibrada no son necesariamente buenas noticias si esos valores resultan de una geografía que favorece sistemáticamente a ciertos partidos. H7 ubica los resultados electorales del mapa vigente dentro de la distribución que generaría cualquier mapa alternativo plausible: si el observado cae en la cola extrema del ensemble, la geografía —no solo el método electoral— está distorsionando la representación.
+
+### Datos requeridos
+
+| Dato | Fuente | Módulo |
+|---|---|---|
+| Votos por unidad y partido (elección de referencia) | SERVEL | `chiledist.data.servel` |
+| `pacto_map` (elección de referencia) | SERVEL (metadata) | archivo externo |
+| Ensemble de planes (al menos N=200) | salida de H1 | `chiledist.samplers` |
+| Magnitudes por circunscripción | `MAGNITUDES_LEGALES_LEY20840` o H3 | `chiledist.electoral` |
+| Asignación del mapa vigente | BCN / SERVEL | archivo externo |
+
+### Paso 1 — Ejecutar ensemble electoral
+
+```python
+import chiledist as cd
+import json
+import pandas as pd
+
+votes_df   = cd.data.servel.votos_por_comuna()  # o pd.read_csv("datos/servel_2025_por_cut.csv")
+pop        = cd.data.census2024.poblacion_comunal()["personas"]
+with open("datos/pacto_map_2025.json") as f:
+    pacto_map = json.load(f)
+
+# ensemble_assignments: list[dict] con planes generados en H1
+ensemble_results = cd.run_electoral_ensemble(
+    ensemble_assignments,
+    votes_df,
+    pop,
+    magnitudes=pd.Series(cd.MAGNITUDES_LEGALES_LEY20840),
+    pacto_map=pacto_map,
+    unit_col="CUT",
+    include_seat_bonus=True,
+)
+print(ensemble_results[["gallagher", "enp_votos", "enp_escanos"]].describe())
+```
+
+### Paso 2 — Métricas del plan observado
+
+```python
+from chiledist.electoral import plan_electoral_metrics
+
+with open("datos/asignacion_vigente.json") as f:
+    asignacion_vigente = {int(k): int(v) for k, v in json.load(f).items()}
+
+obs_metrics = plan_electoral_metrics(
+    asignacion_vigente,
+    votes_df,
+    pop,
+    pacto_map=pacto_map,
+    magnitudes_fijas=pd.Series(cd.MAGNITUDES_LEGALES_LEY20840),
+)
+print(f"Gallagher observado: {obs_metrics['gallagher']}")
+print(f"ENP escaños observado: {obs_metrics['enp_escanos']}")
+```
+
+### Paso 3 — Distribuciones y gráficos
+
+```python
+# Resumen estadístico completo
+summary = cd.summarize_electoral_ensemble(ensemble_results)
+print(summary[["mean", "std", "p5", "p95"]])
+
+# Gallagher: distribución, CI 95% y posición del observado
+gall_stats = cd.ensemble_gallagher(ensemble_results)
+print(f"Media ensemble: {gall_stats['mean']:.2f}")
+print(f"IC 95%: [{gall_stats['ci95_low']:.2f}, {gall_stats['ci95_high']:.2f}]")
+
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+cd.plot_ensemble_histogram(
+    ensemble_results, metric="gallagher",
+    observed=obs_metrics["gallagher"],
+    ax=axes[0],
+)
+cd.plot_ensemble_violin(
+    ensemble_results,
+    metrics=["gallagher", "enp_votos", "enp_escanos"],
+    observed={
+        "gallagher":   obs_metrics["gallagher"],
+        "enp_votos":   obs_metrics["enp_votos"],
+        "enp_escanos": obs_metrics["enp_escanos"],
+    },
+)
+cd.plot_ensemble_ecdf(
+    ensemble_results, metric="gallagher",
+    observed=obs_metrics["gallagher"],
+    ax=axes[2],
+)
+plt.tight_layout()
+plt.savefig("resultados/h7_ensemble_electoral.png", dpi=150)
+```
+
+### Paso 4 — Prima de escaños por partido
+
+```python
+# Distribución de la prima de escaños para cada partido
+sb_df = cd.ensemble_seat_bonus(ensemble_results)
+print(sb_df[["mean", "p5", "p95"]])
+
+# ¿El partido X está sistemáticamente sobrerepresentado en el espacio de planes?
+sb_A = cd.ensemble_seat_bonus(ensemble_results, partido="A")
+print(f"Prima media de A: {sb_A['mean']:.2f} pp  (IC 95%: [{sb_A['ci95_low']:.2f}, {sb_A['ci95_high']:.2f}])")
+```
+
+### Paso 5 — Umbral efectivo por distrito (planes con magnitudes variables)
+
+```python
+# Solo relevante cuando magnitudes=None (calculadas por plan)
+results_var = cd.run_electoral_ensemble(
+    ensemble_assignments, votes_df, pop,
+    pacto_map=pacto_map,   # magnitudes calculadas por plan
+)
+
+# Construir lista de magnitudes por plan (requiere re-correr assign_seat_magnitudes)
+from chiledist.electoral import assign_seat_magnitudes
+mags_list = [
+    assign_seat_magnitudes(
+        pd.Series({d: sum(pop.get(u, 0) for u, dd in a.items() if dd == d)
+                   for d in set(a.values())}),
+        total_seats=155,
+    )
+    for a in ensemble_assignments
+]
+threshold_df = cd.ensemble_effective_threshold(mags_list)
+print(threshold_df[["mean", "std", "p5", "p95"]])
+```
+
+### Qué observar
+
+| Resultado | Interpretación |
+|---|---|
+| Gallagher observado < p5 del ensemble | El mapa vigente produce resultados inusualmente proporcionales — ventaja geográfica "inocente" |
+| Gallagher observado > p95 del ensemble | El mapa vigente produce desproporcionalidad atípica — la geografía amplifica la distorsión electoral |
+| Prima de escaños observada en la cola alta de un partido | El mapa favorece sistemáticamente a ese partido más allá de lo esperable por el método |
+| ENP escaños < p5 | El mapa concentra el poder en menos partidos de lo que permitiría una geografía neutral |
+| IC 95% no incluye el observado | Rechazamos (α=5%) que el mapa vigente es una muestra aleatoria del espacio de planes |
+
+### Interpretación política
+
+El ensemble define el contrafactual: "¿cómo serían las elecciones con un mapa diferente pero igual de plausible según los criterios APC?" Si el plan vigente cae sistemáticamente fuera de la distribución del ensemble, la geografía está actuando como factor independiente que modifica el resultado electoral más allá de lo esperable por el método de escrutinio. Esto no implica intención —puede ser consecuencia histórica de cómo se trazaron los distritos— pero sí tiene efectos distributivos medibles.
+
+### Interpretación estadística
+
+- El **percentil del observado** dentro del ensemble es una prueba de hipótesis no-paramétrica (Mann-Whitney) de la hipótesis nula: "el mapa vigente fue seleccionado de la distribución de mapas plausibles".
+- El **IC 95%** del ensemble es una banda de referencia, no un intervalo de confianza sobre el verdadero valor electoral: los votos son datos fijos, no aleatorios. Lo que varía es el mapa.
+- Para N=200 planes, la resolución del percentil estimado es ±7pp al 95%. Para N=1000, es ±3pp.
+- Si se usan magnitudes calculadas (en lugar de las legales fijas), H7 captura también el efecto de reasignar escaños con la nueva geografía —un análisis contrafactual más rico pero menos comparable con el sistema vigente.
+
+### Limitaciones
+
+1. **Votos congelados**: los votos de la elección de referencia se aplican a todos los planes. El comportamiento electoral real bajo un nuevo mapa involucra efectos de incumbencia, redistricción y movilización que el modelo no captura.
+
+2. **Espacio de planes sesgado**: el ensemble es una muestra del espacio bajo las restricciones APC elegidas. Si esas restricciones son muy estrictas (apc_strict), el ensemble puede no ser representativo del espacio de mapas "plausibles" en sentido amplio.
+
+3. **Correlación entre métricas**: Gallagher, ENP y prima de escaños no son independientes. Interpretar distribuciones conjuntas requiere análisis multivariado (no implementado).
+
+4. **Sin inferencia sobre partidos individuales**: la prima de escaños de un partido específico puede tener varianza muy alta si ese partido tiene votos concentrados en pocas unidades, haciendo la inferencia poco potente con N pequeño.
+
+---
+
+## H8 — Punto de máxima eficiencia en el tradeoff poblacional-comunal
+
+> **Pregunta:** ¿Existe un punto de máxima eficiencia entre igualdad poblacional e integridad comunal, y a qué nivel de penalización corresponde?
+
+En el barrido paramétrico sobre `split_penalty`, la frontera Pareto describe el tradeoff entre balance poblacional (`max_dev_pob_pct`) e integridad comunal (`n_comunas_partidas`). La hipótesis H8 pregunta si ese tradeoff tiene un punto de inflexión claro —el **knee point**— donde el costo marginal de mejorar un objetivo supera el beneficio obtenido en el otro. Si existe, identifica el valor óptimo de `split_penalty` para el diseño del escenario `apc_soft`.
+
+La H8 es complementaria a la H2: mientras H2 pregunta si el mapa vigente es Pareto-dominado (respuesta binaria), H8 pregunta dónde está el tradeoff más eficiente dentro del espacio de planes alcanzables (respuesta continua con incertidumbre).
+
+### Diferencia metodológica respecto a H2
+
+| Aspecto | H2 (scripts/pareto_sweep.py) | H8 (chiledist/pareto_sweep.py) |
+|---|---|---|
+| Unidad de análisis | Un punto por escenario (mediana o plan de referencia) | Cada plan individual del ensemble |
+| Frontera Pareto | Sobre ~10 puntos representativos | Sobre todos los planes (N×P planes) |
+| Incertidumbre | No cuantificada | Bandas bootstrap (IC 90% y 50%) |
+| Knee point | No detectado automáticamente | Detección automática con distancia perpendicular |
+| Rendimientos decrecientes | No detectado | Detectado: umbral configurable |
+
+### Datos requeridos
+
+| Dato | Fuente | Módulo |
+|---|---|---|
+| Ensembles de planes por nivel de penalización | Salida de H1 (redistritaje.py) | `scripts/redistritaje.py` |
+| `penalties = np.linspace(0, 1, N)` con N ≥ 10 | Barrido paramétrico | definido por el usuario |
+
+### Paso 1 — Cargar o generar ensembles por nivel
+
+```python
+import chiledist as cd
+import numpy as np, pandas as pd
+from pathlib import Path
+
+penalties = np.linspace(0.0, 1.0, 11)   # 0.0, 0.1, …, 1.0
+region    = "R13_METROPOLITANA"
+
+# Opción A: cargar desde disco (ensembles ya generados con scripts/redistritaje.py)
+ensembles = {}
+for p in penalties:
+    p_str   = f"{p:.2f}".replace(".", "_")
+    csv_path = Path(f"datos/{region}/redistritaje/apc_soft_p{p_str}/ensemble_stats.csv")
+    if csv_path.exists():
+        ensembles[p] = pd.read_csv(csv_path)
+
+# Opción B: generar con pareto_sweep.py (requiere SHP_APC2023)
+# python scripts/pareto_sweep.py --penalties 0.0,0.1,0.2,...,1.0 --region 13
+```
+
+### Paso 2 — Consolidar y construir frontera Pareto real
+
+```python
+# Consolidar todos los planes individuales en un único DataFrame
+sweep_df = cd.sweep_split_penalty(ensembles)
+print(f"Pool total: {len(sweep_df)} planes de {len(ensembles)} niveles de penalización")
+
+# Frontera Pareto real (sobre planes individuales, no medianas)
+frontier_res = cd.build_tradeoff_frontier(
+    sweep_df,
+    x_metric="max_dev_pob_pct",
+    y_metric="n_comunas_partidas",
+    n_bootstrap=500,           # remuestreos para IC 90% y 50%
+    random_state=42,
+)
+
+print(f"Planes Pareto-óptimos: {frontier_res['metadata']['n_pareto']}")
+print(f"Fracción en la frontera: "
+      f"{frontier_res['metadata']['n_pareto']/frontier_res['metadata']['n_plans']:.1%}")
+```
+
+### Paso 3 — Detectar knee point y rendimientos decrecientes
+
+```python
+# Knee point: punto de máxima eficiencia
+knee = cd.detect_knee_point(
+    frontier_res["frontier"],
+    x_metric="max_dev_pob_pct",
+    y_metric="n_comunas_partidas",
+    method="normalized_distance",   # recomendado (normaliza unidades)
+    diminishing_threshold=0.5,      # rendimientos decrecientes cuando mejora < 50% de la media
+)
+
+print(f"Knee point: split_penalty = {knee['knee_penalty']:.2f}")
+print(f"  max_dev_pob_pct      = {knee['knee_x']:.2f}%")
+print(f"  n_comunas_partidas   = {knee['knee_y']:.1f}")
+if knee["diminishing_start_x"] is not None:
+    print(f"Rendimientos decrecientes desde max_dev_pob_pct = {knee['diminishing_start_x']:.2f}%")
+```
+
+### Paso 4 — Figura publicable
+
+```python
+fig = cd.plot_tradeoff_curve(
+    sweep_df,
+    frontier_res,
+    knee_result=knee,
+    x_metric="max_dev_pob_pct",
+    y_metric="n_comunas_partidas",
+    title=f"{region} — Frontera Pareto real (H8)\nBalance poblacional × Integridad comunal",
+    show_scatter=True,          # plans individuales (semitransparentes, coloreados por penalty)
+    show_density_bands=True,    # IC bootstrap
+    show_diminishing=True,      # región de rendimientos decrecientes
+    save_path="resultados/h8_pareto_frontier.png",
+)
+
+# Resumen estadístico por nivel de penalización
+summary = cd.summarize_tradeoff(sweep_df, frontier_res, knee)
+print(summary[["n_planes", "max_dev_pob_pct_mean", "n_comunas_partidas_mean", "pct_pareto", "is_knee"]])
+```
+
+### Qué observar
+
+| Resultado | Interpretación |
+|---|---|
+| Knee point existe (distancia máxima > 0) | Hay un tradeoff cóncavo — existe una penalización óptima |
+| Knee point en p ≈ 0.2–0.4 | El diseño óptimo sacrifica pocas comunas por ganancias grandes en balance |
+| Knee point en p ≈ 0 | La integridad comunal no cuesta nada — el mapa es eficiente sin penalización |
+| Knee point en p ≈ 1 | No hay tradeoff real — el balance siempre domina |
+| Bootstrap IC 90% estrecho | La frontera es estable; el knee es robusto |
+| Bootstrap IC 90% ancho | Alta varianza en la frontera; se necesita un ensemble más grande |
+| Región de rendimientos decrecientes > 50% del eje x | La mayor parte del tradeoff está en la zona ineficiente |
+
+### Interpretación estadística
+
+- El **knee point** se define como el punto de máxima distancia perpendicular (en el espacio normalizado) a la línea que conecta los dos extremos de la frontera Pareto. Este criterio es el más común en optimización multiobjetivo para identificar el "punto de quiebre" (método de Dingel).
+- Las **bandas bootstrap** cuantifican la variabilidad del la frontera debida al tamaño finito del ensemble. Un IC 90% ancho indica que se necesitan más pasos MCMC (N mayor) para estabilizar la frontera.
+- La región de **rendimientos decrecientes** se detecta cuando la tasa de mejora marginal (−Δy/Δx) cae por debajo del `diminishing_threshold` × media de la tasa. Con `diminishing_threshold=0.5`, se marca cuando la mejora marginal es menos del 50% de la promedio.
+- El **porcentaje de planes Pareto-óptimos** (`pct_pareto`) por nivel de penalización indica qué niveles producen planes más competitivos en el frente eficiente.
+
+### Limitaciones
+
+1. **Frontera 2D**: la visualización y el knee point están en el espacio de dos objetivos. Añadir más objetivos (compacidad, aristas cortadas) requiere extensión a análisis Pareto N-dimensional — implementable con `build_tradeoff_frontier` pasando métricas diferentes.
+
+2. **Misma distribución**: todos los niveles de `apc_soft_pX` muestrean de la misma distribución de planes (la penalización solo afecta el score). La frontera del pool consolidado es la verdadera frontera alcanzable, pero el knee no indica un nivel de penalización "diferente" en términos distribucionales — indica qué plan del ensemble conviene seleccionar.
+
+3. **Bootstrap estratificado**: el bootstrap resamplea dentro de cada nivel de penalización. Con N pequeño por nivel (< 50 planes), las bandas pueden subestimar la incertidumbre verdadera.
+
+4. **Knee sin significancia estadística**: no hay un test formal de que el knee es "real". Con IC 90% solapados en x, el punto de quiebre podría ser un artefacto del ruido muestral.
+
+---
+
+## H9 — Malapportionment comparado: APC vs sistema vigente
+
+> **Pregunta:** ¿El redistritaje basado en APC reduce significativamente el malapportionment respecto al sistema vigente, y cómo se ubica Chile en el contexto internacional?
+
+El malapportionment geográfico cuantifica la brecha entre la distribución de escaños y la distribución de población: un ciudadano en un distrito subrepresentado necesita más personas para elegir un diputado que uno en un distrito sobrerrepresentado. H9 pregunta si los planes generados por redistritaje APC reducen esa brecha de forma estadísticamente significativa respecto al mapa legal vigente, y dónde cae Chile en el rango de sistemas comparados internacionalmente.
+
+H9 es complementaria a H3: mientras H3 caracteriza el malapportionment del mapa vigente (qué distritos están subrepresentados y cuánto), H9 pregunta si el redistritaje puede reducirlo y si esa reducción es estadísticamente robusta.
+
+### Diferencia metodológica respecto a H3
+
+| Aspecto | H3 (`malapportionment.py` script) | H9 (`malapportionment.py` módulo) |
+|---|---|---|
+| Unidad de análisis | Un único mapa (el vigente) | Distribución del ensemble + comparación internacional |
+| Índice principal | `peso_relativo_del_voto` (distritales) | `samuels_snyder_index` (escalar global, comparable) |
+| Comparación | Interna (distritos del mismo mapa) | Entre escenarios y con benchmarks internacionales |
+| Incertidumbre | No cuantificada | IC bootstrap sobre el ensemble de planes |
+
+### Datos requeridos
+
+| Dato | Fuente | Módulo |
+|---|---|---|
+| Ensembles de planes por escenario | Salida de H1 (`redistritaje.py`) | `compare_plans()` |
+| Magnitudes legales vigentes | Integrado | `cd.MAGNITUDES_LEGALES_LEY20840` |
+| Magnitudes calculadas por plan | Calculadas | `cd.assign_seat_magnitudes()` |
+| Población por unidad censal | INE Censo 2024 | `cd.data.census2024` |
+| Benchmarks internacionales | `BENCHMARK_MALAPPORTIONMENT` (integrado) | `cd.BENCHMARK_MALAPPORTIONMENT` |
+
+### Paso 1 — Calcular índices para el mapa vigente
+
+```python
+import chiledist as cd
+import chiledist.malapportionment as mala
+import pandas as pd
+
+# Magnitudes legales y población por circunscripción del mapa vigente
+mag_legal = pd.Series(cd.MAGNITUDES_LEGALES_LEY20840)  # 28 distritos
+
+# Población real por circunscripción (BCN + Censo 2024 distribuido por APC)
+# pop_by_district: pd.Series {n_distrito: población}
+# (requiere asignacion_vigente y pop_por_apc — ver datos externos)
+
+# ── Mapa vigente ──────────────────────────────────────────────────────────────
+summary_legal = mala.malapportionment_summary(
+    pop_by_district,   # pd.Series {distrito: población}
+    mag_legal,
+    label="Chile_legal_2021"
+)
+print(f"Samuels-Snyder M = {summary_legal['samuels_snyder']:.4f}")
+print(f"Gini PxE (pop-ponderado) = {summary_legal['gini_pop_weighted']:.4f}")
+print(f"Ratio máx/mín = {summary_legal['max_min_ratio']:.2f}")
+```
+
+### Paso 2 — Comparar con ensembles APC
+
+```python
+from pathlib import Path
+import numpy as np
+
+# Cargar ensembles desde disco (generados con redistritaje.py en H1)
+BASE = "datos/R13_METROPOLITANA/redistritaje"
+ensembles = {
+    "legal":    pd.read_csv(f"{BASE}/legal_comunas/ensemble_stats.csv"),
+    "apc_soft": pd.read_csv(f"{BASE}/contrafactual_apc_soft/ensemble_stats.csv"),
+    "apc_free": pd.read_csv(f"{BASE}/contrafactual_apc_libre/ensemble_stats.csv"),
+}
+
+# Reconstruir asignaciones para calcular índices de malapportionment por plan
+# (la forma más directa si ya tienes los asignments en disco es recalcular PxE)
+# Para cada ensemble, calcular Samuels-Snyder sobre cada plan individual:
+pop_por_unidad = gdf_apc.set_index("ID_DIST")["personas"]
+
+def ss_from_assignment(assignment, pop_by_unit, total_seats=155):
+    pop_by_d = pd.Series({
+        d: sum(pop_by_unit.get(u, 0) for u, dd in assignment.items() if dd == d)
+        for d in set(assignment.values())
+    })
+    mags = cd.assign_seat_magnitudes(pop_by_d, total_seats=total_seats)
+    return mala.samuels_snyder_index(pop_by_d, mags)
+
+# Generar distribución bootstrap de SS para cada escenario
+ss_distributions = {}
+for escenario, plans_list in ensemble_assignments.items():  # list[dict]
+    ss_distributions[escenario] = [
+        ss_from_assignment(asgn, pop_por_unidad)
+        for asgn in plans_list
+    ]
+
+# Estadísticas por escenario
+for escenario, ss_vals in ss_distributions.items():
+    arr = np.array(ss_vals)
+    print(f"{escenario}: M = {np.median(arr):.4f} "
+          f"(IC 95%: [{np.percentile(arr,5):.4f}, {np.percentile(arr,95):.4f}])")
+
+# ¿El ensemble APC tiene distribución significativamente diferente al vigente?
+from scipy import stats
+stat, p_val = stats.mannwhitneyu(
+    ss_distributions["legal"],
+    ss_distributions["apc_free"],
+    alternative="greater"   # H0: legal ≤ apc_free en malapportionment
+)
+print(f"Mann-Whitney U: stat={stat:.1f}, p={p_val:.4f}")
+# p < 0.05 → el mapa legal tiene significativamente más malapportionment que APC
+```
+
+### Paso 3 — Comparación con API de `compare_plans`
+
+```python
+# Alternativa más directa: pasar todos los planes a compare_plans
+# Cada plan es un dict {unit_id: district_id}
+plans_dict = {
+    "legal_vigente": assignment_vigente,    # dict
+    "apc_soft_best": best_plan_soft,        # dict
+    "apc_free_best": best_plan_free,        # dict
+}
+
+comparison_df = mala.compare_plans(
+    plans_dict,
+    pop_by_unit=gdf_apc.set_index("ID_DIST")["personas"],
+    # magnitudes=None → calculadas por assign_seat_magnitudes para cada plan
+    total_seats=155,
+)
+print(comparison_df[["samuels_snyder", "gini_pop_weighted", "max_min_ratio", "cv"]])
+```
+
+### Paso 4 — Ubicar Chile en el contexto internacional
+
+```python
+# Construir tabla comparativa con benchmarks internacionales
+summaries = {label: mala.malapportionment_summary(pop_d, mag, label=label)
+             for label, (pop_d, mag) in local_plans.items()}
+
+tabla_int = mala.international_comparison(
+    custom=summaries,
+    include_benchmarks=True,
+)
+print(tabla_int[["samuels_snyder", "gini_pop_weighted", "max_min_ratio", "cv", "type"]])
+
+# Percentil de Chile legal dentro del rango internacional
+chile_ss = summaries["Chile_legal_2021"]["samuels_snyder"]
+benchmark_ss = [v["samuels_snyder"] for v in cd.BENCHMARK_MALAPPORTIONMENT.values()]
+pct = sum(1 for v in benchmark_ss if v < chile_ss) / len(benchmark_ss) * 100
+print(f"Chile legal está por encima del {pct:.0f}% de los países de referencia")
+```
+
+### Paso 5 — Visualizaciones
+
+```python
+# Distribución de PxE para cada escenario
+fig = mala.plot_pxe_distribution(
+    pop_by_district_legal, mag_legal,
+    label="Legal vigente",
+    reference_line=float(pop_by_district_legal.sum()) / float(mag_legal.sum()),
+    save_path="resultados/h9_pxe_legal.png",
+)
+
+# Ranking de distritos por representación
+fig = mala.plot_malapportionment_ranking(
+    pop_by_district_legal, mag_legal,
+    label="Legal vigente",
+    top_n=20,
+    save_path="resultados/h9_ranking_distritos.png",
+)
+
+# Comparación internacional
+fig = mala.plot_international_comparison(
+    tabla_int,
+    metric="samuels_snyder",
+    metric_label="Índice de Samuels-Snyder (M)",
+    title="Malapportionment geográfico — Chile en perspectiva comparada (H9)",
+    save_path="resultados/h9_comparacion_internacional.png",
+)
+```
+
+### Qué observar
+
+| Resultado | Umbral indicativo | Interpretación |
+|---|---|---|
+| SS(legal) − SS(apc_free) > 0.03 | > 3 pp | El redistritaje APC reduce el malapportionment en más de un 20% (efecto sustancial) |
+| IC 95% del ensemble APC no solapan con SS(legal) | Sin solapamiento | Rechazamos (α=5%) que el APC no mejora respecto al mapa vigente |
+| Chile legal en percentil > 50% del ranking internacional | Percentil > 50 | Chile tiene más malapportionment que la mediana de países comparados |
+| Gini PxE ensemble APC < Gini legal | Diferencia > 0.01 | El redistritaje reduce la desigualdad en representación no solo el sesgo global |
+| Ratio máx/mín ensemble APC < ratio legal | — | Los distritos más extremos se acercan entre sí |
+
+### Interpretación estadística
+
+- El **índice de Samuels-Snyder M** es directamente comparable entre países porque usa *shares* (fracciones), no valores absolutos de población.
+- La comparación bootstrap ensemble vs mapa vigente es equivalente a un **test de Mann-Whitney unilateral** sobre la distribución de M. Con N=500 planes, la potencia del test para detectar diferencias de 0.02 en M es > 80%.
+- **Cuidado**: M depende de las magnitudes usadas. Comparar `legal` (magnitudes fijas) vs `apc_soft` (magnitudes calculadas por plan) mezcla dos efectos: geografía distrital y redistribución de escaños. Para aislar el efecto de la geografía pura, usar magnitudes fijas en todos los escenarios.
+
+### Interpretación política
+
+El malapportionment en Chile tiene dos fuentes estructurales: (1) el congelamiento de las magnitudes desde 2015 (Ley 20.840), que no se actualiza con la demografía, y (2) la restricción de integridad comunal que impide redistribuir población entre distritos. H9 separa estas fuentes: si el ensemble APC (con magnitudes recalculadas) tiene M significativamente menor que el mapa legal, la geografía distrital —no solo las magnitudes fijas— es una fuente independiente de malapportionment. Esto tiene implicancias para el tipo de reforma: no basta con actualizar las magnitudes (H3) si los límites distritales concentran sistemáticamente población en ciertas circunscripciones.
+
+### Limitaciones
+
+1. **Circularidad magnitudes/geografía**: cuando se usan magnitudes calculadas por plan (`assign_seat_magnitudes`), los cambios en M reflejan tanto la geografía como la reasignación de escaños. Para análisis puros, fijar magnitudes al total legal de 155 distribuido proporcionalmente.
+
+2. **Benchmarks internacionales**: los valores de `BENCHMARK_MALAPPORTIONMENT` son estimaciones de la literatura; no se computan con los mismos datos primarios ni el mismo método exacto. La comparación es orientativa, no una prueba estadística formal.
+
+3. **Población fija**: el análisis usa la distribución de población observada. Cambios futuros (migración, crecimiento diferencial) alterarán M sin cambiar el mapa.
+
+4. **Solo magnitudes; no el sesgo partidario**: un M bajo no garantiza representación equitativa en términos electorales. Para eso, combinarlo con H4 (D'Hondt), H7 (atipicidad electoral) y H6 (distancia al ideal fraccional).
+
+---
+
 ## Tabla resumen
 
 | Hipótesis | Pregunta central | Escenarios | Función clave | Métrica de respuesta |
@@ -921,6 +1606,10 @@ print(sens[["metrica", "ks_stat", "efecto", "mediana_a", "mediana_b", "delta_med
 | **H3** | ¿Cuánto vale un voto en cada distrito? | Mapa vigente (magnitudes fijas) | `personas_por_escano()`, `peso_relativo_del_voto()` | `ratio_max_min_pxe`, `peso_relativo_max/min` |
 | **H4** | ¿Cómo afecta D'Hondt binivel la proporcionalidad? | Cualquier plan + votos electorales (elección de referencia) | `plan_electoral_metrics(pacto_map=...)` | `gallagher`, `seat_bonus_max` |
 | **H5** | ¿Son robustas las conclusiones a la metodología? | Pares de ensembles comparados | `compare_sensitivity()`, `ranking_concordance()` | `efecto` (negligible/grande), `tau` |
+| **H6** | ¿Qué tan lejos están los planes del ideal fraccional? | Mapa vigente + ensemble | `fair_share_matrix()`, `fair_share_summary()` | `l1_norm`, percentil en ensemble |
+| **H7** | ¿El resultado electoral observado es típico o atípico? | Mapa vigente vs ensemble de planes | `run_electoral_ensemble()`, `summarize_electoral_ensemble()` | percentil de Gallagher, ENP, `seat_bonus` en distribución ensemble |
+| **H8** | ¿Existe un punto de máxima eficiencia en el tradeoff? | Barrido continuo de `split_penalty` | `build_tradeoff_frontier()`, `detect_knee_point()` | `knee_penalty`, IC bootstrap de la frontera |
+| **H9** | ¿El redistritaje APC reduce significativamente el malapportionment? | `legal` vs `apc_soft` vs `apc_free` vs internacional | `malapportionment_summary()`, `compare_malapportionment_plans()`, `international_comparison()` | `samuels_snyder`, `gini_pop_weighted`, `max_min_ratio`, percentil internacional |
 
 ---
 
@@ -956,6 +1645,10 @@ Las siguientes decisiones afectan a todas las hipótesis y deben tomarse antes d
 | **H3** | ✅ Script disponible (`--demo`) | `scripts/malapportionment.py`; `personas_por_escano`; `comparar_magnitudes`; `umbral_efectivo`; `plan_electoral_metrics(magnitudes_fijas=)` | 🔴 Censo 2024 por circunscripción; 🔴 Asignación vigente; 🔴 Votos electorales por CUT (elección de referencia) |
 | **H4** | ✅ Script disponible (`--demo`) | `scripts/electoral_analysis.py`; `dhondt`; `dhondt_binivel`; `plan_electoral_metrics(pacto_map=)`; `national_shares`; `seat_bonus` | 🔴 Votos electorales por CUT y partido (elección de referencia); 🔴 `pacto_map` (elección de referencia); 🔴 Ensembles de H1 |
 | **H5** | ✅ Scripts disponibles | `scripts/run_chains.py`; `scripts/smc_pipeline.py`; `mixing_diagnostics`; `compare_sensitivity`; `ranking_concordance` | 🔴 Ensembles de H1; R + paquete `redist` para SMC |
+| **H6** | ✅ API completa (`--demo` vía H4) | `chiledist.fairshare`: `fair_share_matrix`; `results_to_matrix`; `l1_distance_fair_share`; `l2_distance_fair_share`; `max_cell_deviation`; `fair_share_summary` | 🔴 Votos electorales por CUT (elección de referencia); 🔴 Ensembles de H1 |
+| **H7** | ✅ API completa | `chiledist.electoral_ensemble`: `run_electoral_ensemble`; `ensemble_gallagher`; `ensemble_seat_bonus`; `ensemble_enp`; `ensemble_effective_threshold`; `summarize_electoral_ensemble`; `plot_ensemble_histogram`; `plot_ensemble_violin`; `plot_ensemble_ecdf` | 🔴 Ensemble de H1; 🔴 Votos por CUT (elección de referencia); 🔴 `pacto_map`; 🔴 Asignación vigente para calcular métricas observadas |
+| **H8** | ✅ API completa | `chiledist.pareto_sweep`: `sweep_split_penalty`; `build_tradeoff_frontier`; `detect_knee_point`; `plot_tradeoff_curve`; `summarize_tradeoff` | 🔴 Ensembles de H1 (uno por nivel de penalización, `penalties = np.linspace(0, 1, N)`) |
+| **H9** | ✅ API completa | `chiledist.malapportionment`: `samuels_snyder_index`; `loosemore_hanby_malapportionment`; `gini_personas_por_escano`; `max_min_representation_ratio`; `malapportionment_summary`; `compare_malapportionment_plans`; `international_comparison`; `plot_pxe_distribution`; `plot_malapportionment_ranking`; `plot_international_comparison`; `BENCHMARK_MALAPPORTIONMENT` | 🔴 Asignación vigente + población por circunscripción (Censo 2024); 🔴 Ensembles de H1 para bootstrap |
 
 ### Correcciones de firma aplicadas en este documento
 

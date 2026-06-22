@@ -159,7 +159,56 @@ from .scenario_comparison import (
     PESOS_DEFAULT,
 )
 
+# Análisis continuo de la frontera Pareto (barrido de split_penalty)
+from .pareto_sweep import (
+    sweep_split_penalty,
+    build_tradeoff_frontier,
+    detect_knee_point,
+    plot_tradeoff_curve,
+    summarize_tradeoff,
+    SWEEP_METRICS,
+    METRIC_DIRECTIONS,
+    METRIC_LABELS,
+)
+
+# Malapportionment geográfico: índices comparables internacionalmente
+from .malapportionment import (
+    samuels_snyder_index,
+    loosemore_hanby_malapportionment,
+    gini_personas_por_escano,
+    max_min_representation_ratio,
+    malapportionment_summary,
+    compare_plans as compare_malapportionment_plans,
+    international_comparison,
+    plot_pxe_distribution,
+    plot_malapportionment_ranking,
+    plot_international_comparison,
+    BENCHMARK_MALAPPORTIONMENT,
+)
+
+# Ensemble electoral: análisis distribucional sobre ensembles de planes
+from .electoral_ensemble import (
+    run_electoral_ensemble,
+    ensemble_gallagher,
+    ensemble_seat_bonus,
+    ensemble_enp,
+    ensemble_effective_threshold,
+    summarize_electoral_ensemble,
+    plot_ensemble_histogram,
+    plot_ensemble_violin,
+    plot_ensemble_ecdf,
+)
+
 # Electoral: D'Hondt, magnitudes, proporcionalidad
+from .fairshare import (
+    fair_share_matrix,
+    results_to_matrix,
+    l1_distance_fair_share,
+    l2_distance_fair_share,
+    max_cell_deviation,
+    fair_share_summary,
+)
+
 from .electoral import (
     dhondt,
     dhondt_binivel,
@@ -277,6 +326,27 @@ __all__ = [
     "plot_radar_comparativo", "split_frequency_table",
     "position_plan_vigente", "compare_sensitivity", "ranking_concordance",
     "COLORES_DEFAULT", "NOMBRES_CORTOS", "METRICAS_STD", "PESOS_DEFAULT",
+    # pareto_sweep
+    "sweep_split_penalty", "build_tradeoff_frontier",
+    "detect_knee_point", "plot_tradeoff_curve", "summarize_tradeoff",
+    "SWEEP_METRICS", "METRIC_DIRECTIONS", "METRIC_LABELS",
+    # malapportionment
+    "samuels_snyder_index", "loosemore_hanby_malapportionment",
+    "gini_personas_por_escano", "max_min_representation_ratio",
+    "malapportionment_summary", "compare_malapportionment_plans",
+    "international_comparison",
+    "plot_pxe_distribution", "plot_malapportionment_ranking",
+    "plot_international_comparison",
+    "BENCHMARK_MALAPPORTIONMENT",
+    # electoral_ensemble
+    "run_electoral_ensemble",
+    "ensemble_gallagher", "ensemble_seat_bonus", "ensemble_enp",
+    "ensemble_effective_threshold", "summarize_electoral_ensemble",
+    "plot_ensemble_histogram", "plot_ensemble_violin", "plot_ensemble_ecdf",
+    # fairshare
+    "fair_share_matrix", "results_to_matrix",
+    "l1_distance_fair_share", "l2_distance_fair_share",
+    "max_cell_deviation", "fair_share_summary",
     # electoral
     "dhondt", "dhondt_binivel",
     "assign_seat_magnitudes", "aggregate_votes",
