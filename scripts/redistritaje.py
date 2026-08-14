@@ -43,6 +43,7 @@ import argparse
 import dataclasses
 import datetime
 import os
+import random
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -68,6 +69,95 @@ from chiledist.persistence import (
     save_run_manifest,
 )
 from chiledist.samplers.recom import run_recom_chain
+
+
+# Reason estable/machine-readable para status="sin_particion": el preflight de
+# factibilidad poblacional (cd.check_population_feasibility) ya pasó — es decir,
+# no se demostró que el espacio de planes sea matemáticamente vacío — pero el
+# algoritmo de inicialización (recursive_tree_part) agotó su escalera de
+# tolerancias y semillas sin producir una partición. Distinto de
+# infeasible_population (cd.REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND), que sí es
+# una prueba matemática de inviabilidad.
+REASON_INITIALIZATION_SEARCH_EXHAUSTED = "initialization_search_exhausted"
+
+# Escalera de tolerancias y reintentos de semilla para recursive_tree_part.
+# Nombrados como constantes (mismos valores de siempre) únicamente para poder
+# probar buscar_particion_inicial() de forma aislada — no cambia el algoritmo.
+TOLERANCIA_INICIAL_ESCALERA = [0.25, 0.35, 0.45, 0.60, 0.80]
+N_SEED_TRIES_INICIALIZACION = 5
+
+
+def buscar_particion_inicial(
+    graph, n_distritos_eff, pop_col, ideal_pop, node_repeats, seed,
+    recursive_tree_part,
+):
+    """
+    Prueba TOLERANCIA_INICIAL_ESCALERA con N_SEED_TRIES_INICIALIZACION
+    semillas cada una, buscando una partición inicial balanceada
+    (desviación < 15%) vía recursive_tree_part.
+
+    Devuelve (best_assignment, best_dev, best_tol). best_assignment es
+    None si la búsqueda se agota sin encontrar ninguna partición: eso es
+    un fallo del algoritmo de búsqueda/inicialización (status
+    "sin_particion"), NO una prueba de que el espacio de planes sea
+    matemáticamente vacío — esa prueba, cuando existe, la produce antes
+    y de forma determinista chiledist.check_population_feasibility
+    (status "infeasible_population").
+    """
+    best_assignment = None
+    best_dev        = float("inf")
+    best_tol        = None
+
+    for tol_init in TOLERANCIA_INICIAL_ESCALERA:
+        for seed_try in range(N_SEED_TRIES_INICIALIZACION):
+            try:
+                np.random.seed(seed + seed_try)
+                random.seed(seed + seed_try)
+                candidate = recursive_tree_part(
+                    graph, parts=range(n_distritos_eff),
+                    pop_target=ideal_pop, pop_col=pop_col,
+                    epsilon=tol_init,
+                    node_repeats=node_repeats,
+                )
+                pop_by_part = {}
+                for node, part in candidate.items():
+                    pop_by_part[part] = (pop_by_part.get(part, 0)
+                                         + graph.nodes[node].get(pop_col, 0))
+                dev = max(abs(p - ideal_pop)/ideal_pop
+                          for p in pop_by_part.values()) * 100
+                if dev < best_dev:
+                    best_dev        = dev
+                    best_assignment = candidate
+                    best_tol        = tol_init
+                if dev < 15:
+                    break
+            except Exception:
+                continue
+        if best_dev < 15:
+            break
+
+    return best_assignment, best_dev, best_tol
+
+
+def diagnostico_busqueda_agotada() -> str:
+    """
+    Mensaje diagnóstico para status="sin_particion".
+
+    Debe dejar explícito que se trata de un fallo del algoritmo de
+    búsqueda/inicialización, y NO de una prueba de inviabilidad
+    matemática (eso es status="infeasible_population", determinado
+    antes por el preflight de factibilidad poblacional).
+    """
+    return (
+        "Búsqueda de partición inicial agotada: se probaron todas las "
+        f"tolerancias iniciales {TOLERANCIA_INICIAL_ESCALERA} con "
+        f"{N_SEED_TRIES_INICIALIZACION} semillas cada una, sin producir una "
+        "partición balanceada. Esto es un fallo del algoritmo de búsqueda/"
+        "inicialización, NO una prueba de que el espacio de planes sea "
+        "matemáticamente vacío — el preflight de factibilidad poblacional "
+        "ya determinó que la tolerancia solicitada es alcanzable "
+        "(ver status='infeasible_population' para ese otro caso)."
+    )
 
 
 REGION_NOMBRES = {
@@ -96,8 +186,12 @@ def parse_args():
                    help="Directorio base de salida (default: <base-dir>/datos)")
     p.add_argument("--regiones",   default="13",
                    help="Regiones: número, lista (5,8,13) o 'todas'")
-    p.add_argument("--n-distritos", type=int, default=8,
-                   help="Número de distritos electorales a generar (default: 8)")
+    p.add_argument("--n-distritos", type=int, default=None,
+                   help="Número de particiones territoriales a generar en la "
+                        "simulación (NO la magnitud electoral / escaños por "
+                        "distrito de la Ley 20.840 — ver "
+                        "MAGNITUDES_LEGALES_LEY20840). Default: usa "
+                        "n_districts del escenario (ScenarioConfig.n_districts).")
     p.add_argument("--pop-tol",    type=float, default=None,
                    help="Tolerancia poblacional (default: usa pop_tolerance del escenario, "
                         "normalmente 0.05 = ±5%%. Usa 0.15 para regiones con pocos nodos "
@@ -253,7 +347,7 @@ def build_scenario(args) -> ScenarioConfig:
                                       for u in args.preserve_units.split(",")]
     if args.split_penalty is not None:
         changes["split_penalty"] = args.split_penalty
-    if args.n_distritos:
+    if args.n_distritos is not None:
         changes["n_districts"] = args.n_distritos
     if args.pop_tol:
         changes["pop_tolerance"] = args.pop_tol
@@ -415,6 +509,31 @@ def analizar_region(
     print(f"  Ideal/distrito : {ideal_pop:,.0f}")
     print(f"  N grupos       : {n_distritos_eff}")
 
+    # ── Preflight: factibilidad poblacional ──────────────────────────────────
+    # Determinista, sin gerrychain: si una unidad de decisión indivisible por
+    # sí sola excede pop_tol respecto del ideal, ningún recursive_tree_part
+    # ni número de semillas puede producir un plan que cumpla la tolerancia.
+    unit_pops = dict(zip(gdf_dec[id_col], gdf_dec[pop_col]))
+    feasibility = cd.check_population_feasibility(
+        unit_pops, n_distritos_eff, pop_tol
+    )
+    if not feasibility.feasible:
+        print(f"\n  ⚠ {feasibility.diagnostic_message()}")
+        return {
+            "region": region_code,
+            "region_name": region_name,
+            "scenario": scenario.name,
+            "status": "infeasible_population",
+            "reason": feasibility.reason,
+            "total_population": feasibility.total_population,
+            "n_districts": feasibility.n_districts,
+            "ideal_population": feasibility.ideal_population,
+            "largest_indivisible_unit": feasibility.largest_indivisible_unit,
+            "largest_indivisible_unit_id": feasibility.largest_indivisible_unit_id,
+            "minimum_required_tolerance": feasibility.minimum_required_tolerance,
+            "requested_tolerance": feasibility.requested_tolerance,
+        }
+
     # ── Grafo gerrychain ──────────────────────────────────────────────────────
     try:
         import gerrychain as gc
@@ -431,6 +550,7 @@ def analizar_region(
                 "scenario": scenario.name}
 
     np.random.seed(seed)
+    random.seed(seed)
 
     gdf_gc = gdf_dec.reset_index(drop=True).to_crs("EPSG:32719")
 
@@ -492,45 +612,25 @@ def analizar_region(
 
     # ── Partición inicial ─────────────────────────────────────────────────────
     print(f"\n  Buscando partición inicial...")
-    best_assignment = None
-    best_dev        = float("inf")
-    best_tol        = None
 
     node_repeats = (40 if n_units < 60  else
                     30 if n_units < 100 else
                     20 if n_units < 200 else 10)
 
-    for tol_init in [0.25, 0.35, 0.45, 0.60, 0.80]:
-        for seed_try in range(5):
-            try:
-                np.random.seed(seed + seed_try)
-                candidate = recursive_tree_part(
-                    graph, parts=range(n_distritos_eff),
-                    pop_target=ideal_pop, pop_col=pop_col,
-                    epsilon=tol_init,
-                    node_repeats=node_repeats,
-                )
-                pop_by_part = {}
-                for node, part in candidate.items():
-                    pop_by_part[part] = (pop_by_part.get(part, 0)
-                                         + graph.nodes[node].get(pop_col, 0))
-                dev = max(abs(p - ideal_pop)/ideal_pop
-                          for p in pop_by_part.values()) * 100
-                if dev < best_dev:
-                    best_dev        = dev
-                    best_assignment = candidate
-                    best_tol        = tol_init
-                if dev < 15:
-                    break
-            except Exception:
-                continue
-        if best_dev < 15:
-            break
+    best_assignment, best_dev, best_tol = buscar_particion_inicial(
+        graph, n_distritos_eff, pop_col, ideal_pop, node_repeats, seed,
+        recursive_tree_part,
+    )
 
     if best_assignment is None:
-        print("  ⚠ No se encontró partición inicial válida")
-        return {"region": region_code, "status": "sin_particion",
-                "scenario": scenario.name}
+        print(f"\n  ⚠ {diagnostico_busqueda_agotada()}")
+        return {
+            "region": region_code,
+            "region_name": region_name,
+            "scenario": scenario.name,
+            "status": "sin_particion",
+            "reason": REASON_INITIALIZATION_SEARCH_EXHAUSTED,
+        }
 
     print(f"  Partición inicial: tol=±{best_tol*100:.0f}%, desv={best_dev:.1f}%")
 
@@ -606,11 +706,25 @@ def analizar_region(
         scenario, warmed_state, gdf_gc, epsilon_recom
     )
 
+    # Modo soft: la penalización por partir comunas actúa en la aceptación de la
+    # cadena principal (Metropolis sobre split_severity), no solo en la elección
+    # del plan de referencia. Modo none/hard: aceptación incondicional, igual
+    # que antes — misma población, tolerancia, n_distritos, datos y kwargs de
+    # recom_proposal en ambos casos; solo cambia este criterio de aceptación.
+    if (scenario.preserve_mode == "soft"
+            and scenario.split_penalty > 0
+            and "split_severity" in warmed_state.updaters):
+        accept_main = cd.make_split_penalty_accept(scenario.split_penalty)
+        print(f"  ✓ Aceptación penalizada por split_severity "
+              f"(split_penalty={scenario.split_penalty})")
+    else:
+        accept_main = always_accept
+
     recom_proposal = partial(recom, **recom_kwargs_main)
     chain = gc.MarkovChain(
         proposal=recom_proposal,
         constraints=constraints_main,
-        accept=always_accept,
+        accept=accept_main,
         initial_state=warmed_state,
         total_steps=n_steps,
     )
@@ -641,34 +755,39 @@ def analizar_region(
         return {"region": region_code, "status": "sin_planes",
                 "scenario": scenario.name}
 
-    # Filtrar planes válidos — rastrear tolerancia efectiva para el manifiesto
+    # Filtrar planes válidos — rastrear tolerancia efectiva para el manifiesto.
+    # IMPORTANTE: se filtra (plan, métrica) como pares para no perder la
+    # correspondencia entre el plan efectivamente válido y SU métrica real
+    # (un filtrado que descarta pasos deja huecos; recortar metricas_mc por
+    # prefijo después de filtrar planes reasigna métricas de otros pasos).
     pop_tol_effective     = pop_tol
     pop_tol_fallback_used = False
 
-    planes_validos = [p for p, m in zip(planes, metricas_mc)
+    pares_validos = [(p, m) for p, m in zip(planes, metricas_mc)
                       if m["max_dev_pct"] <= pop_tol * 100]
-    if not planes_validos:
+    if not pares_validos:
         for tol_f in [pop_tol*1.5, pop_tol*2, 1.0]:
-            planes_validos = [p for p, m in zip(planes, metricas_mc)
+            pares_validos = [(p, m) for p, m in zip(planes, metricas_mc)
                               if m["max_dev_pct"] <= tol_f * 100]
-            if planes_validos:
+            if pares_validos:
                 print(f"  Usando tolerancia ±{tol_f*100:.0f}%: "
-                      f"{len(planes_validos)} planes")
+                      f"{len(pares_validos)} planes")
                 pop_tol_effective     = tol_f
                 pop_tol_fallback_used = True
                 break
-    if not planes_validos:
-        planes_validos        = planes
+    if not pares_validos:
+        pares_validos         = list(zip(planes, metricas_mc))
         pop_tol_effective     = 1.0
         pop_tol_fallback_used = True
 
     n_generados = len(metricas_mc)
-    print(f"  Planes válidos: {len(planes_validos)}/{n_generados}")
-    planes = planes_validos
+    print(f"  Planes válidos: {len(pares_validos)}/{n_generados}")
 
-    if not planes:
+    if not pares_validos:
         return {"region": region_code, "status": "sin_planes_validos",
                 "scenario": scenario.name, "n_generados": n_generados}
+
+    planes, metricas_validas = (list(t) for t in zip(*pares_validos))
 
     # ── Reconstruir asignaciones con IDs de unidad ───────────────────────────
     def reconstruir_asignacion(plan_dict, graph, ids_list):
@@ -682,10 +801,15 @@ def analizar_region(
         return result
 
     # ── Métricas del ensemble ─────────────────────────────────────────────────
+    # metricas_validas[i] es la métrica REAL del paso de cadena del que vino
+    # planes[i] (ver filtrado por pares más arriba) — plan_id indexa de forma
+    # consistente tanto para max_dev_pob_pct/cut_edges (aquí) como para
+    # pp_promedio/n_comunas_partidas/split_severity (calculados más abajo
+    # sobre planes[plan_id]).
     df_ensemble = pd.DataFrame([
         {"plan_id": i, "max_dev_pob_pct": round(float(m["max_dev_pct"]), 3),
          "pp_promedio": np.nan, "cut_edges": int(m["cut_edges"])}
-        for i, m in enumerate(metricas_mc[:len(planes)])
+        for i, m in enumerate(metricas_validas)
     ])
 
     # Polsby-Popper para muestra de 30 planes
@@ -1067,7 +1191,8 @@ def main():
     print(f"  output_base : {output_base}")
     print(f"  regiones    : {regiones}")
     print(f"  escenario   : {scenario.name}")
-    print(f"  n_distritos : {args.n_distritos}")
+    print(f"  n_distritos : {scenario.n_districts}"
+          f"{'  (--n-distritos explícito)' if args.n_distritos is not None else '  (desde escenario)'}")
     print(f"  pop_tol     : ±{pop_tol*100:.0f}%"
           f"{'  (--pop-tol explícito)' if args.pop_tol is not None else '  (desde escenario)'}")
     print(f"  n_steps     : {args.n_steps:,}")
@@ -1080,7 +1205,7 @@ def main():
                 region_code=r,
                 base_dir=base_dir,
                 output_base=output_base,
-                n_distritos=args.n_distritos,
+                n_distritos=scenario.n_districts,
                 pop_tol=pop_tol,
                 n_steps=args.n_steps,
                 seed=args.seed,
@@ -1106,6 +1231,8 @@ def main():
     print(f"{'='*60}")
     df_res = pd.DataFrame(resultados)
     cols_resumen = ["region", "scenario", "status"]
+    if "reason" in df_res.columns:
+        cols_resumen.append("reason")
     if "n_planes" in df_res.columns:
         cols_resumen += ["n_planes", "ref_desv"]
     if "comunas_partidas_ref" in df_res.columns:

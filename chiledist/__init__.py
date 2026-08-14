@@ -54,12 +54,20 @@ from .config import (
     save_scenario,
 )
 
+# Preflight de factibilidad poblacional
+from .feasibility import (
+    PopulationFeasibilityResult,
+    check_population_feasibility,
+    REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND,
+)
+
 # Jerarquía y contracción de unidades
 from .hierarchy import (
     contract_to_decision_units,
     build_decision_layer,
     validate_hierarchy,
     propagate_district_assignment,
+    normalize_cut,
 )
 
 # Restricciones para gerrychain
@@ -68,6 +76,8 @@ from .constraints import (
     build_updaters_for_scenario,
     build_constraints_for_scenario,
     score_with_split_penalty,
+    make_split_severity_updater,
+    make_split_penalty_accept,
 )
 
 # Métricas de comunas partidas
@@ -141,6 +151,9 @@ from . import data as data
 from .scenario_comparison import (
     ScoringConfig,
     load_ensembles_from_disk,
+    load_scenario_statuses_from_disk,
+    build_scenario_overview,
+    assess_comparison_completeness,
     compare_ensembles,
     scenario_delta,
     rank_scenarios,
@@ -294,9 +307,11 @@ __all__ = [
     # hierarchy
     "contract_to_decision_units", "build_decision_layer",
     "validate_hierarchy", "propagate_district_assignment",
+    "normalize_cut",
     # constraints
     "make_preserve_constraint", "build_updaters_for_scenario",
     "build_constraints_for_scenario", "score_with_split_penalty",
+    "make_split_severity_updater", "make_split_penalty_accept",
     # split_metrics
     "count_split_units", "split_severity_index", "split_unit_summary",
     "small_fragment_count", "pop_afectada_pct", "plan_split_metrics",
@@ -320,7 +335,9 @@ __all__ = [
     "data",
     # scenario_comparison
     "ScoringConfig",
-    "load_ensembles_from_disk", "compare_ensembles", "scenario_delta",
+    "load_ensembles_from_disk", "load_scenario_statuses_from_disk",
+    "build_scenario_overview", "assess_comparison_completeness",
+    "compare_ensembles", "scenario_delta",
     "rank_scenarios", "pareto_frontier_nd", "pareto_optimal_scenarios",
     "plot_tradeoff_frontier", "plot_boxplots_comparativos",
     "plot_radar_comparativo", "split_frequency_table",

@@ -27,6 +27,40 @@ from shapely.ops import unary_union
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Normalización de códigos CUT
+# ──────────────────────────────────────────────────────────────────────────────
+
+def normalize_cut(value) -> str:
+    """
+    Normaliza un código CUT a su forma canónica: string de 5 dígitos con
+    cero a la izquierda cuando corresponda (ej. 1101 -> "01101",
+    "1101" -> "01101", "01101" -> "01101"). Acepta int, str o cualquier
+    valor numérico (incluye floats tipo 1101.0, típicos de columnas leídas
+    desde CSV).
+
+    No es necesario decidir si una fuente de datos usa CUT de 4 o 5
+    dígitos: distintas fuentes (shapefiles APC, Censo 2024, SERVEL,
+    datos/asignacion_vigente.json, datos/pacto_map_2025.json) pueden
+    representarlo con o sin cero inicial, o como int en vez de string.
+    Pasar el CUT de ambos lados de un cruce por esta función antes de
+    comparar/mergear los hace equivalentes sin importar el formato de
+    origen — evita joins que fallan en silencio cuando dos fuentes
+    difieren solo en el padding (ver README.md § Datos externos).
+
+    Parameters
+    ----------
+    value : int | str | float
+        Código CUT en cualquier representación.
+
+    Returns
+    -------
+    str
+        CUT normalizado a 5 dígitos.
+    """
+    return f"{int(float(value)):05d}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Contracción al nivel de decisión
 # ──────────────────────────────────────────────────────────────────────────────
 

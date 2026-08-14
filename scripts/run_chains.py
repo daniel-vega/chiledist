@@ -43,6 +43,7 @@ import matplotlib.pyplot as plt
 
 import chiledist as cd
 from chiledist.config import load_scenario, SCENARIOS
+from chiledist.data import REGIONES_APC
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -79,8 +80,9 @@ def _import_analizar_region():
 
 
 def _chain_output_dir(base_dir: str, region_code: int, scenario_name: str) -> str:
-    from chiledist.data import REGIONES_APC
-    region_nombre = REGIONES_APC.get(region_code, {}).get("nombre", f"R{region_code}")
+    region_nombre = REGIONES_APC.get(region_code, {}).get(
+        "nombre_carpeta", f"R{region_code:02d}"
+    )
     return os.path.join(base_dir, "datos", region_nombre, "chains", scenario_name)
 
 
@@ -324,7 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pop-tol", type=float, default=0.05,
                    help="Tolerancia poblacional ReCom")
     p.add_argument("--n-distritos", type=int, default=None,
-                   help="Número de distritos (None = inferido del escenario/región)")
+                   help="Número de particiones territoriales a generar (NO "
+                        "la magnitud electoral 3-8 de Ley 20.840). Default: "
+                        "usa n_districts del escenario cargado "
+                        "(ScenarioConfig.n_districts).")
     p.add_argument("--skip-run", action="store_true",
                    help="Omitir ejecución de cadenas; cargar CSVs existentes")
     p.add_argument("--sensitivity", action="store_true",
@@ -356,14 +361,12 @@ def main():
         output_dir = chain_dir  # diagnósticos van al directorio raíz de la región/escenario
 
         if not args.skip_run:
-            n_dist = args.n_distritos
-            if n_dist is None:
-                try:
-                    from chiledist.data import REGIONES_APC
-                    n_dist = REGIONES_APC.get(region_code, {}).get("n_distritos", 8)
-                except Exception:
-                    n_dist = 8
-                print(f"  n_distritos inferido: {n_dist}")
+            n_dist = (
+                args.n_distritos if args.n_distritos is not None
+                else scenario.n_districts
+            )
+            if args.n_distritos is None:
+                print(f"  n_distritos desde escenario '{scenario.name}': {n_dist}")
 
             run_chains(
                 region_code=region_code,

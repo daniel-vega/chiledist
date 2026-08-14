@@ -1,6 +1,6 @@
 # Plan de Validación Científica — ChileDist
 
-> **Estado:** borrador de trabajo  
+> **Estado:** borrador de trabajo (revisado 2026-08-14 contra `tests/` y el código actual — ver §6.6, §9 y §10 para lo que cambió)  
 > **Fecha:** 2026-06-21  
 > **Autores:** Daniel Vega  
 > **Contexto:** Validación de ChileDist como librería científica completa. Este documento cubre todos los módulos de la librería: datos, geografía, escenarios, métricas, electoral, reproducibilidad y sampler. Basado en inspección del código fuente de la versión 0.2.0.
@@ -85,6 +85,8 @@ Subconjunto de la validación estadística. Verifica que ReCom y SMC producen di
 | `persistence.py` | Dos corridas con misma semilla producen mismo `run_id`-independent assignments | Misma semilla → mismas asignaciones | GDF sintético | Assignments[plan i] idéntico entre corridas | P0 |
 | `scripts/redistritaje.py` | Pipeline completo produce todos los archivos esperados | Verificar archivos en `run_{ts}_{rid[:8]}/` | Datos sintéticos mínimos | 4 archivos: manifest, scenario.yml, assignments.parquet, ensemble_stats.csv | P0 |
 | `scripts/compare_scenarios.py` | `--skip-run` carga ensembles de todos los escenarios sin error | Verificar que load_ensembles_from_disk no falla si directorios existen | Archivos de salida previos | DataFrame de comparación con N_escenarios filas | P1 |
+| `feasibility.py` | Tolerancia poblacional matemáticamente inalcanzable no se detecta antes de correr ReCom | `check_population_feasibility()` debe distinguir inviabilidad probada de fallo de búsqueda | Unidades sintéticas con una unidad dominante (ej. una excede el ideal en más que la tolerancia) | `feasible == False` y `reason == REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND` cuando corresponde; `feasible == True` en el caso límite exacto | P0 — ✅ implementado, ver `tests/test_feasibility.py` |
+| `scenario_comparison/compare.py` | Escenario inviable/`sin_particion` queda oculto o contamina el ranking de la comparación | `assess_comparison_completeness()`/`build_scenario_overview()` deben marcar `INCOMPLETE` sin excluir el escenario de la vista ni afectar el score de los demás | Ensembles con status mixtos (`ok`/`infeasible_population`/`sin_particion`) | Escenario sin ensemble válido sigue visible con su `status`/`reason`, `included_in_scoring=False`, y el ranking de los escenarios válidos es idéntico al que se obtendría ignorando el inviable | P1 — ✅ implementado, ver `tests/test_compare_scenarios_incomplete.py` |
 
 ---
 
@@ -458,6 +460,8 @@ def validate_yaml_roundtrip(scenario):
 
 ## 6. Validación electoral
 
+> Los fragmentos de esta sección son ilustrativos (especifican qué debe validarse y con qué caso), no los nombres reales de tests. La cobertura equivalente ya existe en `tests/test_electoral_magnitudes.py`, `tests/test_electoral_binivel.py`, `tests/test_electoral_ensemble.py`, `tests/test_malapportionment.py`, `tests/test_malapportionment_functions.py` y `tests/test_fairshare.py` — no bajo los nombres literales `test_dhondt_manual`/`test_aggregate_votes_conserves_totals`/etc. usados abajo. La invariante de magnitudes (Σ==155, cada distrito ∈[3,8]) del §6.4 ya está asegurada en el propio código: `chiledist/electoral/constants.py` la afirma con un `assert` al importar el módulo.
+
 ### 6.1 D'Hondt con ejemplo manual
 
 El método D'Hondt con 4 partidos y 5 escaños tiene resultado exactamente calculable.
@@ -539,7 +543,7 @@ def test_proportionality_perfect():
 
 ### 6.6 Nota sobre D'Hondt binivel
 
-La implementación actual aplica D'Hondt directamente sobre partidos (una sola ronda). El sistema real chileno opera en dos niveles: primero asigna escaños entre **pactos** (coaliciones), luego entre partidos dentro del pacto ganador. Esta diferencia no afecta la validación del software existente, pero **debe documentarse** como limitación hasta que se implemente el nivel de pactos. No es necesario implementarlo ahora; sí es necesario declararlo explícitamente en la documentación del módulo.
+> **Actualizado 2026-08-14:** esta sección describía D'Hondt binivel como no implementado. Ya no es así: `dhondt_binivel()` y `run_electoral_plan_binivel()` (`chiledist/electoral/dhondt.py`) implementan el mecanismo de dos niveles del sistema chileno — D'Hondt entre pactos sobre votos totales de lista, luego asignación intra-pacto por mayor votación individual — y están cubiertos por `tests/test_electoral_binivel.py`. `run_electoral_plan()` de un solo nivel se mantiene como caso aparte (útil cuando los datos no traen estructura de pactos, o como comparación uni- vs binivel — ver `scripts/electoral_analysis.py`, bloques B1/B2). No queda una brecha de implementación aquí; lo que sigue pendiente es correr el binivel con datos SERVEL/`pacto_map` reales (ver `SCIENTIFIC_HYPOTHESES.md § Plan de cierre`).
 
 ---
 
@@ -719,17 +723,22 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 
 - Validaciones de datos (IDs únicos, sumas, CRS, geometrías) con datos sintéticos en memoria.
 - Métricas de compacidad con polígonos de geometría conocida (cuadrado, círculo, L-shape).
-- D'Hondt con ejemplos manuales verificados.
+- D'Hondt con ejemplos manuales verificados, incluido D'Hondt binivel (pactos → partidos).
 - Pareto frontier con conjuntos de dominancia conocida.
 - YAML roundtrip para todos los campos de `ScenarioConfig`.
 - Schema y dtypes de `assignments.parquet`.
 - Roundtrip de `PlanEnsemble`.
 - `validate_hierarchy()` con violación sintética.
-- `count_split_units()` con plan que parte y plan que no parte.
+- `count_split_units()`/`pop_afectada_pct()` con plan que parte y plan que no parte.
+- Preflight de factibilidad poblacional: caso factible, caso justo en el límite, caso inviable, y la reproducción concreta RM/Santiago que motivó `check_population_feasibility()`.
+- Escenario de comparación con un ensemble inviable/`sin_particion`: visible en la salida, excluido del scoring, comparación marcada `INCOMPLETE`.
+- `REGIONES_APC`: las 16 regiones, forma de cada entrada.
 
 **Evidencia entrega:** cobertura funcional de cada módulo sin dependencias externas (sin shapefiles, sin gerrychain).
 
-**Archivos:** `tests/test_smoke.py` (existente), `tests/test_persistence.py` (existente), `tests/test_metrics.py` (por crear), `tests/test_electoral.py` (por crear), `tests/test_hierarchy.py` (por crear).
+**Archivos:**
+- Ya implementados: `tests/test_smoke.py`, `tests/test_persistence.py`, `tests/test_split_metrics.py`, `tests/test_feasibility.py`, `tests/test_regiones_apc.py`, `tests/test_compare_scenarios_incomplete.py`, `tests/test_electoral_magnitudes.py`, `tests/test_electoral_binivel.py`, `tests/test_electoral_ensemble.py`, `tests/test_malapportionment.py`, `tests/test_malapportionment_functions.py`, `tests/test_fairshare.py`, `tests/test_pareto_sweep.py`, `tests/test_scenario_analysis.py` — cubren en conjunto lo que este documento agrupaba como "D'Hondt con ejemplos manuales" y "Pareto frontier con conjuntos de dominancia conocida" (§6 los presenta con nombres ilustrativos, no literales).
+- Por crear: `tests/test_metrics.py` (compacidad y balance poblacional como módulo dedicado — hoy solo cubierto indirectamente vía `test_smoke.py`/`test_split_metrics.py`), `tests/test_hierarchy.py` (`validate_hierarchy`, `contract_to_decision_units` como módulo dedicado).
 
 **Criterio de aceptación:** todos los tests pasan en cualquier entorno con solo `pip install chiledist`.
 
@@ -749,7 +758,7 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 
 **Evidencia entrega:** evidencia científica mínima para afirmar que la librería produce resultados correctos sobre datos reales.
 
-**Archivos:** `tests/test_integration_r11.py` (por crear), requiere shapefiles APC R11 + opcionalmente Censo 2024.
+**Archivos:** `tests/test_integration_r11.py` (por crear, requiere shapefiles APC R11 + opcionalmente Censo 2024) sigue siendo la brecha real de este nivel — nada de lo agregado desde 2026-06-21 la cierra. Sí existe ya un patrón de integración más liviano (sin datos geográficos reales) que vale la pena imitar para R11: `tests/test_scripts_demo.py`, `tests/test_redistritaje_status.py`, `tests/test_redistritaje_n_distritos.py` y `tests/test_entrypoints_n_distritos.py` cargan los scripts de `scripts/*.py` vía `importlib` (no son paquete instalable) y ejercitan sus funciones internas o su `main()` con fixtures sintéticas/mocks, en vez de shapefiles reales.
 
 **Criterio de aceptación:** se ejecuta en entorno con datos; todos los invariantes de validación pasan.
 
@@ -783,6 +792,8 @@ Estos tests deben pasar antes de usar ChileDist para cualquier análisis.
 | 18 | Pipeline completo produce 4 archivos de salida | `scripts/redistritaje.py` | Integración |
 | 19 | Reproducibilidad por semilla (misma semilla = mismo output) | `samplers/recom.py` | Integración |
 | 20 | SCENARIO_LEGAL produce 0 splits en datos sintéticos | `constraints.py` + `samplers` | Integración |
+| 21 | `check_population_feasibility()` distingue `infeasible_population` de `sin_particion` antes/en vez de correr `recursive_tree_part` | `feasibility.py` + `scripts/redistritaje.py` | Unitario+Integración — ✅ implementado, ver `tests/test_feasibility.py`, `tests/test_redistritaje_status.py` |
+| 22 | `n_distritos`: CLI explícito > `scenario.n_districts`, sin default oculto, en los 5 entrypoints | `scripts/{redistritaje,compare_scenarios,pareto_sweep,run_chains,smc_pipeline}.py` | Integración — ✅ implementado, ver `tests/test_redistritaje_n_distritos.py`, `tests/test_entrypoints_n_distritos.py` |
 
 ---
 
@@ -807,6 +818,8 @@ Estos tests son necesarios antes de publicar resultados o presentarlos en un con
 | 13 | compare_scenarios carga run_id correcto | `scripts/compare_scenarios.py` | Integración |
 | 14 | Viviendas/personas ratio CV por región documentado | `data/census2024.py` | Datos |
 | 15 | Planes apc_soft tienen más splits que legal y menos que apc_free | `constraints.py` | Estadístico |
+| 16 | `REGIONES_APC` cubre las 16 regiones y `nombre_carpeta` se usa consistentemente en `redistritaje.py`/`compare_scenarios.py`/`pareto_sweep.py`/`run_chains.py`/`smc_pipeline.py` | `chiledist/data/__init__.py` | Unitario — ✅ implementado, ver `tests/test_regiones_apc.py` |
+| 17 | Comparación de escenarios visibiliza `infeasible_population`/`sin_particion` sin contaminar el scoring (`comparison_status` marcado `INCOMPLETE`) | `scenario_comparison/compare.py` + `scripts/compare_scenarios.py` | Integración — ✅ implementado, ver `tests/test_compare_scenarios_incomplete.py` |
 
 ---
 
@@ -820,7 +833,7 @@ Estos tests son necesarios antes de entregar resultados a una institución o pub
 | 2 | Ranking de escenarios concordante ReCom vs SMC (Kendall τ > 0.8) | `scenario_comparison.py` | Estadístico |
 | 3 | Fracción de planes viviendas que violan tolerancia en personas documentada | `data` + `samplers` | Datos |
 | 4 | Sensibilidad a island_policy para regiones con islas | `graph.py` | Estadístico |
-| 5 | D'Hondt binivel documentado como limitación hasta implementación | `electoral.py` | Documentación |
+| 5 | D'Hondt binivel corrido con votos SERVEL y `pacto_map` reales (no solo `--demo`) | `electoral.py` | Integración — implementación ya existe (`dhondt_binivel`, ver §6.6); falta ejecución con datos reales |
 | 6 | Comparación con plan distrital vigente como baseline | `scripts` | Referencia |
 | 7 | Tests de integración con datos APC reales (R11 o R12) | Todos | Integración |
 | 8 | Trazabilidad completa: hash inputs → outputs verificables | `persistence.py` | Auditoría |

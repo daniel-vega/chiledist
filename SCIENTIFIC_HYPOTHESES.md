@@ -1,7 +1,7 @@
 # Hipótesis Científicas — ChileDist
 
 > **Versión:** 2.0  
-> **Fecha:** 2026-06-21  
+> **Fecha:** 2026-06-21 (revisado 2026-08-14 contra el estado actual del código y de `datos/` — ver "Plan de cierre" al final)  
 > **Proyecto:** Análisis computacional de redistritaje electoral en Chile  
 > **Autor:** Daniel Vega (drvega@estudiante.uc.cl)
 
@@ -71,7 +71,7 @@ Esta hipótesis estudia el efecto *contrafactual de una reforma legislativa*: pa
 | Dato | Fuente | Dónde en ChileDist |
 |---|---|---|
 | Cartografía APC 2023 | `SHP_APC2023/` (local) | `cd.load_layer("apc", base_dir="./datos")` |
-| Asignación plan vigente | BCN / SERVEL | Dict `{CUT: n_circunscripcion}` — construir manualmente |
+| Asignación plan vigente | `datos/asignacion_vigente.json` (ya construido — ver `README.md § Datos externos` para metodología y fuentes BCN/SUBDERE) | `json.load(open("datos/asignacion_vigente.json"))` → `{CUT_str: n_circunscripcion}` |
 | Población por APC | Censo 2024 o padrón SERVEL | `chiledist.data.census2024` / `chiledist.data.servel` |
 | Comunas por APC | Cartografía APC | Columna `"CUT"` en el GeoDataFrame |
 
@@ -89,27 +89,42 @@ python scripts/redistritaje.py --base-dir . --regiones 13 --scenario apc_soft
 # Reforma fuerte (sin restricción)
 python scripts/redistritaje.py --base-dir . --regiones 13 --scenario apc_free
 
-# Control metodológico (APCs, comunas preservadas)
-python scripts/redistritaje.py --base-dir . --regiones 13 \
-    --scenario-file scenarios/apc_strict.yml
+# Control metodológico (APCs, comunas preservadas) — "apc_strict" ya es una
+# opción built-in de --scenario, no hace falta --scenario-file para este caso
+python scripts/redistritaje.py --base-dir . --regiones 13 --scenario apc_strict
 ```
 
 Salida: `datos/R13_*/redistritaje/<escenario>/ensemble_stats.csv`
 
+> **Caveat de factibilidad — `legal_comunas` puede no producir ensemble.** Antes de intentar la partición inicial, `redistritaje.py` corre un preflight (`chiledist.check_population_feasibility`) que puede determinar que la tolerancia poblacional solicitada es matemáticamente inalcanzable dado que las comunas son indivisibles bajo `legal_comunas` — el escenario retorna entonces `status: "infeasible_population"` (con `reason` y diagnóstico) en vez de un ensemble. Distinto de esto, y también posible, es `status: "sin_particion"` (el algoritmo de inicialización agotó su búsqueda sin encontrar partición — no es una prueba de inviabilidad). **Esto no es hipotético**: en la corrida real de este repo para R13, `legal_comunas` retornó `status="sin_particion"` (`datos/redistritaje_resumen_legal_comunas.csv`), mientras que `contrafactual_apc_soft` y `contrafactual_apc_libre` sí completaron. Antes de asumir que los tres escenarios producen `ensemble_stats.csv`, revisa la tabla de estados en `README.md § redistritaje.py` y usa `scripts/compare_scenarios.py` (ver Paso 2) en vez de leer los CSV directamente — maneja este caso marcando la comparación como incompleta en lugar de fallar.
+
 #### Paso 2 — Cargar y comparar ensembles
+
+Preferir `scripts/compare_scenarios.py` a leer los CSV a mano: maneja el caso del Paso 1 en que un escenario (típicamente `legal_comunas`) no tenga `ensemble_stats.csv` válido, dejándolo visible con su `status`/`reason` en vez de fallar con `FileNotFoundError`, y marca la comparación como `comparison_status: "INCOMPLETE"` cuando falta el baseline.
+
+```bash
+python scripts/compare_scenarios.py --base-dir . --regiones 13 --skip-run
+# Lee datos/R13_METROPOLITANA/redistritaje/<escenario>/ensemble_stats.csv de los
+# escenarios ya corridos; produce comparacion_escenarios.csv (ranking, solo
+# escenarios con ensemble válido) + escenarios_overview.csv (todos los
+# escenarios esperados, incluido el/los que fallaron) + comparacion_status.json
+```
+
+Equivalente en API, con el manejo explícito de la posible ausencia de `legal_comunas`:
 
 ```python
 import chiledist as cd
-import pandas as pd
 
-# Rutas reales generadas por redistritaje.py:
-#   datos/<REGION_NOMBRE>/redistritaje/<scenario.name>/ensemble_stats.csv
-BASE = "datos/R13_METROPOLITANA/redistritaje"
-ensembles = {
-    "legal":    pd.read_csv(f"{BASE}/legal_comunas/ensemble_stats.csv"),
-    "apc_soft": pd.read_csv(f"{BASE}/contrafactual_apc_soft/ensemble_stats.csv"),
-    "apc_free": pd.read_csv(f"{BASE}/contrafactual_apc_libre/ensemble_stats.csv"),
-}
+sc_names = ["legal_comunas", "contrafactual_apc_soft", "contrafactual_apc_libre"]
+ensembles = cd.load_ensembles_from_disk(
+    output_base="datos", region_code=13, scenario_names=sc_names,
+)
+# → dict solo con los escenarios que sí tienen ensemble_stats.csv
+
+completeness = cd.assess_comparison_completeness(sc_names, ensembles, baseline="legal_comunas")
+if completeness["comparison_status"] == "INCOMPLETE":
+    print(f"Comparación incompleta: falta {completeness['missing_baseline']}. "
+          f"El ranking entre {list(ensembles)} es parcial/descriptivo, no H1 completa.")
 
 # Columnas en ensemble_stats.csv (METRICAS_STD):
 #   max_dev_pob_pct, pp_promedio, cut_edges, n_comunas_partidas,
@@ -119,9 +134,8 @@ print(tabla[["escenario",
              "max_dev_pob_pct_median",
              "n_comunas_partidas_median",
              "split_severity_median",
-             "pop_afectada_pct_median",
-             "delta_max_dev_pob_pct_median",
-             "delta_n_comunas_partidas_median"]])
+             "pop_afectada_pct_median"]])
+# delta_* solo aparece si el baseline "legal_comunas" está en `ensembles`
 ```
 
 #### Paso 3 — Métricas de fragmentación por plan individual
@@ -151,10 +165,12 @@ metricas_split = cd.plan_split_metrics(
 #### Paso 4 — Posicionar el mapa vigente en el mismo espacio
 
 ```python
-# Cargar asignación vigente (CUT → circunscripción)
-assignment_vigente = {
-    "13101": 10, "13102": 10, "13110": 12, ...  # BCN asignación 2015
-}
+import json
+
+# Cargar asignación vigente real (CUT → circunscripción), 346 comunas
+# → 28 distritos (ver README.md § Datos externos para metodología/fuentes)
+with open("datos/asignacion_vigente.json", encoding="utf-8") as f:
+    assignment_vigente = json.load(f)
 
 G, adj, id_list = cd.build_graph(gdf, id_col="ID_DIST")
 
@@ -252,7 +268,8 @@ print(df_frontier[["escenario", "penalty", "point_type",
 
 ```python
 # Añadir el mapa vigente al espacio del barrido
-# (requiere assignment_vigente: {CUT: n_circunscripcion}, construir desde BCN)
+# assignment_vigente: {CUT: n_circunscripcion} — ya disponible en
+# datos/asignacion_vigente.json (ver H1, Paso 4)
 G, adj, id_list = cd.build_graph(gdf, id_col="ID_DIST")
 pos_vigente = cd.position_plan_vigente(
     assignment_vigente, gdf,
@@ -344,13 +361,15 @@ El malapportionment se mide con magnitudes *fijas* (las legales vigentes), no re
 #### Paso 1 — Malapportionment del mapa vigente
 
 ```python
+import json
 import chiledist as cd
 import pandas as pd
 
-# Población por circunscripción (Censo 2024, construir desde datos comunales)
+# Población por circunscripción (Censo 2024, agregada desde datos comunales)
 pop_comunal = pd.read_csv("datos/poblacion_comunal_censo2024.csv",
                            index_col="CUT")["personas"]
-asignacion_vigente = {cut: distrito for cut, distrito in ...}   # BCN
+with open("datos/asignacion_vigente.json", encoding="utf-8") as f:
+    asignacion_vigente = {k: int(v) for k, v in json.load(f).items()}
 
 pop_por_distrito = pd.Series({
     d: sum(pop_comunal.get(cut, 0)
@@ -472,7 +491,7 @@ comparar conclusiones entre distintas elecciones.
 | Dato | Fuente | Dónde en ChileDist |
 |---|---|---|
 | Resultados electorales (elección de referencia) por CUT | SERVEL | `chiledist.data.servel` |
-| Pactos electorales (elección de referencia) | SERVEL (metadata) | Dict `{partido: pacto}` — construir manualmente |
+| Pactos electorales (elección de referencia) | `datos/pacto_map_2025.json` (ya construido — ver `README.md § Datos externos` para metodología y fuentes SERVEL) | `json.load(open("datos/pacto_map_2025.json"))` → `{partido: pacto}` |
 | Magnitudes vigentes | Integrado | `cd.MAGNITUDES_LEGALES_LEY20840` |
 | Plan de redistritaje | Ensemble o mapa vigente | Dict `{ID_DIST: n_distrito}` |
 
@@ -1098,10 +1117,10 @@ Un índice de Gallagher bajo, un ENP cercano al ideal o una prima de escaños eq
 | Dato | Fuente | Módulo |
 |---|---|---|
 | Votos por unidad y partido (elección de referencia) | SERVEL | `chiledist.data.servel` |
-| `pacto_map` (elección de referencia) | SERVEL (metadata) | archivo externo |
+| `pacto_map` (elección de referencia) | `datos/pacto_map_2025.json` (ya construido) | archivo externo |
 | Ensemble de planes (al menos N=200) | salida de H1 | `chiledist.samplers` |
 | Magnitudes por circunscripción | `MAGNITUDES_LEGALES_LEY20840` o H3 | `chiledist.electoral` |
-| Asignación del mapa vigente | BCN / SERVEL | archivo externo |
+| Asignación del mapa vigente | `datos/asignacion_vigente.json` (ya construido) | archivo externo |
 
 ### Paso 1 — Ejecutar ensemble electoral
 
@@ -1640,15 +1659,15 @@ Las siguientes decisiones afectan a todas las hipótesis y deben tomarse antes d
 
 | Hipótesis | Estado global | Qué corre hoy | Qué falta |
 |---|---|---|---|
-| **H1** | ✅ Ejecutable | CLI `redistritaje.py`; `compare_scenarios.py`; `compare_ensembles`; `plan_split_metrics`; `pop_afectada_pct` en `ensemble_stats.csv` | 🔴 Asignación vigente `{CUT: circunscripcion}` (BCN); 🔴 Censo 2024 comunal para `pop_col="personas"` |
-| **H2** | ✅ Script disponible | `scripts/pareto_sweep.py`; `pareto_frontier_nd`; `rank_scenarios`; `ScoringConfig.from_weights` | 🔴 Asignación vigente para `position_plan_vigente` |
-| **H3** | ✅ Script disponible (`--demo`) | `scripts/malapportionment.py`; `personas_por_escano`; `comparar_magnitudes`; `umbral_efectivo`; `plan_electoral_metrics(magnitudes_fijas=)` | 🔴 Censo 2024 por circunscripción; 🔴 Asignación vigente; 🔴 Votos electorales por CUT (elección de referencia) |
-| **H4** | ✅ Script disponible (`--demo`) | `scripts/electoral_analysis.py`; `dhondt`; `dhondt_binivel`; `plan_electoral_metrics(pacto_map=)`; `national_shares`; `seat_bonus` | 🔴 Votos electorales por CUT y partido (elección de referencia); 🔴 `pacto_map` (elección de referencia); 🔴 Ensembles de H1 |
+| **H1** | ✅ Ejecutable — corrida real en R13 (ver "Plan de cierre") | CLI `redistritaje.py`; `compare_scenarios.py`; `compare_ensembles`; `plan_split_metrics`; `pop_afectada_pct` en `ensemble_stats.csv` | ✅ `datos/asignacion_vigente.json` y `datos/poblacion_comunal_censo2024.csv` ya existen. 🔴 `legal_comunas` falla en R13 con `status="sin_particion"` (ver caveat en H1 abajo) — pendiente resolver antes de tener los 3 escenarios completos |
+| **H2** | ✅ Script disponible | `scripts/pareto_sweep.py`; `pareto_frontier_nd`; `rank_scenarios`; `ScoringConfig.from_weights` | ✅ Asignación vigente disponible para `position_plan_vigente` |
+| **H3** | ✅ Corrido con `--demo`; API lista para datos reales | `scripts/malapportionment.py`; `personas_por_escano`; `comparar_magnitudes`; `umbral_efectivo`; `plan_electoral_metrics(magnitudes_fijas=)` | ✅ Censo 2024 comunal y asignación vigente ya existen; 🔴 Votos electorales por CUT (elección de referencia) — `datos/malapportionment/*.csv` en el repo son de `--demo`, no de datos reales, hasta que se corra sin ese flag |
+| **H4** | ✅ Script disponible (`--demo`) | `scripts/electoral_analysis.py`; `dhondt`; `dhondt_binivel`; `plan_electoral_metrics(pacto_map=)`; `national_shares`; `seat_bonus` | ✅ `datos/pacto_map_2025.json` ya existe; 🔴 Votos electorales por CUT y partido (elección de referencia); 🔴 Ensembles de H1 |
 | **H5** | ✅ Scripts disponibles | `scripts/run_chains.py`; `scripts/smc_pipeline.py`; `mixing_diagnostics`; `compare_sensitivity`; `ranking_concordance` | 🔴 Ensembles de H1; R + paquete `redist` para SMC |
 | **H6** | ✅ API completa (`--demo` vía H4) | `chiledist.fairshare`: `fair_share_matrix`; `results_to_matrix`; `l1_distance_fair_share`; `l2_distance_fair_share`; `max_cell_deviation`; `fair_share_summary` | 🔴 Votos electorales por CUT (elección de referencia); 🔴 Ensembles de H1 |
-| **H7** | ✅ API completa | `chiledist.electoral_ensemble`: `run_electoral_ensemble`; `ensemble_gallagher`; `ensemble_seat_bonus`; `ensemble_enp`; `ensemble_effective_threshold`; `summarize_electoral_ensemble`; `plot_ensemble_histogram`; `plot_ensemble_violin`; `plot_ensemble_ecdf` | 🔴 Ensemble de H1; 🔴 Votos por CUT (elección de referencia); 🔴 `pacto_map`; 🔴 Asignación vigente para calcular métricas observadas |
+| **H7** | ✅ API completa | `chiledist.electoral_ensemble`: `run_electoral_ensemble`; `ensemble_gallagher`; `ensemble_seat_bonus`; `ensemble_enp`; `ensemble_effective_threshold`; `summarize_electoral_ensemble`; `plot_ensemble_histogram`; `plot_ensemble_violin`; `plot_ensemble_ecdf` | 🔴 Ensemble de H1; 🔴 Votos por CUT (elección de referencia). ✅ Asignación vigente y `pacto_map` ya disponibles para calcular métricas observadas |
 | **H8** | ✅ API completa | `chiledist.pareto_sweep`: `sweep_split_penalty`; `build_tradeoff_frontier`; `detect_knee_point`; `plot_tradeoff_curve`; `summarize_tradeoff` | 🔴 Ensembles de H1 (uno por nivel de penalización, `penalties = np.linspace(0, 1, N)`) |
-| **H9** | ✅ API completa | `chiledist.malapportionment`: `samuels_snyder_index`; `loosemore_hanby_malapportionment`; `gini_personas_por_escano`; `max_min_representation_ratio`; `malapportionment_summary`; `compare_malapportionment_plans`; `international_comparison`; `plot_pxe_distribution`; `plot_malapportionment_ranking`; `plot_international_comparison`; `BENCHMARK_MALAPPORTIONMENT` | 🔴 Asignación vigente + población por circunscripción (Censo 2024); 🔴 Ensembles de H1 para bootstrap |
+| **H9** | ✅ API completa | `chiledist.malapportionment`: `samuels_snyder_index`; `loosemore_hanby_malapportionment`; `gini_personas_por_escano`; `max_min_representation_ratio`; `malapportionment_summary`; `compare_malapportionment_plans`; `international_comparison`; `plot_pxe_distribution`; `plot_malapportionment_ranking`; `plot_international_comparison`; `BENCHMARK_MALAPPORTIONMENT` | ✅ Asignación vigente y población por circunscripción (Censo 2024) ya disponibles; 🔴 Ensembles de H1 para bootstrap |
 
 ### Correcciones de firma aplicadas en este documento
 
@@ -1667,14 +1686,14 @@ Las siguientes llamadas tenían firmas incorrectas y fueron corregidas:
 | `compare_ensembles` output H1 | Referenciaba `pop_afectada_pct_median` (no existe en `METRICAS_STD`) | Reemplazada por `split_severity_median` |
 | Rutas de directorios (H1, H5) | `datos/R13/redistritaje/legal/` | `datos/R13_METROPOLITANA/redistritaje/legal_comunas/` |
 
-### Datos externos requeridos (no existen en el repo)
+### Datos externos requeridos
 
-| Archivo | Hipótesis | Fuente | Formato esperado |
-|---|---|---|---|
-| `datos/poblacion_comunal_censo2024.csv` | H1, H3 | INE Chile | `CUT, personas` por comuna |
-| `datos/servel_2025_por_cut.csv` | H3, H4 | SERVEL | `CUT, partido, votos` por circunscripción (puede usarse cualquier elección: 2021, 2025, …) |
-| `datos/asignacion_vigente.json` | H1, H2, H3 | BCN / SERVEL | `{CUT_str: n_circunscripcion}` |
-| `datos/pacto_map_2025.json` | H4 | SERVEL (metadata) | `{partido: pacto}` (adaptar a la elección de referencia) |
+| Archivo | Hipótesis | Fuente | Formato esperado | Estado |
+|---|---|---|---|---|
+| `datos/poblacion_comunal_censo2024.csv` | H1, H3 | INE Chile | `CUT, personas` por comuna | ✅ Ya existe en el repo |
+| `datos/asignacion_vigente.json` | H1, H2, H3, H9 | BCN / SUBDERE (metodología documentada en `README.md § Datos externos`) | `{CUT_str: n_circunscripcion}`, 346 comunas → 28 distritos | ✅ Ya existe en el repo |
+| `datos/servel_2025_por_cut.csv` | H3, H4 | SERVEL | `CUT, partido, votos` por circunscripción (puede usarse cualquier elección: 2021, 2025, …) | 🔴 Falta |
+| `datos/pacto_map_2025.json` | H4, H6, H7 | SERVEL (resoluciones de formalización de pactos; metodología documentada en `README.md § Datos externos`) | `{partido: pacto}`, incluye sigla y nombre completo por partido | ✅ Ya existe en el repo |
 
 ### Scripts disponibles
 
@@ -1687,3 +1706,55 @@ Las siguientes llamadas tenían firmas incorrectas y fueron corregidas:
 | `scripts/electoral_analysis.py` | D'Hondt binivel sobre ensemble; `--demo` con datos sintéticos | H4 |
 | `scripts/run_chains.py` | N cadenas ReCom independientes + `mixing_diagnostics` + sensibilidad a pesos | H5 |
 | `scripts/smc_pipeline.py` | Bridge Python → R/redist → Python; comparación SMC vs ReCom | H5 |
+
+---
+
+## Plan de cierre — actividades pendientes (auditado 2026-08-14, reemplaza la auditoría de 2026-07-28)
+
+Re-auditoría contra el estado actual del repositorio. Conclusión principal, sin cambios respecto a la versión anterior: **el lado de código/API está completo para H1–H9** (todas las funciones de la tabla de brechas existen y tienen tests unitarios). Lo que falta para cerrar H1–H9 sigue siendo mayormente **ejecución con datos reales**, no desarrollo de nuevas capacidades — pero esa ejecución ya avanzó parcialmente desde la auditoría anterior:
+
+- **`chiledist/data/__init__.py` ahora expone `REGIONES_APC`** (16 regiones, `{region_code: {"nombre", "nombre_carpeta"}}`) — el bug que bloqueaba el CLI completo de `run_chains.py` está resuelto.
+- **`datos/asignacion_vigente.json`, `datos/poblacion_comunal_censo2024.csv` y `datos/pacto_map_2025.json` ya existen** (3 de los 4 datos externos de la tabla de arriba). Solo falta `servel_..._por_cut.csv` (votos reales por CUT y partido) — sin ese archivo, H3/H4/H6/H7 con datos reales siguen bloqueados aunque el resto de sus insumos ya estén listos.
+- **Ya hay una corrida real de `redistritaje.py` sobre R13** (no solo `--demo`): `datos/R13_METROPOLITANA/redistritaje/{legal_comunas,contrafactual_apc_soft,contrafactual_apc_libre}/`. `contrafactual_apc_soft` y `contrafactual_apc_libre` completaron con `status="ok"` y tienen `ensemble_stats.csv` real. **`legal_comunas` falló con `status="sin_particion"`** (`datos/redistritaje_resumen_legal_comunas.csv`) — ver el caveat agregado en la sección H1 más arriba. Esto significa que Fase 2 está *parcialmente* hecha para R13, pero el baseline legal sigue sin ensemble válido.
+- `datos/malapportionment/` y `datos/electoral_analysis/` sí siguen siendo salidas de `--demo` (se verificó: los nombres de partido/pacto que contienen — `UDI`/`ChileVamos`, `PPD`/`NuevaUnidad`, etc. — coinciden exactamente con los datos sintéticos hardcodeados en `_demo_data()` de ambos scripts, no con `pacto_map_2025.json` ni con un resultado SERVEL real). H3/H4 con datos reales siguen pendientes hasta tener los votos SERVEL.
+- No existe `datos/nacional/` — **`scripts/setup.py` sigue sin correrse contra el `SHP_APC2023` real** para generar el grafo nacional (`SHP_APC2023` presente en el repo, 3.7 GB, 16 regiones).
+- Los tests de `tests/test_scripts_demo.py` cubren únicamente las rutas `--demo`/sintéticas de cada script; no hay ningún test de integración que corra el pipeline geográfico real de punta a punta.
+
+### Fase 0 — Fundacional (bloquea las 9 hipótesis)
+
+- [ ] Ejecutar `scripts/setup.py --base-dir ./SHP_APC2023` una vez para generar `datos/nacional/matrices/` (grafo nacional, islas) y las figuras base. Verificar contra `VALIDATION_PLAN.md § 3` (IDs únicos, geometrías válidas, CRS, suma APC→comuna) antes de seguir.
+- [x] ~~Corregir el bug de `REGIONES_APC`~~ — resuelto: `chiledist/data/__init__.py` ya expone el diccionario de las 16 regiones.
+- [ ] Diagnosticar por qué `legal_comunas` falla en R13 (`status="sin_particion"`, ver H1 arriba): correr `chiledist.check_population_feasibility` directamente para confirmar si es un caso de `infeasible_population` (matemáticamente probado — cambiar `n_districts`/`pop_tolerance`) o de agotamiento de búsqueda genuino (más semillas/tolerancias de inicialización podrían bastar). Sin esto, H1 no tiene los 3 escenarios completos para R13.
+- [ ] Congelar las decisiones metodológicas ya escritas arriba (§ *Decisiones metodológicas previas a la ejecución*): región de desarrollo (R11) vs. publicación (R13), `pop_col="personas"`, `seed=42`, tamaño de ensemble (N=500 exploración / N=1000 publicación). Documentar la decisión final en este archivo, no solo la opción por defecto.
+
+### Fase 1 — Conseguir los 4 datos externos
+
+- [x] `datos/poblacion_comunal_censo2024.csv` (INE) — ya existe en el repo; requerido por H1, H3, H9.
+- [ ] `datos/servel_<año>_por_cut.csv` (SERVEL, Open Data) — votos por CUT y partido de una elección de referencia (2021 o 2025); requerido por H3, H4, H6, H7. **Único de los 4 datos externos que sigue faltando.**
+- [x] `datos/asignacion_vigente.json` (BCN/SUBDERE) — ya existe en el repo, 346 comunas → 28 circunscripciones (metodología documentada en `README.md § Datos externos`); requerido por H1, H2, H3, H9 (permite `position_plan_vigente` y comparar el mapa legal contra el ensemble).
+- [x] `datos/pacto_map_2025.json` (SERVEL, resoluciones de formalización de pactos; metodología documentada en `README.md § Datos externos`) — ya existe en el repo, `{partido: pacto}` con sigla y nombre completo; requerido por H4, H6, H7 para D'Hondt binivel.
+
+### Fase 2 — Generar los ensembles base (H1) que alimentan H2, H4–H9
+
+- [x] Correr `scripts/redistritaje.py` para `apc_soft` y `apc_free` en R13 (`pop_col` default, `seed=42`) — ambos completaron con `status="ok"` (`datos/R13_METROPOLITANA/redistritaje/{contrafactual_apc_soft,contrafactual_apc_libre}/ensemble_stats.csv`).
+- [ ] `legal_comunas` en R13 falló (`status="sin_particion"`) — resolver el diagnóstico de Fase 0 antes de tener el baseline. Falta también correr `apc_strict` (control metodológico) para los 4 escenarios completos.
+- [ ] Correr `scripts/compare_scenarios.py` sobre los 4 escenarios una vez que `legal_comunas` tenga ensemble válido — cierra H1 con datos reales. (Si se corre antes, `comparison_status` quedará `"INCOMPLETE"` con `missing_baseline="legal_comunas"` — ver `chiledist.assess_comparison_completeness`.)
+- [ ] Correr `scripts/pareto_sweep.py` con un barrido fino de `split_penalty` (no solo los 3 escenarios discretos) — insumo que necesita H8 específicamente (`build_tradeoff_frontier`/`detect_knee_point` sobre planes individuales, no medianas).
+
+### Fase 3 — Cerrar cada hipótesis con datos reales
+
+- [ ] **H2**: `position_plan_vigente()` con la asignación vigente real (ya disponible, Fase 1) sobre el espacio de Pareto generado en Fase 2.
+- [ ] **H3**: `scripts/malapportionment.py` (sin `--demo`) con Censo 2024 real, asignación vigente y magnitudes `MAGNITUDES_LEGALES_LEY20840` — los dos insumos ya están disponibles, solo falta correr sin `--demo`.
+- [ ] **H4**: `scripts/electoral_analysis.py` (sin `--demo`) con los votos SERVEL (aún pendiente) y `pacto_map` real (ya disponible, Fase 1).
+- [ ] **H5**: correr `scripts/run_chains.py` con ≥4 cadenas (seeds 42–45) sobre los ensembles de Fase 2; correr `compare_sensitivity`/`ranking_concordance` entre fuentes de población (`viviendas` vs `personas`); instalar R + paquete `redist` para completar `scripts/smc_pipeline.py` y comparar SMC vs ReCom.
+- [ ] **H6**: reutiliza votos de Fase 1 + ensembles de Fase 2 — solo falta correr `fair_share_matrix`/`fair_share_summary` sobre el ensemble real y calcular el percentil del mapa vigente.
+- [ ] **H7**: `run_electoral_ensemble()` sobre el ensemble de Fase 2 con los votos/`pacto_map` reales; comparar contra las métricas del mapa vigente (Fase 3-H4).
+- [ ] **H8**: `sweep_split_penalty()` + `build_tradeoff_frontier()` + `detect_knee_point()` sobre el barrido fino de Fase 2.
+- [ ] **H9**: `compare_malapportionment_plans()` + `international_comparison()` con el mapa vigente (Fase 3-H3) y los ensembles de Fase 2; bootstrap de Samuels-Snyder por escenario.
+
+### Fase 4 — Validación y cierre
+
+- [ ] Correr la suite de `VALIDATION_PLAN.md` (Niveles 1–3) contra las corridas reales, no solo contra fixtures sintéticos.
+- [ ] Agregar al menos un test de integración en `tests/` que corra el pipeline real (aunque sea en una región chica tipo R11/Aysén) en vez de solo `--demo`.
+- [ ] Reemplazar cada 🔴 de la *Tabla de brechas* (arriba) por ✅ a medida que cada dato/ejecución esté listo, y actualizar la fecha de auditoría.
+- [ ] Redactar la sección de métodos citando explícitamente semilla, N de ensemble, fuente de población y región — según lo congelado en Fase 0.

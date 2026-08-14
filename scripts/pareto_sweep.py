@@ -100,7 +100,12 @@ def parse_args():
     p.add_argument("--penalties",   default=None,
                    help="Lista de split_penalty para apc_soft, "
                         "separados por coma (default: 0.0,0.1,0.25,0.5,1.0,2.0)")
-    p.add_argument("--n-distritos", type=int, default=8)
+    p.add_argument("--n-distritos", type=int, default=None,
+                   help="Número de particiones territoriales a generar (NO "
+                        "la magnitud electoral 3-8 de Ley 20.840). Default: "
+                        "n_districts de cada escenario/anclaje del barrido — "
+                        "no se homogeneiza entre configuraciones salvo que "
+                        "se pase este flag explícitamente.")
     p.add_argument("--pop-tol",     type=float, default=0.15)
     p.add_argument("--n-steps",     type=int, default=5000)
     p.add_argument("--seed",        type=int, default=42)
@@ -172,7 +177,7 @@ def run_or_load(
     region_code: int,
     base_dir: str,
     output_base: str,
-    n_distritos: int,
+    n_distritos: int | None,
     pop_tol: float,
     n_steps: int,
     seed: int,
@@ -184,6 +189,10 @@ def run_or_load(
     Ejecuta redistritaje para el escenario (o carga el CSV existente si
     skip_run=True o el archivo ya existe).
     Devuelve el DataFrame de ensemble_stats, o None si falló.
+
+    n_distritos: si es None, se usa scenario.n_districts (cada punto del
+    barrido — anclajes y variantes apc_soft_pX — conserva el suyo); si se
+    pasa explícito, se aplica a este escenario también.
     """
     region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
     ens_path = os.path.join(
@@ -196,9 +205,12 @@ def run_or_load(
         return None
 
     if not skip_run:
+        n_distritos_efectivo = (
+            n_distritos if n_distritos is not None else scenario.n_districts
+        )
         sc = dataclasses.replace(
             scenario,
-            n_districts=n_distritos,
+            n_districts=n_distritos_efectivo,
             pop_tolerance=pop_tol,
             n_steps=n_steps,
             seed=seed,
@@ -208,7 +220,7 @@ def run_or_load(
                 region_code=region_code,
                 base_dir=base_dir,
                 output_base=output_base,
-                n_distritos=n_distritos,
+                n_distritos=n_distritos_efectivo,
                 pop_tol=pop_tol,
                 n_steps=n_steps,
                 seed=seed,
@@ -451,7 +463,11 @@ def main():
     print(f"\nchiledist — Barrido Pareto (H2)")
     print(f"  región      : {region_code} ({region_name})")
     print(f"  penalties   : {penalties}")
-    print(f"  n_distritos : {args.n_distritos}")
+    if args.n_distritos is not None:
+        print(f"  n_distritos : {args.n_distritos}  "
+              f"(--n-distritos explícito, aplica a todas las configuraciones)")
+    else:
+        print(f"  n_distritos : según cada escenario/anclaje (scenario.n_districts)")
     print(f"  n_steps     : {args.n_steps}")
     print(f"  output      : {out_dir}")
 

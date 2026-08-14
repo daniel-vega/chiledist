@@ -170,16 +170,42 @@ def _load_population(census_path: str, assignment: dict) -> pd.Series | None:
     """
     try:
         census = c24.load_census2024(census_path)
-        census["CUT"] = census["CUT"].astype(str)
+        # Normalizar CUT a 5 dígitos: load_census2024 devuelve CUT como int
+        # (sin cero a la izquierda), mientras que `assignment` (desde
+        # asignacion_vigente.json) usa strings de 5 dígitos. No importa cuál
+        # de las dos fuentes use 4 o 5 dígitos — normalize_cut() las hace
+        # comparables en ambos casos.
+        census["CUT"] = census["CUT"].map(cd.normalize_cut)
         pop_map = census.set_index("CUT")["personas"].to_dict()
 
         pop_por_dist: dict[int, int] = {}
         for cut_str, dist_num in assignment.items():
-            pop = pop_map.get(str(cut_str), pop_map.get(cut_str, 0))
+            pop = pop_map.get(cd.normalize_cut(cut_str), 0)
             pop_por_dist[int(dist_num)] = pop_por_dist.get(int(dist_num), 0) + int(pop)
         return pd.Series(pop_por_dist).sort_index()
     except Exception as e:
         print(f"  ⚠ No se pudo cargar población: {e}")
+        return None
+
+
+def _load_population_by_unit(census_path: str) -> pd.Series | None:
+    """
+    Carga población comunal SIN agregar a nivel de circunscripción.
+
+    A diferencia de _load_population() (que agrega a nivel de distrito,
+    usada por A1-A3), analisis_electoral() (A4) necesita población
+    indexada por unidad — la misma clave que `assignment` — porque
+    plan_electoral_metrics() hace su propia agregación a distrito
+    internamente a partir de `assignment`. CUT se normaliza a 5 dígitos
+    (chiledist.normalize_cut) para que calce con esas claves sin importar
+    si la fuente de origen usa CUT de 4 o 5 dígitos.
+    """
+    try:
+        census = c24.load_census2024(census_path)
+        census["CUT"] = census["CUT"].map(cd.normalize_cut)
+        return census.set_index("CUT")["personas"]
+    except Exception as e:
+        print(f"  ⚠ No se pudo cargar población por unidad: {e}")
         return None
 
 
@@ -191,8 +217,9 @@ def _load_assignment(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
-        # Normalizar: claves a str, valores a int
-        return {str(k): int(v) for k, v in raw.items()}
+        # Normalizar: claves a CUT canónico (5 dígitos), valores a int.
+        # Tolera que el JSON de origen tenga claves de 4 o 5 dígitos.
+        return {cd.normalize_cut(k): int(v) for k, v in raw.items()}
     except Exception as e:
         print(f"  ⚠ No se pudo cargar asignación: {e}")
         return None
@@ -361,18 +388,38 @@ def analisis_umbrales() -> pd.DataFrame:
 def analisis_electoral(
     assignment: dict,
     votes_df: pd.DataFrame,
-    pop_por_distrito: pd.Series,
+    pop_by_unit: pd.Series,
     pacto_map: dict | None,
 ) -> pd.DataFrame:
     """
     Ejecuta plan_electoral_metrics en modo 'fijas' y 'calculadas' y compara.
-    """
-    # Normalizar CUT en votes_df para que coincida con el assignment
-    votes_df = votes_df.copy()
-    votes_df["CUT"] = votes_df["CUT"].astype(type(list(assignment.keys())[0]))
 
-    # pop_by_unit: indexed por la misma clave que el assignment
-    pop_by_unit = pop_por_distrito.rename(index=lambda k: k)
+    pop_by_unit debe estar indexada por la misma clave que `assignment`
+    (unit_id — CUT de 5 dígitos en modo real, número de distrito en
+    --demo), NO por distrito: plan_electoral_metrics() hace su propia
+    agregación a nivel de circunscripción internamente a partir de
+    `assignment`. Pasar población ya agregada por distrito (ej. la salida
+    de _load_population(), usada por A1-A3) hace que esa agregación
+    interna nunca encuentre las claves y las métricas de malapportionment
+    (pxe_max, pxe_min, ratio_max_min_pxe, peso_relativo_*) salgan en 0/NaN
+    sin ningún error — usa _load_population_by_unit() en su lugar.
+    """
+    # Normalizar CUT en votes_df para que coincida con las claves de
+    # `assignment`, sin tocar `assignment` (pop_by_unit más abajo depende
+    # de que sus claves no cambien). En modo real, `assignment` ya viene
+    # normalizado a CUT de 5 dígitos por _load_assignment() (desde
+    # asignacion_vigente.json), pero votes_df["CUT"] llega como int desde
+    # SERVEL — igualar solo el tipo (str(int) -> "1101") no basta si falta
+    # el cero a la izquierda ("01101"); normalize_cut() sí los hace
+    # comparables sin importar si la fuente usa CUT de 4 o 5 dígitos. En
+    # modo --demo, `assignment` usa enteros (unidad == número de distrito)
+    # y el comportamiento previo de igualar el tipo se mantiene intacto.
+    votes_df = votes_df.copy()
+    sample_key = next(iter(assignment.keys()))
+    if isinstance(sample_key, str):
+        votes_df["CUT"] = votes_df["CUT"].map(cd.normalize_cut)
+    else:
+        votes_df["CUT"] = votes_df["CUT"].astype(type(sample_key))
 
     mag_series = pd.Series(
         {k: int(v) for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
@@ -620,6 +667,9 @@ def main():
     if args.demo:
         pop_por_distrito, assignment, votes_df = _demo_data()
         pacto_map = None
+        # En --demo, unidad == distrito (asignación trivial), así que la
+        # misma serie sirve como población por unidad para A4.
+        pop_by_unit = pop_por_distrito
     else:
         # Intentar rutas por defecto si no se especifican
         def _default(provided, *candidates):
@@ -654,10 +704,14 @@ def main():
             )
             sys.exit(1)
 
-        # Cargar población
+        # Cargar población: agregada por distrito (A1-A3) y por unidad (A4 —
+        # plan_electoral_metrics hace su propia agregación vía `assignment`
+        # y necesita la población indexada por CUT, no por distrito).
         pop_por_distrito = None
+        pop_by_unit = None
         if census_path:
             pop_por_distrito = _load_population(census_path, assignment)
+            pop_by_unit = _load_population_by_unit(census_path)
         if pop_por_distrito is None:
             print(
                 "\n  ⚠ Sin población comunal (--census-path).\n"
@@ -702,7 +756,7 @@ def main():
     if votes_df is not None:
         try:
             df_elec = analisis_electoral(assignment, votes_df,
-                                         pop_por_distrito, pacto_map)
+                                         pop_by_unit, pacto_map)
         except Exception as e:
             import traceback
             print(f"  ⚠ A4 falló: {e}")
