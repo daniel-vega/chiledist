@@ -1,2 +1,2 @@
-region,status,scenario
-13,sin_particion,legal_comunas
+region,region_name,scenario,decision_unit,preserve_mode,status,n_unidades,n_planes,ref_plan_id,ref_desv,comunas_partidas_ref,out_dir,run_dir,run_id
+13,R13_METROPOLITANA,legal_comunas,CUT,hard,ok,52,50000,6113,7.806,0,./datos/R13_METROPOLITANA/redistritaje/legal_comunas,./datos/R13_METROPOLITANA/redistritaje/legal_comunas/run_20260816_001317_ff323e66,ff323e66-e4bc-4586-bf66-fae8eec71af3

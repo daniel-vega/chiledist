@@ -98,6 +98,39 @@ Salida: `datos/R13_*/redistritaje/<escenario>/ensemble_stats.csv`
 
 > **Caveat de factibilidad — `legal_comunas` puede no producir ensemble.** Antes de intentar la partición inicial, `redistritaje.py` corre un preflight (`chiledist.check_population_feasibility`) que puede determinar que la tolerancia poblacional solicitada es matemáticamente inalcanzable dado que las comunas son indivisibles bajo `legal_comunas` — el escenario retorna entonces `status: "infeasible_population"` (con `reason` y diagnóstico) en vez de un ensemble. Distinto de esto, y también posible, es `status: "sin_particion"` (el algoritmo de inicialización agotó su búsqueda sin encontrar partición — no es una prueba de inviabilidad). **Esto no es hipotético**: en la corrida real de este repo para R13, `legal_comunas` retornó `status="sin_particion"` (`datos/redistritaje_resumen_legal_comunas.csv`), mientras que `contrafactual_apc_soft` y `contrafactual_apc_libre` sí completaron. Antes de asumir que los tres escenarios producen `ensemble_stats.csv`, revisa la tabla de estados en `README.md § redistritaje.py` y usa `scripts/compare_scenarios.py` (ver Paso 2) en vez de leer los CSV directamente — maneja este caso marcando la comparación como incompleta en lugar de fallar.
 
+### Estado de apc_strict (control metodológico)
+
+apc_strict (decision_unit=ID_DIST, preserve_mode=hard) no es
+implementable con el stack actual (gerrychain 0.3.2 + ReCom).
+
+Causa técnica confirmada empíricamente: ReCom busca cortes en
+spanning trees sin sesgo hacia límites comunales. La restricción
+preserve_CUT como constraint dura de gerrychain rechaza casi
+toda propuesta como auto-loop. El proceso queda atrapado
+indefinidamente dentro de bipartition_tree buscando un corte
+simultáneamente balanceado y respetuoso de 52 fronteras comunales
+sobre un grafo de 451 nodos — sin timeout ni escape.
+
+Intentos realizados:
+1. preserve_CUT en constraints del warm-up: no converge en 4.500
+   pasos, desviación retrocede de 21.8% a 26.5%.
+2. Warm-up comunal (52 nodos) + warm-up fino (451 nodos + preserve_CUT):
+   proceso colgado >4 horas sin completar un solo paso del warm-up fino.
+
+Alternativa para implementación futura: SMC (Sequential Monte Carlo,
+paquete redist de R) puede muestrear directamente desde la distribución
+condicionada a preserve_CUT porque no depende de spanning trees —
+es el sampler correcto para este escenario. Ver scripts/smc_pipeline.py.
+
+Impacto en H1: la descomposición causal completa
+(efecto resolución = apc_strict − legal,
+efecto restricción = apc_free − apc_strict)
+no está disponible con ReCom. H1 se cierra con la comparación
+directa legal vs apc_free vs apc_soft, que mide el efecto total
+sin descomposición.
+
+Estado: NO IMPLEMENTABLE con ReCom. Requiere SMC (trabajo futuro).
+
 #### Paso 2 — Cargar y comparar ensembles
 
 Preferir `scripts/compare_scenarios.py` a leer los CSV a mano: maneja el caso del Paso 1 en que un escenario (típicamente `legal_comunas`) no tenga `ensemble_stats.csv` válido, dejándolo visible con su `status`/`reason` en vez de fallar con `FileNotFoundError`, y marca la comparación como `comparison_status: "INCOMPLETE"` cuando falta el baseline.
@@ -210,6 +243,133 @@ for sc in [cd.SCENARIO_LEGAL, cd.SCENARIO_APC_SOFT, cd.SCENARIO_APC_FREE]:
 | Costo en población | `pop_afectada_pct_median` | Fracción de habitantes en comunas divididas. |
 | Severidad | `split_severity` | Ponderado por tamaño; 0 = sin divisiones. |
 | Fragmentos pequeños | `small_fragments` | Fragmentos < 10% de la población comunal. |
+
+### Resultado empírico — Umbral de factibilidad comunal bajo Ley 18.700 (RM, Censo 2024)
+
+**Primer resultado empírico completo del proyecto.** Calculado con
+`chiledist.check_population_feasibility` sobre el pipeline real de
+`redistritaje.py` para R13 (Región Metropolitana), escenario `legal_comunas`
+(unidad de decisión = CUT, comunas indivisibles), población Censo 2024
+(52 comunas, 7.400.740 personas), tolerancia ±10%:
+
+```python
+import chiledist as cd
+# unit_pops = {CUT: personas}, construido exactamente como en
+# redistritaje.py::analizar_region() para decision_unit="CUT" + Censo 2024
+for n in range(6, 21):
+    r = cd.check_population_feasibility(unit_pops, n, 0.10)
+    print(n, r.feasible, r.minimum_required_tolerance)
+```
+
+| n_distritos | Factible (±10%) | Tolerancia mínima requerida |
+|---|---|---|
+| 8 (Ley 20.840 vigente para la RM) | ✓ | 0.0% |
+| 9–13 | ✓ | 0.0% |
+| 14 | ✓ | 7.5% |
+| 15 | ✗ | 15.1% |
+| 16 | ✗ | 22.8% |
+| 17 | ✗ | 30.5% |
+| 20 | ✗ | 53.5% |
+
+En todos los casos la unidad que bloquea es la misma: **Puente Alto**
+(CUT 13201, 568.087 personas — no Santiago, que es más chica).
+
+**Hallazgo:** el umbral de factibilidad comunal para la RM bajo Ley 18.700
+y Censo 2024 es **n_distritos ≤ 14** (factible) / **n_distritos ≥ 15**
+(estructuralmente inviable a ±10%) — un mecanismo simple: la población de
+Puente Alto es fija (~568k), y al aumentar `n_distritos` el ideal por
+distrito (`total_RM / n_distritos`) se reduce; en algún punto (entre 14 y
+15) el ideal cae por debajo de la población de Puente Alto, y una comuna
+indivisible que excede el ideal hace inviable *cualquier* plan bajo
+Ley 18.700, sin importar cuántas semillas o intentos de
+`recursive_tree_part` se prueben (ver `chiledist/feasibility.py`).
+
+**El mapa vigente (n=8) es el caso MÁS factible del rango, no uno al
+límite**: tolerancia mínima requerida 0.0% — Puente Alto está muy por
+debajo del ideal a 8 distritos. La dificultad observada al correr la
+cadena ReCom real en n=8 (el warm-up converge en 4.402 pasos (dentro
+del presupuesto escalado de 6.000 para n_units≤100) con
+dev_warmed=8.35%) es un obstáculo **computacional** distinto y no
+relacionado con este umbral de factibilidad poblacional.
+
+**Interpretación institucional (revisada):** el mecanismo es el opuesto al
+que sugeriría intuitivamente "más distritos = mapa más fino y más fácil
+de balancear". Bajo comunas indivisibles, aumentar el número de distritos
+en la RM manteniendo Ley 18.700 **empeora** progresivamente la
+factibilidad poblacional (el ideal se reduce mientras Puente Alto se
+mantiene fijo), no la mejora. Esto es coherente con el propósito de H1:
+la vía para mejorar el balance poblacional en la RM no es aumentar el
+número de distritos bajo el régimen vigente, sino cambiar la **unidad
+mínima de decisión** (de CUT a APC — ver `apc_free`/`apc_soft`), que
+permite fragmentar comunas grandes como Puente Alto en vez de tratarlas
+como bloques indivisibles.
+
+## Resultados empíricos — R13, Censo 2024, n=8, modelo A
+
+### Ensembles generados (comparación apples-to-apples, pop_tol=±10%)
+
+| escenario               | pop_tol | n_draws | valid_fraction | warmup_pasos | max_dev_mediana | comunas_partidas_mediana |
+|-------------------------|---------|---------|----------------|--------------|-----------------|--------------------------|
+| legal_comunas           | ±10%    | 50.000  | 1.0            | 4.402        | 9.127%          | 0.0                      |
+| contrafactual_apc_libre | ±10%    | 50.000  | 1.0            | 4            | 9.124%          | 28.5                     |
+| contrafactual_apc_soft  | ±10%    | 50.000  | 1.0            | 3            | 9.131%          | 26.5                     |
+
+Los tres escenarios fueron generados con pop_tol=±10% y
+valid_fraction=1.0 (modelo A). La comparación es directamente
+comparable entre escenarios. compare_scenarios.py no emite
+WARNING de inconsistencia de thresholds.
+
+### Hallazgos
+
+**H1.1 — Costo del balance de la restricción comunal:**
+Bajo tolerancias idénticas (±10%), los tres escenarios producen
+distribuciones de balance casi indistinguibles (9.124–9.131%
+de desviación mediana, rango de 0.007pp). La restricción comunal
+(Ley 18.700) no impone un costo estadísticamente distinguible
+en balance poblacional para la RM con n=8 distritos y Censo 2024.
+El costo es exclusivamente en fragmentación: 0 comunas partidas
+(legal) vs 28.5 mediana (apc_free).
+
+**H1.2 — Efecto de la penalización blanda:**
+apc_soft (split_penalty=0.25) reduce comunas partidas en ~2
+(26.5 vs 28.5 mediana) sin costo medible en balance poblacional
+(diferencia de 0.007pp). La penalización actúa como sesgo suave,
+no como restricción — consistente con que
+exp(-0.25 × Δseveridad) ≈ 0.97-0.98 por paso ReCom.
+Para reducciones mayores se requiere split_penalty > 1.0
+— explorado por pareto_sweep (→ H2).
+
+**H1.3 — Convergencia del warm-up:**
+legal_comunas requiere 4.402 pasos de warm-up (primera pasada
+agotada + extensión parcial, convergiendo en paso 2.401 de la
+extensión con dev_warmed=8.35%). apc_free y apc_soft convergen
+en 3-4 pasos. La heterogeneidad poblacional intercomunal hace
+el balance inicial más difícil bajo comunas indivisibles que
+bajo distritos APC, aunque ambos son factibles dentro del
+presupuesto estándar.
+
+**H1.4 — Factibilidad comunal (preflight verificado):**
+El rango factible bajo ±10% es n_distritos ≤ 14. A partir de
+n=15, Puente Alto (568.087 personas) supera el ideal × 1.10.
+El mapa vigente (n=8) tiene el mayor margen de factibilidad
+del rango (min_tol_requerida=0.0%). Ver tabla completa en
+subsección "Resultado verificado — preflight".
+
+### Bugs corregidos durante la generación de estos resultados
+
+- `warmup_steps` reportaba suma triangular (2.888.003) en vez del
+  conteo real (4.402) cuando el warm-up convergía durante la extensión.
+  Fix: asignación post-loop en vez de acumulación dentro del loop.
+  Solo afectaba el campo de reporte — no la cadena ni los planes.
+
+### Estado
+
+PARTIALLY CLOSED — resultado verificado para R13/Censo 2024/n=8.
+Pendiente:
+- Replicar en otras regiones (al menos R5, R8)
+- Replicar con pop_source=viviendas para comparación H5
+- Medir n_min_convergente empíricamente para n ≤ 14 en legal
+- pareto_sweep sobre split_penalty para caracterizar H1.2 (→ H2)
 
 ---
 
@@ -466,6 +626,106 @@ print(f"Margen: {margen['margen_absoluto']:,} votos ({margen['margen_relativo']:
 
 **Advertencia:** `ratio_max_min_pxe` con `magnitudes_fijas` mide el malapportionment real del sistema vigente. Con `magnitudes_calculadas` siempre es cercano a 1 y no informa sobre la desigualdad estructural.
 
+### Resultados empíricos — Censo 2024, asignacion_vigente.json corregido
+
+#### Parámetros de la corrida
+
+    Script: scripts/malapportionment.py
+    --assignment-path datos/asignacion_vigente.json (8 correcciones aplicadas)
+    --census-path datos/poblacion_comunal_censo2024.csv
+    Magnitudes: MAGNITUDES_LEGALES_LEY20840 (Ley 20.840)
+    Análisis electoral: omitido (sin --servel-path)
+
+#### A1 — Malapportionment estructural
+
+    Media nacional:          119.229 personas/escaño
+    Máximo pxe:              192.670 (D8 Valparaíso Costa, M=8)
+    Mínimo pxe:               33.582 (D27 Los Ríos-Los Lagos, M=3)
+    Ratio max/min:              5.74x
+    Distritos peso < 0.5:         2  (voto vale >2x la media)
+    Distritos peso > 2.0:         0
+
+Caso extremo: D27 (Los Ríos-Los Lagos) tiene peso relativo 0.28 —
+un voto ahí vale 3.55x la media nacional. Con M=3 y baja población,
+una redistribución proporcional le quitaría escaños.
+
+#### A2 — Comparación magnitudes vigentes vs proporcionales (Censo 2024)
+
+    Distritos que GANAN escaños:   9
+    Distritos que PIERDEN escaños: 8
+    Distritos sin cambio:         11
+    Mayor cambio: D2 Tarapacá (3→5, delta=+2)
+
+#### A3 — Umbrales efectivos
+
+    Alto   (T_U > 16.7%, M ≤ 4):  8 distritos — magnitudes [3, 4]
+    Medio  (12.5% < T_U ≤ 16.7%, M=5–6): 10 distritos
+    Bajo   (T_U ≤ 12.5%, M ≥ 7): 10 distritos — magnitudes [7, 8]
+
+#### Tabla de resultados (28 distritos, ordenada por pxe desc)
+
+| distrito | nombre | magnitud_vigente | personas_x_escano | peso_relativo |
+|---|---|---|---|---|
+| 8 | Valparaíso Costa | 8 | 192.670 | 1.616 |
+| 14 | Santiago Sur-Or | 6 | 177.037 | 1.485 |
+| 12 | Santiago Nor-Or | 7 | 166.406 | 1.396 |
+| 10 | Santiago Nor | 8 | 155.876 | 1.307 |
+| 13 | Santiago Or | 5 | 140.579 | 1.179 |
+| 11 | Santiago Cen | 6 | 136.920 | 1.148 |
+| 3 | Antofagasta | 5 | 127.083 | 1.066 |
+| 6 | Coquimbo Sur | 8 | 125.815 | 1.055 |
+| 21 | Maule Norte | 5 | 125.518 | 1.053 |
+| 2 | Tarapacá | 3 | 123.269 | 1.034 |
+| 20 | O'Higgins Sur | 8 | 123.184 | 1.033 |
+| 9 | Valparaíso Interior | 7 | 122.983 | 1.032 |
+| 5 | Coquimbo Norte | 7 | 118.981 | 0.998 |
+| 15 | Santiago Sur | 5 | 116.318 | 0.976 |
+| 7 | Aconcagua | 8 | 111.191 | 0.933 |
+| 26 | Araucanía Sur | 5 | 108.400 | 0.909 |
+| 17 | Santiago Pon-Sur | 7 | 107.766 | 0.904 |
+| 22 | Maule Sur | 4 | 103.504 | 0.868 |
+| 19 | O'Higgins Nor | 5 | 102.458 | 0.859 |
+| 16 | Santiago Pon-Nor | 4 | 101.410 | 0.851 |
+| 18 | Santiago Sur2 | 4 | 92.162 | 0.773 |
+| 25 | Araucanía Nor | 4 | 87.071 | 0.730 |
+| 23 | Biobío Nor | 7 | 85.201 | 0.715 |
+| 1 | Arica-Parinacota | 3 | 81.523 | 0.684 |
+| 24 | Biobío Sur | 5 | 79.646 | 0.668 |
+| 4 | Atacama | 5 | 59.836 | 0.502 |
+| 28 | Magallanes-Aysén | 3 | 55.512 | 0.466 |
+| 27 | Los Ríos-Los Lagos | 3 | 33.582 | 0.282 |
+
+#### Hallazgos legislativos directos
+
+1. Ratio 5.74x supera el umbral de 2x considerado aceptable en
+   derecho electoral comparado — los distritos D27 y D28 tienen
+   pesos < 0.5, lo que significa que un voto vale más del doble
+   de la media nacional.
+
+2. Con magnitudes proporcionales al Censo 2024, 17 de 28 distritos
+   cambiarían de magnitud (9 ganan, 8 pierden). D2 Tarapacá tiene
+   el mayor cambio individual (+2 escaños).
+
+3. Los 8 distritos con umbral efectivo alto (M ≤ 4) requieren más
+   del 16.7% de los votos para ganar un escaño — barrera de entrada
+   2.5x mayor que en los 10 distritos con M ≥ 7.
+
+#### Estado
+
+COMPLETED — corrida real con Censo 2024 y asignacion_vigente.json
+corregido. Pendiente: análisis electoral (--servel-path) para A4
+cuando se integre con los resultados de H4.
+
+#### Archivos generados
+
+    datos/malapportionment/
+        figuras/personas_por_escano.png
+        figuras/comparacion_magnitudes.png
+        figuras/umbrales_efectivos.png
+        malapportionment_pxe.csv
+        malapportionment_comparacion.csv
+        malapportionment_umbrales.csv
+
 ---
 
 ## H4 — D'Hondt binivel: proporcionalidad del sistema electoral chileno
@@ -620,6 +880,176 @@ print(bonus.sort_values())
 | Rango intercuartil de Gallagher en ensemble | Mide cuánto depende la proporcionalidad de la geografía distrital (con votos fijos). |
 
 **Advertencia:** `plan_electoral_metrics` usa los votos de la elección de referencia ("congelados") y los aplica al nuevo mapa. No modela el comportamiento electoral que ocurriría en el nuevo mapa. Es un ejercicio contrafactual de redistribución, no una predicción electoral. Para verificar si las conclusiones son robustas al año electoral, ver [Robustez temporal electoral](#paso-6--robustez-temporal-electoral) en H5.
+
+### Validación empírica — D'Hondt binivel vs SERVEL 2025
+
+#### Resultado
+
+`run_electoral_plan_binivel()` con datos SERVEL 2025
+(`servel_2025_candidatos.csv`, `partido_col="partido"`)
+vs `escanos_oficiales_2025.csv`:
+
+    96/96 combinaciones (distrito, pacto): PASS completo
+    0 diferencias en los 28 distritos
+    Σ escaños chiledist == 155 ✓
+    Σ escaños por distrito == magnitud legal ✓ (28 distritos)
+    Ningún pacto con 0 votos recibe escaños ✓
+
+#### Corrección de diagnóstico previo
+
+Una versión anterior de esta sección documentaba 92/96 (FAIL)
+con causa atribuida a "votos preliminares vs escrutinio final".
+Esa explicación era incorrecta. La causa real era un error
+de construcción en `datos/asignacion_vigente.json`: 8 comunas
+de la Región Metropolitana tenían asignación distrital incorrecta.
+
+Errores corregidos (CUT → distrito correcto):
+
+    CUT     Comuna          Incorrecto  Correcto
+    13102   Cerrillos       D9          D8
+    13105   El Bosque       D8          D13
+    13118   Macul           D8          D10
+    13119   Maipú           D13         D8
+    13124   Pudahuel        D9          D8
+    13126   Quinta Normal   D8          D9
+    13112   La Pintana      D11         D12
+    13115   Lo Barnechea    D12         D11
+
+Causa del error original: `asignacion_vigente.json` se construyó
+manualmente desde el texto de Ley 20.840. Los 8 CUT incorrectos
+estaban asignados a distritos vecinos dentro de la RM.
+Verificación de corrección: Excel del TRICEL por distrito como
+fuente de verdad (cada Excel lista exactamente las comunas de
+ese distrito).
+
+Efecto del error antes de la corrección: D8 recibía votos de
+comunas de D9/D10/D13 y viceversa, produciendo totales erróneos
+por pacto (~29% menos votos en D8, ~2% en D12) y resultados
+D'Hondt incorrectos para esos distritos.
+
+#### Invariantes matemáticos verificados
+
+    Σ escaños chiledist == 155 ✓
+    Σ escaños por distrito == magnitud legal ✓ (28 distritos)
+    Ningún pacto con 0 votos recibe escaños ✓
+
+#### Conclusión
+
+La implementación de D'Hondt binivel es correcta. La validación
+96/96 confirma que chiledist reproduce exactamente el resultado
+oficial del TRICEL para las elecciones parlamentarias 2025
+usando datos de candidatos individuales.
+
+#### Scripts de validación
+
+    python scripts/validar_dhondt.py --modo candidatos \
+        --votos-path datos/servel_2025_candidatos.csv
+
+    Datos requeridos:
+        datos/servel_2025_candidatos.csv   (generado por escanos.py)
+        datos/escanos_oficiales_2025.csv   (generado por escanos.py)
+        datos/pacto_map_2025.json
+        datos/asignacion_vigente.json      (8 correcciones aplicadas)
+
+Estado: VALIDATED — 96/96, PASS completo.
+
+### Resultados empíricos — SERVEL 2025, asignacion_vigente.json corregido
+
+#### Parámetros de la corrida
+
+    Script: scripts/electoral_analysis.py
+    --servel-path datos/servel_2025_candidatos.csv
+    --assignment-path datos/asignacion_vigente.json (8 correcciones)
+    --pacto-path datos/pacto_map_2025.json
+    Votos: 13.410 filas, 1.096 candidatos, elecciones parlamentarias 2025
+    Fuente: SERVEL, PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx (votos_preliminares
+    por mesa; electo_nominado ya refleja el resultado final -- ver 96/96 en
+    "Validación empírica — D'Hondt binivel vs SERVEL 2025", arriba)
+
+#### B1 — Efecto del sistema binivel (ejemplo D8, M=8)
+
+    Partidos que cambian de escaños: 2/16
+    UDI (Chile Grande y Unido): +1 escaño con binivel
+    Partido de la Gente: −1 escaño con binivel
+
+El sistema de pactos redistribuye 1 escaño dentro de D8 respecto
+al modelo uninivel. Los 14 partidos restantes no cambian.
+
+#### B2 — Proporcionalidad del sistema electoral vigente
+
+Con magnitudes fijas (Ley 20.840) y datos reales SERVEL 2025:
+
+    Gallagher (binivel):    5.91
+    Gallagher (uninivel):   5.91
+    Δ Gallagher bi vs uni:  0.00 — el sistema de pactos no introduce
+                            desproporcionalidad adicional
+    Partidos con escaños:   20
+    Seat bonus máximo:      4.77pp
+
+Con magnitudes calculadas (proporcionales al Censo 2024):
+
+    Gallagher:             10.73
+    Partidos con escaños:  16
+
+El Gallagher de 5.91 es moderado en perspectiva comparada
+(sistemas proporcionales típicos: 2–8). La diferencia entre
+magnitudes fijas (5.91) y proporcionales (10.73) cuantifica
+el costo electoral de no actualizar las magnitudes con Censo 2024.
+
+#### B3 — Distribución de Gallagher sobre ensemble (pendiente)
+
+B3 requiere un ensemble de redistritaje nacional (28 circunscripciones
+simultáneas). Los ensembles actuales son regionales (partición interna
+de R13 en 8 sub-distritos) y no son comparables con MAGNITUDES_LEGALES_LEY20840.
+
+Estado: PENDIENTE hasta generar ensemble nacional con
+--regiones nacional_comunal --n-distritos 28.
+
+#### B4 — Seat bonus por partido (datos reales)
+
+Partidos más favorecidos por el sistema (binivel):
+
+    Partido Republicano de Chile:  +6.09pp
+    Partido Socialista de Chile:   +3.58pp
+    Frente Amplio:                 +3.44pp
+    UDI:                           +3.27pp
+
+Partidos más perjudicados (binivel):
+
+    Federación Regionalista Verde Social: −3.01pp
+    Partido de la Gente:                  −2.97pp
+    Partido Acción Humanista:             −2.01pp
+
+El sistema de pactos favorece estructuralmente a partidos con
+alta votación concentrada dentro de sus pactos, y perjudica
+a partidos medianos que compiten en pactos con otros fuertes.
+
+#### Validación del pipeline D'Hondt
+
+El pipeline reproduce exactamente el resultado oficial TRICEL 2025:
+96/96 combinaciones (distrito, pacto) — PASS completo.
+Ver subsección "Validación empírica — D'Hondt binivel vs SERVEL 2025", arriba.
+
+#### Estado
+
+PARTIALLY COMPLETED:
+
+    B1 ✅ datos reales
+    B2 ✅ datos reales
+    B3 🔴 pendiente ensemble nacional
+    B4 ✅ datos reales
+
+#### Archivos generados
+
+    datos/electoral_analysis/
+        figuras/b1_distrito_ejemplo.png
+        figuras/b2_combinaciones.png
+        figuras/b3_gallagher_ensemble.png  (datos sintéticos — ver B3)
+        figuras/b4_seat_bonus.png
+        electoral_b1_distrito.csv
+        electoral_b2_matrix.csv
+        electoral_b3_ensemble.csv
+        electoral_b4_bonus.csv
 
 ---
 

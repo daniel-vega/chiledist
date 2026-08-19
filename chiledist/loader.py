@@ -503,6 +503,115 @@ def aggregate_population(
     return result
 
 
+def aggregate_rural_proxy(
+    puntos_rural: gpd.GeoDataFrame,
+    cut_col: str = "CUT",
+    uso_col: str = "USO_EDIFICACION",
+    categorias_vivienda: tuple = ("VIVIENDA", "VIVIENDA COLECTIVA"),
+) -> pd.Series:
+    """
+    Conteo de edificaciones rurales por CUT, filtrado a categorías de
+    vivienda (excluye 'EDIFICACION' y 'OTRO USO', no residenciales).
+
+    Puntos_Edificacion_Rural solo trae CUT (nivel comuna) — a diferencia
+    de Manzana_Urbana/Manzana_Aldea, no tiene COD_DISTRITO/ID_DIST — así
+    que este proxy solo puede calcularse a nivel comuna, no distrito.
+    Pensado como fallback en apply_rural_proxy_fallback() para comunas
+    sin ninguna manzana urbana ni de aldea (proxy=0 desde ambas fuentes;
+    caso real: Lago Verde, CUT 11102, ver tests/test_integration_r11.py).
+
+    Parameters
+    ----------
+    puntos_rural : gpd.GeoDataFrame
+        Capa Puntos_Edificacion_Rural (cd.load_layer("puntos_rural", ...)).
+    cut_col : str
+        Columna de comuna en puntos_rural.
+    uso_col : str
+        Columna de uso de la edificación.
+    categorias_vivienda : tuple
+        Valores de uso_col considerados residenciales.
+
+    Returns
+    -------
+    pd.Series indexada por CUT, valores int (conteo de edificaciones).
+    """
+    mask = puntos_rural[uso_col].isin(categorias_vivienda)
+    return (
+        puntos_rural.loc[mask]
+        .groupby(cut_col)
+        .size()
+        .astype(int)
+        .rename("viviendas_rural")
+    )
+
+
+def apply_rural_proxy_fallback(
+    pop: pd.DataFrame,
+    puntos_rural: Optional[gpd.GeoDataFrame],
+    cut_col: str = "CUT",
+    viv_col: str = "viviendas",
+) -> pd.DataFrame:
+    """
+    Sustituye el proxy de población por conteo de edificaciones rurales
+    (aggregate_rural_proxy) para comunas cuyo TOTAL de viv_col — sumado
+    sobre todas sus filas, p.ej. todos los distritos APC de esa comuna —
+    es 0. No modifica comunas que ya tienen proxy > 0 desde manzanas.
+
+    Si pop está a nivel distrito (una fila por CUT+COD_DISTRITO), el
+    conteo rural de una comuna se reparte equitativamente entre sus
+    distritos APC — aproximación razonable dado que Puntos_Edificacion_
+    Rural no trae COD_DISTRITO (ver aggregate_rural_proxy). No-op si
+    puntos_rural es None, está vacío, o no cubre la comuna afectada.
+
+    Parameters
+    ----------
+    pop : pd.DataFrame
+        Debe tener al menos [cut_col, viv_col] — una fila por comuna o
+        por distrito, según el nivel en el que se esté trabajando.
+    puntos_rural : gpd.GeoDataFrame | None
+        Capa Puntos_Edificacion_Rural, o None si no está disponible (la
+        capa es opcional — ver analizar_region() en scripts/redistritaje.py).
+    cut_col, viv_col : str
+        Nombres de columnas en pop.
+
+    Returns
+    -------
+    pd.DataFrame — copia de pop con viv_col corregido donde aplica.
+    """
+    if puntos_rural is None or len(puntos_rural) == 0:
+        return pop
+
+    pop = pop.copy()
+    comuna_totales = pop.groupby(cut_col)[viv_col].sum()
+    cuts_sin_proxy = comuna_totales[comuna_totales == 0].index
+    if len(cuts_sin_proxy) == 0:
+        return pop
+
+    rural_proxy = aggregate_rural_proxy(puntos_rural)
+
+    for cut in cuts_sin_proxy:
+        if cut not in rural_proxy.index:
+            continue
+        mask = pop[cut_col] == cut
+        n_filas_cut = int(mask.sum())
+        if n_filas_cut == 0:
+            continue
+        # Redondeado a entero: viv_col es una columna de conteo (siempre
+        # int en el resto del pipeline). El reparto equitativo entre
+        # n_filas_cut filas puede perder/ganar hasta ~n_filas_cut unidades
+        # en total por el redondeo — aceptable dado que ya es una
+        # aproximación (sin COD_DISTRITO en Puntos_Edificacion_Rural no
+        # hay forma de repartir con más precisión).
+        valor_repartido = int(round(rural_proxy.loc[cut] / n_filas_cut))
+        pop.loc[mask, viv_col] = valor_repartido
+        print(
+            f"  Proxy rural aplicado: CUT {cut} → {rural_proxy.loc[cut]} "
+            f"edificaciones rurales repartidas entre {n_filas_cut} fila(s)"
+        )
+
+    return pop
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Utilidades
 # ──────────────────────────────────────────────────────────────────────────────

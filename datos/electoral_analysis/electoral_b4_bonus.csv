@@ -1,21 +1,51 @@
 partido,votos_pct,escanos_pct,seat_bonus,modo,pacto
-CS,3.83,2.58,-1.2534,uninivel,Apruebo
-Evopoli,12.32,11.61,-0.7028,uninivel,ChileVamos
-FA,12.89,14.84,1.9537,uninivel,Apruebo
-Ind,2.07,0.65,-1.4297,uninivel,Ind
-PDC,7.22,5.81,-1.4147,uninivel,NuevaUnidad
-PPD,9.58,9.68,0.0944,uninivel,NuevaUnidad
-PS,7.55,7.1,-0.4524,uninivel,NuevaUnidad
-RD,6.87,3.87,-3.0031,uninivel,Apruebo
-RN,15.9,15.48,-0.4137,uninivel,ChileVamos
-UDI,21.77,28.39,6.6219,uninivel,ChileVamos
-CS,3.83,2.58,-1.2534,binivel,Apruebo
-Evopoli,12.32,11.61,-0.7028,binivel,ChileVamos
-FA,12.89,14.84,1.9537,binivel,Apruebo
-Ind,2.07,0.65,-1.4297,binivel,Ind
-PDC,7.22,6.45,-0.7696,binivel,NuevaUnidad
-PPD,9.58,10.97,1.3847,binivel,NuevaUnidad
-PS,7.55,6.45,-1.0976,binivel,NuevaUnidad
-RD,6.87,4.52,-2.3579,binivel,Apruebo
-RN,15.9,14.19,-1.704,binivel,ChileVamos
-UDI,21.77,27.74,5.9767,binivel,ChileVamos
+EVOLUCION POLITICA,2.62,1.29,-1.3249,uninivel,Chile Grande y Unido
+FEDERACION REGIONALISTA VERDE SOCIAL,4.3,3.23,-1.0731,uninivel,"Verdes, Regionalistas y Humanistas"
+FRENTE AMPLIO,7.53,7.74,0.2144,uninivel,Unidad por Chile
+IGUALDAD,0.75,0.0,-0.7515,uninivel,Izquierda Ecologista Popular Animalista y Humanista
+INDEPENDIENTES,0.68,1.94,1.2508,uninivel,Independientes Fuera de Pacto
+MOVIMIENTO AMARILLOS POR CHILE,0.82,0.65,-0.1789,uninivel,Movimiento Amarillos por Chile
+PARTIDO ACCIÓN HUMANISTA,2.65,1.29,-1.3607,uninivel,"Verdes, Regionalistas y Humanistas"
+PARTIDO ALIANZA VERDE POPULAR,0.66,0.0,-0.6567,uninivel,Partido Alianza Verde Popular
+PARTIDO COMUNISTA DE CHILE,5.01,3.87,-1.1399,uninivel,Unidad por Chile
+PARTIDO DE LA GENTE,12.0,16.77,4.7744,uninivel,Partido de la Gente
+PARTIDO DE TRABAJADORES REVOLUCIONARIOS,0.61,0.0,-0.6095,uninivel,Partido de Trabajadores Revolucionarios
+PARTIDO DEMOCRATA CRISTIANO,4.24,5.16,0.9197,uninivel,Unidad por Chile
+PARTIDO DEMOCRATAS CHILE,1.99,0.65,-1.3446,uninivel,Chile Grande y Unido
+PARTIDO ECOLOGISTA VERDE,0.83,0.65,-0.1866,uninivel,Partido Ecologista Verde
+PARTIDO HUMANISTA,1.88,0.0,-1.8844,uninivel,Izquierda Ecologista Popular Animalista y Humanista
+PARTIDO LIBERAL DE CHILE,2.21,3.23,1.016,uninivel,Unidad por Chile
+PARTIDO NACIONAL LIBERTARIO,6.34,4.52,-1.8248,uninivel,Cambio por Chile
+PARTIDO POR LA DEMOCRACIA,4.01,4.52,0.5082,uninivel,Unidad por Chile
+PARTIDO RADICAL DE CHILE,2.1,1.29,-0.8139,uninivel,Unidad por Chile
+PARTIDO REPUBLICANO DE CHILE,13.26,17.42,4.1569,uninivel,Cambio por Chile
+PARTIDO SOCIAL CRISTIANO,3.39,1.29,-2.1045,uninivel,Cambio por Chile
+PARTIDO SOCIALISTA DE CHILE,5.46,7.1,1.6407,uninivel,Unidad por Chile
+POPULAR,0.22,0.0,-0.2184,uninivel,Partido Popular
+RENOVACION NACIONAL,8.09,7.74,-0.347,uninivel,Chile Grande y Unido
+UNION DEMOCRATA INDEPENDIENTE,8.34,9.68,1.3384,uninivel,Chile Grande y Unido
+EVOLUCION POLITICA,2.62,1.29,-1.3249,binivel,Chile Grande y Unido
+FEDERACION REGIONALISTA VERDE SOCIAL,4.3,1.29,-3.0085,binivel,"Verdes, Regionalistas y Humanistas"
+FRENTE AMPLIO,7.53,10.97,3.4402,binivel,Unidad por Chile
+IGUALDAD,0.75,0.0,-0.7515,binivel,Izquierda Ecologista Popular Animalista y Humanista
+INDEPENDIENTES,0.68,0.65,-0.0395,binivel,Independientes Fuera de Pacto
+MOVIMIENTO AMARILLOS POR CHILE,0.82,0.0,-0.8241,binivel,Movimiento Amarillos por Chile
+PARTIDO ACCIÓN HUMANISTA,2.65,0.65,-2.0058,binivel,"Verdes, Regionalistas y Humanistas"
+PARTIDO ALIANZA VERDE POPULAR,0.66,0.0,-0.6567,binivel,Partido Alianza Verde Popular
+PARTIDO COMUNISTA DE CHILE,5.01,4.52,-0.4947,binivel,Unidad por Chile
+PARTIDO DE LA GENTE,12.0,9.03,-2.9675,binivel,Partido de la Gente
+PARTIDO DE TRABAJADORES REVOLUCIONARIOS,0.61,0.0,-0.6095,binivel,Partido de Trabajadores Revolucionarios
+PARTIDO DEMOCRATA CRISTIANO,4.24,5.81,1.5649,binivel,Unidad por Chile
+PARTIDO DEMOCRATAS CHILE,1.99,0.65,-1.3446,binivel,Chile Grande y Unido
+PARTIDO ECOLOGISTA VERDE,0.83,0.0,-0.8317,binivel,Partido Ecologista Verde
+PARTIDO HUMANISTA,1.88,0.0,-1.8844,binivel,Izquierda Ecologista Popular Animalista y Humanista
+PARTIDO LIBERAL DE CHILE,2.21,3.23,1.016,binivel,Unidad por Chile
+PARTIDO NACIONAL LIBERTARIO,6.34,5.81,-0.5345,binivel,Cambio por Chile
+PARTIDO POR LA DEMOCRACIA,4.01,5.16,1.1533,binivel,Unidad por Chile
+PARTIDO RADICAL DE CHILE,2.1,0.65,-1.4591,binivel,Unidad por Chile
+PARTIDO REPUBLICANO DE CHILE,13.26,19.35,6.0924,binivel,Cambio por Chile
+PARTIDO SOCIAL CRISTIANO,3.39,1.94,-1.4594,binivel,Cambio por Chile
+PARTIDO SOCIALISTA DE CHILE,5.46,9.03,3.5762,binivel,Unidad por Chile
+POPULAR,0.22,0.0,-0.2184,binivel,Partido Popular
+RENOVACION NACIONAL,8.09,8.39,0.2981,binivel,Chile Grande y Unido
+UNION DEMOCRATA INDEPENDIENTE,8.34,11.61,3.2739,binivel,Chile Grande y Unido

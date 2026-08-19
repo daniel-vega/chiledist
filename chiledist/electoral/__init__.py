@@ -46,6 +46,7 @@ from .constants import (
     MAX_ESCANOS_DISTRITO,
     MAGNITUDES_LEGALES_LEY20840,
     MAGNITUDES_LEGALES_2021,
+    normalize_party_name,
 )
 from .dhondt import (
     dhondt,
@@ -98,4 +99,5 @@ __all__ = [
     "MAX_ESCANOS_DISTRITO",
     "MAGNITUDES_LEGALES_LEY20840",
     "MAGNITUDES_LEGALES_2021",
+    "normalize_party_name",
 ]

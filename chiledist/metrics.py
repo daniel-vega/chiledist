@@ -365,10 +365,9 @@ def _ensure_metric(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def _minimum_bounding_circle_area(geom) -> float:
     """Área del círculo mínimo circunscrito de una geometría."""
     try:
-        from shapely.ops import minimum_bounding_circle
-        mbc = minimum_bounding_circle(geom)
+        from shapely import minimum_bounding_circle  # shapely ≥ 2.0
     except ImportError:
-        # Fallback para versiones antiguas de shapely
-        mbc = geom.convex_hull.minimum_rotated_rectangle
+        from shapely.ops import minimum_bounding_circle  # shapely < 2.0
+    mbc = minimum_bounding_circle(geom)
     area = mbc.area
     return area if area > 0 else np.nan

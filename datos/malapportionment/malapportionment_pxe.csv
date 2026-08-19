@@ -1,29 +1,29 @@
 distrito,nombre,magnitud_vigente,poblacion,personas_x_escano,peso_relativo,sobrerepresentado,infra_representado
-27,Los Ríos-Los Lagos,3,556096,185365,2.0617,False,True
-16,Santiago Pon-Nor,4,631442,157860,1.7558,False,True
-18,Santiago Sur2,4,625124,156281,1.7382,False,True
-15,Santiago Sur,5,738699,147740,1.6432,False,True
-13,Santiago Or,5,729430,145886,1.6226,False,True
-3,Antofagasta,5,686182,137236,1.5264,False,True
-2,Tarapacá,3,400958,133653,1.4866,False,True
-25,Araucanía Nor,4,441262,110316,1.227,False,True
-14,Santiago Sur-Or,6,650445,108408,1.2058,False,True
-24,Biobío Sur,5,497070,99414,1.1057,False,True
-11,Santiago Cen,6,581059,96843,1.0771,False,True
-19,O'Higgins Nor,5,443589,88718,0.9868,True,False
-1,Arica-Parinacota,3,263570,87857,0.9772,True,False
-12,Santiago Nor-Or,7,609024,87003,0.9677,True,False
-17,Santiago Pon-Sur,7,590529,84361,0.9383,True,False
-26,Araucanía Sur,5,415754,83151,0.9248,True,False
-10,Santiago Nor,8,663767,82971,0.9228,True,False
-22,Maule Sur,4,324831,81208,0.9032,True,False
-23,Biobío Nor,7,527301,75329,0.8378,True,False
-21,Maule Norte,5,370014,74003,0.8231,True,False
-8,Valparaíso Costa,8,567894,70987,0.7896,True,False
-28,Magallanes-Aysén,3,212910,70970,0.7894,True,False
-9,Valparaíso Interior,7,478058,68294,0.7596,True,False
-4,Atacama,5,317555,63511,0.7064,True,False
-5,Coquimbo Norte,7,427320,61046,0.679,True,False
-7,Aconcagua,8,403437,50430,0.5609,True,False
-6,Coquimbo Sur,8,394343,49293,0.5483,True,False
-20,O'Higgins Sur,8,388015,48502,0.5395,True,False
+8,Valparaíso Costa,8,1541364,192670,1.616,False,True
+14,Santiago Sur-Or,6,1062222,177037,1.4849,False,True
+12,Santiago Nor-Or,7,1164844,166406,1.3957,False,True
+10,Santiago Nor,8,1247011,155876,1.3074,False,True
+13,Santiago Or,5,702894,140579,1.1791,False,True
+11,Santiago Cen,6,821522,136920,1.1484,False,True
+3,Antofagasta,5,635416,127083,1.0659,False,True
+6,Coquimbo Sur,8,1006523,125815,1.0552,False,True
+21,Maule Norte,5,627591,125518,1.0528,False,True
+2,Tarapacá,3,369806,123269,1.0339,False,True
+20,O'Higgins Sur,8,985468,123184,1.0332,False,True
+9,Valparaíso Interior,7,860884,122983,1.0315,False,True
+5,Coquimbo Norte,7,832864,118981,0.9979,True,False
+15,Santiago Sur,5,581589,116318,0.9756,True,False
+7,Aconcagua,8,889530,111191,0.9326,True,False
+26,Araucanía Sur,5,542000,108400,0.9092,True,False
+17,Santiago Pon-Sur,7,754360,107766,0.9039,True,False
+22,Maule Sur,4,414018,103504,0.8681,True,False
+19,O'Higgins Nor,5,512289,102458,0.8593,True,False
+16,Santiago Pon-Nor,4,405639,101410,0.8505,True,False
+18,Santiago Sur2,4,368648,92162,0.773,True,False
+25,Araucanía Nor,4,348284,87071,0.7303,True,False
+23,Biobío Nor,7,596405,85201,0.7146,True,False
+1,Arica-Parinacota,3,244569,81523,0.6838,True,False
+24,Biobío Sur,5,398230,79646,0.668,True,False
+4,Atacama,5,299180,59836,0.5019,True,False
+28,Magallanes-Aysén,3,166537,55512,0.4656,True,False
+27,Los Ríos-Los Lagos,3,100745,33582,0.2817,True,False

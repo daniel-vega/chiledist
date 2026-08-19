@@ -1,11 +1,17 @@
 partido,pacto,votos,votos_pct,escanos_uninivel,escanos_binivel,delta
-UDI,ChileVamos,120135,31.45,2,2,0
-PPD,NuevaUnidad,73248,19.17,1,1,0
-Evopoli,ChileVamos,50598,13.24,1,1,0
-RN,ChileVamos,46663,12.21,1,0,-1
-FA,Apruebo,38398,10.05,0,1,1
-RD,Apruebo,37290,9.76,0,0,0
-PS,NuevaUnidad,6897,1.81,0,0,0
-Ind,Ind,4637,1.21,0,0,0
-PDC,NuevaUnidad,3368,0.88,0,0,0
-CS,Apruebo,807,0.21,0,0,0
+PARTIDO REPUBLICANO DE CHILE,Cambio por Chile,126038,16.22,2,2,0
+PARTIDO COMUNISTA DE CHILE,Unidad por Chile,121977,15.69,2,2,0
+PARTIDO DE LA GENTE,Partido de la Gente,109245,14.06,2,1,-1
+FRENTE AMPLIO,Unidad por Chile,55932,7.2,1,1,0
+PARTIDO NACIONAL LIBERTARIO,Cambio por Chile,55046,7.08,1,1,0
+UNION DEMOCRATA INDEPENDIENTE,Chile Grande y Unido,51922,6.68,0,1,1
+RENOVACION NACIONAL,Chile Grande y Unido,46844,6.03,0,0,0
+PARTIDO HUMANISTA,Izquierda Ecologista Popular Animalista y Humanista,42459,5.46,0,0,0
+PARTIDO DEMOCRATA CRISTIANO,Unidad por Chile,37245,4.79,0,0,0
+FEDERACION REGIONALISTA VERDE SOCIAL,"Verdes, Regionalistas y Humanistas",25704,3.31,0,0,0
+PARTIDO LIBERAL DE CHILE,Unidad por Chile,25617,3.3,0,0,0
+PARTIDO DEMOCRATAS CHILE,Chile Grande y Unido,24304,3.13,0,0,0
+PARTIDO ACCIÓN HUMANISTA,"Verdes, Regionalistas y Humanistas",16400,2.11,0,0,0
+PARTIDO RADICAL DE CHILE,Unidad por Chile,13365,1.72,0,0,0
+PARTIDO SOCIAL CRISTIANO,Cambio por Chile,13256,1.71,0,0,0
+PARTIDO DE TRABAJADORES REVOLUCIONARIOS,Partido de Trabajadores Revolucionarios,11838,1.52,0,0,0

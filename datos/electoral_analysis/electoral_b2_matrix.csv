@@ -1,5 +1,5 @@
 combinacion,gallagher,loosemore_hanby,rae,enp_votos,enp_escanos,escanos_mayor_partido,n_partidos_con_escanos,ratio_max_min_pxe,peso_relativo_max,peso_relativo_min,seat_bonus_max,modo_dhondt,modo_magnitudes
-Fijas + Uninivel,5.6205,8.6699,1.734,7.6255,6.2484,44,10,3.8236,2.0674,0.5407,6.6219,uninivel,fijas
-Fijas + Binivel,5.2832,9.3151,1.863,7.6255,6.4221,43,10,3.8236,2.0674,0.5407,5.9767,binivel,fijas
-Calculadas + Uninivel,6.9214,10.6054,2.1211,7.6255,5.9044,46,10,2.1233,1.2392,0.5836,7.9122,uninivel,calculadas
-Calculadas + Binivel,5.1264,8.5756,1.7151,7.6255,6.3642,42,10,2.1233,1.2392,0.5836,5.3315,binivel,calculadas
+Fijas + Uninivel,5.9053,15.8195,1.2656,14.1922,10.378,27,20,,,,4.7744,uninivel,fijas
+Fijas + Binivel,5.9053,15.8195,1.2656,14.1922,10.378,27,20,,,,4.7744,binivel,fijas
+Calculadas + Uninivel,10.7267,26.5102,2.1208,14.1922,8.2238,19,16,,,,9.3566,uninivel,calculadas
+Calculadas + Binivel,10.7267,26.5102,2.1208,14.1922,8.2238,19,16,,,,9.3566,binivel,calculadas

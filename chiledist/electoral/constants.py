@@ -7,9 +7,51 @@ Fuente legal: Ley N°18.700 art. 109 bis / Ley 20.840 (2015), 28
 circunscripciones, M∈[3,8].
 """
 
+import unicodedata
+
 TOTAL_ESCANOS_CAMARA = 155
 MIN_ESCANOS_DISTRITO = 3
 MAX_ESCANOS_DISTRITO = 8
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Normalización de nombres de partido/pacto
+# ──────────────────────────────────────────────────────────────────────────────
+
+def normalize_party_name(s: str) -> str:
+    """
+    Normaliza un nombre de partido o pacto para comparación tolerante a
+    mayúsculas/minúsculas y tildes.
+
+    Los datos reales de SERVEL suelen venir en MAYÚSCULAS SIN TILDES
+    ("EVOLUCION POLITICA"), mientras que un `pacto_map` curado a mano
+    (ej. datos/pacto_map_2025.json) suele usar formato título con tildes
+    ("Evolución Política"). Un lookup case/tilde-sensible entre ambas
+    fuentes falla en silencio — ver `dhondt_binivel()`, que usa esta
+    función para que el resultado no dependa de qué formato use cada lado.
+
+    Parameters
+    ----------
+    s : str
+        Nombre de partido o pacto en cualquier capitalización/acentuación.
+
+    Returns
+    -------
+    str
+        Nombre normalizado: minúsculas, sin tildes/caracteres no ASCII,
+        sin espacios al inicio/final.
+
+    Examples
+    --------
+    >>> normalize_party_name("Evolución Política")
+    'evolucion politica'
+    >>> normalize_party_name("EVOLUCION POLITICA")
+    'evolucion politica'
+    """
+    s = s.lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = s.encode("ascii", "ignore").decode("ascii")
+    return s.strip()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -111,6 +111,8 @@ from .loader import (
     load_layer,
     load_all,
     aggregate_population,
+    aggregate_rural_proxy,
+    apply_rural_proxy_fallback,
     list_available_layers,
     summarize,
     LAYER_FILENAMES,
@@ -248,6 +250,7 @@ from .electoral import (
     MAX_ESCANOS_DISTRITO,
     MAGNITUDES_LEGALES_LEY20840,
     MAGNITUDES_LEGALES_2021,
+    normalize_party_name,
 )
 
 # Persistencia reproducible
@@ -322,6 +325,7 @@ __all__ = [
     "DBF_COLUMN_MAP", "POPULATION_FIELDS",
     # loader
     "load_layer", "build_national", "load_all", "aggregate_population",
+    "aggregate_rural_proxy", "apply_rural_proxy_fallback",
     "list_available_layers", "summarize",
     "LAYER_FILENAMES", "CRS_METRIC", "CRS_GEO",
     # graph
@@ -376,6 +380,7 @@ __all__ = [
     "umbral_efectivo", "margen_ultimo_escano", "seat_bonus",
     "TOTAL_ESCANOS_CAMARA", "MIN_ESCANOS_DISTRITO", "MAX_ESCANOS_DISTRITO",
     "MAGNITUDES_LEGALES_LEY20840", "MAGNITUDES_LEGALES_2021",
+    "normalize_party_name",
     # diagnostics
     "autocorrelation_function", "effective_sample_size", "gelman_rubin",
     "mixing_diagnostics", "plot_trace", "plot_acf",

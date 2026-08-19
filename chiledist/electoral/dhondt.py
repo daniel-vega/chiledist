@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .constants import normalize_party_name
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Algoritmo D'Hondt
@@ -259,11 +261,20 @@ def dhondt_binivel(
 
     votos_por_partido = {p: max(0, v) for p, v in votos_por_partido.items()}
 
+    # Normalizar las claves de pacto_map (minúsculas, sin tildes) para que el
+    # lookup no dependa de si la fuente de votos usa MAYÚSCULAS SIN TILDES
+    # (típico de SERVEL, ej. "EVOLUCION POLITICA") o formato título con
+    # tildes (típico de un pacto_map curado a mano, ej. "Evolución Política")
+    # — sin esto, un mismatch de mayúsculas/tildes hace que pacto_map.get()
+    # nunca encuentre la clave y cada partido termine en su propio pacto de
+    # tamaño 1, degradando el binivel a uninivel en silencio.
+    pacto_map_norm = {normalize_party_name(k): v for k, v in pacto_map.items()}
+
     # Agrupar votos por pacto
     pacto_votes: dict[str, float] = {}
     pacto_to_parties: dict[str, dict[str, float]] = {}
     for partido, votos in votos_por_partido.items():
-        pacto = pacto_map.get(partido, partido)
+        pacto = pacto_map_norm.get(normalize_party_name(partido), partido)
         pacto_votes[pacto]                          = pacto_votes.get(pacto, 0) + votos
         pacto_to_parties.setdefault(pacto, {})[partido] = votos
 

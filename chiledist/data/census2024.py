@@ -273,11 +273,15 @@ def _proportional_join(
     merged[target_col] = ((proxy / total).fillna(0) * src).round().astype(int)
     gdf_out = merged.drop(columns=["_proxy_total", "_src_val"], errors="ignore")
 
+    cuts_cubiertos = gdf_out[cut_col].unique()
     total_assigned = int(gdf_out[target_col].sum())
-    total_source   = int(source_df[target_col].sum())
+    total_source   = int(
+        source_df.loc[source_df["CUT"].isin(cuts_cubiertos), target_col].sum()
+    )
     print(f"  {source_name} → {target_col}: "
-          f"{len(gdf_out)} distritos · total={total_assigned:,} "
-          f"(fuente={total_source:,} · diff={total_assigned - total_source:+,})")
+          f"{len(gdf_out)} distritos ({len(cuts_cubiertos)} comunas) · "
+          f"total={total_assigned:,} "
+          f"(fuente comunas cubiertas={total_source:,} · diff={total_assigned - total_source:+,})")
     return gdf_out
 
 

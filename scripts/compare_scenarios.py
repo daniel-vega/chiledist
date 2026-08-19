@@ -19,6 +19,7 @@ Uso:
 """
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -70,7 +71,14 @@ def parse_args():
                         "n_districts de cada escenario — cada escenario "
                         "conserva el suyo salvo que se pase este flag "
                         "explícitamente, en cuyo caso se aplica a todos.")
-    p.add_argument("--pop-tol",    type=float, default=0.15)
+    p.add_argument("--pop-tol",    type=float, default=0.15,
+                   help="Tolerancia poblacional usada al CORRER los "
+                        "escenarios (ignorado con --skip-run, ya que ahí "
+                        "no se invoca analizar_region()). Ya NO se usa para "
+                        "validar consistencia entre corridas existentes — "
+                        "esa validación ahora compara pop_tolerance_requested "
+                        "entre los propios escenarios via sus "
+                        "run_manifest.json, ver check_validity_filter_consistency().")
     p.add_argument("--n-steps",    type=int, default=10000)
     p.add_argument("--seed",       type=int, default=42)
     p.add_argument("--skip-viz",   action="store_true")
@@ -236,6 +244,70 @@ def load_existing_results(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Validar que los escenarios comparados fueron generados con el mismo
+# pop_tolerance_requested (contrato de datos: redistritaje.py::analizar_region()
+# lo escribe en manifest["scenario"]["pop_tolerance_requested"] al momento de
+# generar el ensemble; ver CAMBIO 1/2). Antes esto se comparaba contra un
+# pop_tol externo (--pop-tol de esta invocación de compare_scenarios.py, sin
+# relación con los datos ya generados en disco, especialmente en --skip-run) —
+# ahora se comparan los escenarios ENTRE SÍ, contra su propio dato real.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def check_validity_filter_consistency(
+    region_code: int,
+    output_base: str,
+    scenarios: list,
+) -> None:
+    """
+    Para cada escenario, busca el run_manifest.json más reciente (el
+    subdirectorio run_* de mayor timestamp) y lee
+    manifest["scenario"]["pop_tolerance_requested"] — el pop_tol REAL con el
+    que se generó esa corrida. Si los escenarios comparados no comparten el
+    mismo valor, imprime una advertencia con el detalle por escenario — no
+    interrumpe la comparación, ya que cada ensemble_stats.csv sigue siendo un
+    dato válido, solo generado bajo tolerancias distintas entre sí.
+
+    Sin manifest encontrado (corridas previas a este contrato, o escenarios
+    sintéticos de test) ese escenario simplemente no participa de la
+    comparación cruzada.
+    """
+    region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
+    pop_tol_por_escenario: dict = {}
+
+    for sc in scenarios:
+        sc_dir = os.path.join(output_base, region_name, "redistritaje", sc.name)
+        run_dirs = sorted(glob.glob(os.path.join(sc_dir, "run_*")))
+        if not run_dirs:
+            continue
+        manifest_path = os.path.join(run_dirs[-1], "run_manifest.json")
+        if not os.path.exists(manifest_path):
+            continue
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        pop_tol_manifest = manifest.get("scenario", {}).get("pop_tolerance_requested")
+        if pop_tol_manifest is None:
+            continue
+        pop_tol_por_escenario[sc.name] = float(pop_tol_manifest)
+
+    valores_distintos = set(pop_tol_por_escenario.values())
+    if len(valores_distintos) > 1:
+        detalle = ", ".join(
+            f"{nombre}={valor:.4f}"
+            for nombre, valor in pop_tol_por_escenario.items()
+        )
+        print(
+            f"  ⚠ WARNING: los escenarios comparados no comparten el mismo "
+            f"pop_tolerance_requested — {detalle}. El ranking entre ellos "
+            f"puede no ser comparable (cada ensemble se generó bajo una "
+            f"tolerancia poblacional distinta)."
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Comparar y exportar (usa chiledist.scenario_comparison)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -256,6 +328,12 @@ def compare_and_export(
     peor rank). `completeness` marca la comparación global como
     INCOMPLETE cuando falta algún escenario esperado.
 
+    Al inicio, valida que todos los escenarios comparten el mismo
+    pop_tolerance_requested (leído del run_manifest.json de cada uno) — ver
+    check_validity_filter_consistency(). No depende de ningún --pop-tol
+    externo a esta invocación: compara los escenarios entre sí, contra su
+    propio dato real.
+
     Returns
     -------
     dict con:
@@ -269,6 +347,8 @@ def compare_and_export(
     region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
     out_dir = os.path.join(output_base, region_name, "comparacion")
     os.makedirs(out_dir, exist_ok=True)
+
+    check_validity_filter_consistency(region_code, output_base, scenarios)
 
     # Cargar ensembles + status de escenarios sin ensemble válido desde disco
     sc_names = [sc.name for sc in scenarios]

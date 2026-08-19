@@ -264,6 +264,25 @@ def validate_manifest_hashes(manifest, input_files):
 
 ---
 
+### 3.11 Comunas sin proxy de manzanas (proxy=0)
+
+**Qué valida:** que el join proporcional de población no produce personas=0 en comunas que sí tienen población real.
+
+**Por qué importa:** 9 comunas nacionales no tienen manzanas urbanas ni aldeas registradas en APC 2023. Sin el fallback rural, el join proporcional les asigna 0 personas — pérdida total del 100% de su población, no un error de redondeo.
+
+**Comunas afectadas (verificado contra datos reales):**
+CUT 2202 Ollagüe (256 hab), 10404 Palena (1.903), 11102 Lago Verde (779), 12102 Laguna Blanca (269), 12103 Río Verde (102), 12104 San Gregorio (241), 12201 Cabo de Hornos (1.750), 12303 Timaukel (157), 12402 Torres del Paine (203). Total: 5.660 personas / 0.03% nacional. R12 concentra 6 de las 9.
+
+**Fix implementado:** `apply_rural_proxy_fallback()` en `chiledist/loader.py` usa `Puntos_Edificacion_Rural` (categorías VIVIENDA + VIVIENDA COLECTIVA, campo USO_EDIFICACION) como proxy comunal cuando el total de manzanas es 0. Reparto equitativo entre distritos APC de la comuna. Verificado: Lago Verde 0→780 personas, diff R11 -781→-1.
+
+**Limitación conocida:** el reparto equitativo entre distritos APC es una aproximación. La opción B (join espacial punto-en-polígono contra Distrital.shp para asignar COD_DISTRITO exacto a cada punto rural) sería más precisa pero no es prioritaria dado el volumen afectado (9 comunas, 0.03% nacional).
+
+**Criterio de éxito:** después del fix, diff por CUT ≤ n_distritos para todas las comunas, incluidas las 9 sin manzanas. Verificado en `test_integration_r11.py::test_4`.
+
+**Prioridad:** P1 — ✅ implementado.
+
+---
+
 ## 4. Validación geográfica
 
 ### 4.1 Adyacencia queen/rook
@@ -421,6 +440,34 @@ assert len(map_data.gdf_dec) == gdf_dist["CUT"].nunique()
 ### 5.5 `pop_tolerance` se aplica correctamente
 
 **Qué valida:** que ningún plan en el ensemble supera la `pop_tolerance` definida en el escenario.
+
+**Mecanismo (modelo A — restricción dura desde el draw 0; P0-1, implementado):**
+antes de este fix, la cadena principal usaba `epsilon_recom = max(dev_warmed/100 + 0.02, pop_tol)`,
+casi siempre mayor que `pop_tol`, y el cumplimiento de la tolerancia dependía de un filtrado
+posterior (`pares_validos` en `scripts/redistritaje.py`) — modelo B (sampling amplio + filtrado).
+Ahora:
+
+- El warm-up (solo contigüidad, `accept=always_accept`) corre libremente hasta que la
+  desviación baja a `≤ pop_tol`; si agota su presupuesto de pasos sin lograrlo, se extiende
+  una vez (mismo proposal, continuando desde el último estado) antes de rendirse.
+- `epsilon_recom = pop_tol` exacto (ya no se infla con `dev_warmed`).
+- Cada estado emitido por la cadena principal satisface `pop_tol` **por construcción**:
+  `gerrychain.constraints.within_percent_of_ideal_population(partition, epsilon_recom)` rechaza
+  toda propuesta que la exceda (`MarkovChain.__next__()` vuelve a proponer sin costar un paso;
+  ver diagnóstico P0-1), por lo que nunca se acepta ni se emite un estado fuera de tolerancia.
+- `pares_validos` se conserva en `scripts/redistritaje.py`, pero pasa de ser un filtro
+  necesario a una **verificación de sanidad**: con el modelo A, `valid_fraction ≈ 1.0` es el
+  comportamiento esperado (verificado con corrida real R12/apc_free, `pop_tol=0.10`:
+  100/100 planes válidos, desviación máxima observada en la cadena 9.61% < 10%).
+
+**Estados posibles de `analizar_region()` relacionados con esta invariante:**
+
+| `status` | `reason` | Cuándo ocurre | Acción recomendada |
+|----------|----------|---------------|---------------------|
+| `ok` | — | Warm-up convergió a `≤ pop_tol` (con o sin extensión) y la cadena principal produjo el ensemble | — |
+| `sin_convergencia_warmup` | `warmup_did_not_reach_pop_tol` | El warm-up, incluida su extensión, no logró bajar la desviación a `≤ pop_tol` dentro de su presupuesto de pasos; la cadena principal nunca se construye | Aumentar `--n-steps` (más presupuesto de warm-up, ya que `N_WARMUP = min(500, n_steps // 4)`) o relajar `--pop-tol` |
+| `sin_particion` | `initialization_search_exhausted` | `recursive_tree_part` agotó su escalera de tolerancias/semillas sin producir una partición inicial (falla de búsqueda, no prueba de inviabilidad) | Ver §10 P0 #21 |
+| `infeasible_population` | (de `check_population_feasibility`) | Una unidad indivisible excede por sí sola el rango `[ideal×(1−tol), ideal×(1+tol)]` | Ver §10 P0 #21 |
 
 ```python
 def validate_pop_tolerance(ensemble_df, gdf, pop_col, id_col, tol):
@@ -807,7 +854,7 @@ Estos tests son necesarios antes de publicar resultados o presentarlos en un con
 | 2 | Join padrón SERVEL: inscritos == h+m | `data/servel.py` | Integración |
 | 3 | Queen es superconjunto de rook | `graph.py` | Unitario |
 | 4 | Contracción grafo: n_nodos == n_CUTs | `graph.py` | Unitario |
-| 5 | pop_tolerance se respeta en todos los draws | `samplers/recom.py` | Integración |
+| 5 | pop_tolerance se respeta en todos los draws | `samplers/recom.py` | Integración — ✅ implementado (modelo A: restricción dura desde el draw 0, ver §5.5 y `scripts/redistritaje.py`; verificado con corrida real R12/apc_free, `pop_tol=0.10` → 100/100 planes válidos) |
 | 6 | Estabilidad por semilla (CV < 0.05 entre 5 semillas) | `samplers/recom.py` | Estadístico |
 | 7 | Sensibilidad a n_steps: convergencia documentada | `samplers/recom.py` | Estadístico |
 | 8 | Índices proporcionalidad == 0 para distribución perfecta | `electoral.py` | Unitario |

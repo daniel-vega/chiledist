@@ -421,6 +421,86 @@ python scripts/electoral_analysis.py \
 
 **Referencias.** Servicio Electoral de Chile (SERVEL): resoluciones sobre formalización de pactos y declaraciones de candidaturas para las Elecciones Generales (Ley N° 18.700 Orgánica Constitucional sobre Votaciones Populares y Escrutinios); base de datos de resultados electorales y registro de partidos políticos constituidos.
 
+### Datos externos — resumen y scripts de generación
+
+chiledist requiere 6 archivos de datos externos. Cuatro se generan con los scripts en `datos/scripts_extra/`; los dos `.json` (`asignacion_vigente.json`, `pacto_map_2025.json`, documentados en detalle arriba en esta misma sección) son de construcción manual. Ninguno de estos scripts se distribuye como parte instalable de la librería — son utilitarios de una sola vez para transformar fuentes externas (Censo 2024, SERVEL, Ley 20.840) al formato que consume chiledist.
+
+#### `datos/poblacion_comunal_censo2024.csv`
+
+- **Script**: `datos/scripts_extra/run.py`
+- **Entrada**: `personas_censo2024.csv` (microdatos Censo 2024 INE, separador `;`, columna `comuna` = CUT numérico) — no se distribuye, descargar de [ine.gob.cl](https://www.ine.gob.cl) (Censo 2024, base de personas)
+- **Salida**: `CUT, personas`
+- **Lógica**: `groupby("comuna").size()` — conteo de personas por CUT
+
+#### `datos/servel_2025_por_cut.csv`
+
+- **Script**: `datos/scripts_extra/procesar_servel_cut.py`
+- **Entrada**: los 28 `PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx` (sección "Resultados Electorales" → Elecciones Parlamentarias 2025, SERVEL). Cada archivo tiene una fila por mesa con columnas `region, distrito, comuna, pacto, subpacto, partido, cod_candidato, nombre_candidato, votos_preliminares, electo_nominado`.
+- **Salida**: `CUT, partido, votos`
+- **Lógica**: agrega `votos_preliminares` por (CUT, partido), usando un diccionario `MAPA_COMUNA_CUT` hardcodeado en el script para el mapeo nombre de comuna → CUT
+- **Limitación conocida**: las filas administrativas de cada mesa sin partido (`Votos Nulos`, `Votos en Blanco`, `Total Sufragios Validamente Emitidos`, `Total Suma Calculada` — `partido` viene `NaN` en el Excel) se agrupan como `"IND"` vía `.fillna("IND")`, inflando artificialmente el cociente D'Hondt de independientes (verificado: para Distrito 1, IND=313.938 = exactamente la suma de esas 4 filas administrativas, no votos de candidatos independientes reales). **Usar `servel_2025_candidatos.csv` para análisis electorales** — este archivo sirve solo para exploración y autocorrelación espacial.
+- El bloque `__main__` del script también procesa `PRELIMINARES_SENADORES_CIRCUNSCRIPCI*.xlsx`: si esos 7 archivos no están en el directorio de trabajo, el script falla con `FileNotFoundError` antes de terminar — hay que tenerlos presentes, o comentar esa segunda llamada.
+
+#### `datos/servel_2025_candidatos.csv`
+
+- **Script**: `datos/scripts_extra/escanos.py`
+- **Entrada**: los 28 `PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx` + `cd.load_layer("comunal")` para el mapeo nombre de comuna → CUT
+- **Salida**: `CUT, cod_candidato, nombre_candidato, partido, pacto, votos`
+- **Lógica**: votos por candidato individual por CUT (no agregado por partido) — cada candidato independiente es su propia entidad, reproduciendo el sistema real chileno en vez de la bolsa "IND" de `servel_2025_por_cut.csv`
+- **Cobertura**: 13.410 filas, 1.096 candidatos, 345/345 CUT (excluye Antártica, CUT 12202, sin polígono en APC2023)
+- **Uso**: `scripts/validar_dhondt.py --modo candidatos`
+
+#### `datos/escanos_oficiales_2025.csv`
+
+- **Script**: `datos/scripts_extra/escanos.py` (mismo script que el anterior — genera ambos archivos)
+- **Entrada**: los 28 `PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx`
+- **Salida**: `distrito, pacto, escanos`
+- **Lógica**: candidatos con `electo_nominado==1`, agrupados por (distrito, pacto)
+- **Validado**: Σ==155, magnitudes por distrito correctas (`MAGNITUDES_LEGALES_LEY20840`)
+- **Uso**: referencia oficial para `scripts/validar_dhondt.py`
+
+#### Aliases de nombres de comunas
+
+`escanos.py` normaliza las siguientes variantes ortográficas entre el Excel de SERVEL y la cartografía APC2023:
+
+| Excel SERVEL | APC2023 | CUT |
+|---|---|---|
+| MARCHIGUE | MARCHIHUE | 6204 |
+| TREHUACO | TREGUACO | 16207 |
+| PAIHUANO | PAIGUANO | 4105 |
+| LLAY-LLAY | LLAILLAY | 5703 |
+| CABO DE HORNOS(EX-NAVARINO) | CABO DE HORNOS | 12201 |
+
+#### `datos/asignacion_vigente.json` y `datos/pacto_map_2025.json`
+
+Sin script de generación automática — construcción manual, documentada en detalle más arriba en esta misma sección (`## Datos externos`). Resumen:
+
+- **`asignacion_vigente.json`**: desde el texto de la Ley 20.840 ([bcn.cl/2f773](https://bcn.cl/2f773)). `{"CUT_str": n_distrito_int}`, 346 comunas → 28 circunscripciones (1-28). Ver `chiledist.data.REGIONES_APC` para el mapeo de regiones.
+- **`pacto_map_2025.json`**: desde resultados SERVEL 2025. `{"nombre_partido": "nombre_pacto"}`, en formato título con tildes (`"Evolución Política"`) — `chiledist.normalize_party_name()` normaliza automáticamente al hacer lookups, así que el mismatch de formato con SERVEL (MAYÚSCULAS sin tildes) no afecta los resultados.
+
+#### Ejecución de los scripts
+
+Desde el directorio que contiene los Excel de SERVEL:
+
+```bash
+# Población Censo 2024
+python datos/scripts_extra/run.py
+cp poblacion_comunas_censo2024.csv datos/poblacion_comunal_censo2024.csv
+
+# Votos por candidato + escaños oficiales (genera ambos archivos)
+python datos/scripts_extra/escanos.py
+cp escanos_oficiales_2025.csv datos/escanos_oficiales_2025.csv
+cp servel_2025_candidatos.csv datos/servel_2025_candidatos.csv
+
+# Votos por CUT y partido (formato alternativo, solo exploración)
+python datos/scripts_extra/procesar_servel_cut.py
+cp servel_2025_diputados_por_cut.csv datos/servel_2025_por_cut.csv
+```
+
+Los Excel de SERVEL (`PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx`) y el CSV de microdatos del Censo 2024 no se distribuyen con la librería y deben obtenerse directamente de las fuentes.
+
+⚠ Los datos electorales son `votos_preliminares` (conteo nocturno), no el escrutinio general final. En cocientes D'Hondt ajustados esto puede producir diferencias de 1 escaño respecto al resultado oficial — documentado en `SCIENTIFIC_HYPOTHESES.md` § H4.
+
 ---
 
 ## Scripts de análisis

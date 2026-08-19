@@ -1,0 +1,2 @@
+region,scenario,status,error
+13,apc_comunas_preservadas,error,"The given initial_state is not valid according is_valid. The failed constraints were: Bounds(population,(832583.25, 1017601.7500000001))"

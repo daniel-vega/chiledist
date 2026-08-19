@@ -80,11 +80,31 @@ from chiledist.samplers.recom import run_recom_chain
 # una prueba matemática de inviabilidad.
 REASON_INITIALIZATION_SEARCH_EXHAUSTED = "initialization_search_exhausted"
 
+# Análogo a REASON_INITIALIZATION_SEARCH_EXHAUSTED, pero para la fase de
+# warm-up: el warm-up (solo contigüidad, sin restricción poblacional) agotó
+# su presupuesto de pasos (incluida la extensión) sin bajar la desviación
+# poblacional a ±pop_tol. Sin esto, la cadena principal fijaría epsilon_recom
+# por encima de pop_tol para "no bloquearse" — exactamente el modelo B
+# (sampling amplio + filtrado posterior) que el modelo A busca evitar.
+REASON_WARMUP_DID_NOT_CONVERGE = "warmup_did_not_reach_pop_tol"
+
 # Escalera de tolerancias y reintentos de semilla para recursive_tree_part.
 # Nombrados como constantes (mismos valores de siempre) únicamente para poder
 # probar buscar_particion_inicial() de forma aislada — no cambia el algoritmo.
 TOLERANCIA_INICIAL_ESCALERA = [0.25, 0.35, 0.45, 0.60, 0.80]
 N_SEED_TRIES_INICIALIZACION = 5
+
+# Etiqueta legible por magnitud de población, indexada por el pop_col YA
+# RESUELTO (no por --pop-source): enrich_population() puede hacer fallback a
+# "viviendas" si falta --census-path/--padron-path, y en ese caso la etiqueta
+# debe seguir a la columna real, no al flag original. Cubre los 3 valores que
+# enrich_population() puede devolver ("viviendas", "personas", "inscritos");
+# cualquier otro pop_col (ej. un YAML custom) se muestra tal cual.
+POP_LABELS = {
+    "viviendas": "viviendas",
+    "personas":  "personas",
+    "inscritos": "inscritos",
+}
 
 
 def buscar_particion_inicial(
@@ -158,6 +178,59 @@ def diagnostico_busqueda_agotada() -> str:
         "ya determinó que la tolerancia solicitada es alcanzable "
         "(ver status='infeasible_population' para ese otro caso)."
     )
+
+
+def conectar_islas_y_componentes(graph, gdf_nodos) -> None:
+    """
+    Conecta islas (grado 0) al nodo más cercano y fusiona componentes
+    desconectados por distancia de centroides. Modifica `graph` in-place.
+
+    `gdf_nodos` debe estar en el mismo orden/índice que los nodos de
+    `graph` (reset_index(drop=True) antes de construir el grafo con
+    gc.Graph.from_geodataframe) — se usa solo para leer la geometría de
+    cada nodo vía posición entera (`.iloc[n]`).
+    """
+    centroids = {}
+    for n in graph.nodes():
+        geom = gdf_nodos.iloc[n].geometry
+        centroids[n] = (geom.centroid.x, geom.centroid.y)
+
+    islands_gc = [n for n in graph.nodes() if graph.degree(n) == 0]
+    if islands_gc:
+        print(f"  Conectando {len(islands_gc)} isla(s) en grafo gerrychain...")
+        non_islands = [n for n in graph.nodes() if graph.degree(n) > 0]
+        if non_islands:
+            for island in islands_gc:
+                ix, iy = centroids[island]
+                nearest = min(non_islands,
+                              key=lambda n: (centroids[n][0]-ix)**2
+                                            + (centroids[n][1]-iy)**2)
+                graph.add_edge(island, nearest)
+
+    if not nx.is_connected(graph):
+        n_comp = nx.number_connected_components(graph)
+        print(f"  Conectando {n_comp} componentes desconectados...")
+        components = list(nx.connected_components(graph))
+        for i in range(1, len(components)):
+            comp0  = list(components[0])[:50]
+            comp_i = list(components[i])[:50]
+            best_d, best_u, best_v = float("inf"), None, None
+            for u in comp0:
+                ux, uy = centroids[u]
+                for v in comp_i:
+                    vx, vy = centroids[v]
+                    d = (ux-vx)**2 + (uy-vy)**2
+                    if d < best_d:
+                        best_d, best_u, best_v = d, u, v
+            if best_u is not None:
+                graph.add_edge(best_u, best_v)
+            components[0] = components[0] | components[i]
+
+    if nx.is_connected(graph):
+        print(f"  ✓ Grafo conexo ({graph.number_of_nodes()} nodos · "
+              f"{graph.number_of_edges()} aristas)")
+    else:
+        print(f"  ⚠ Grafo aún no conexo — algunos pasos pueden fallar")
 
 
 REGION_NOMBRES = {
@@ -436,6 +509,15 @@ def analizar_region(
         print(f"  ⚠ {e}")
         return {"region": region_code, "status": "error", "error": str(e)}
 
+    # Puntos_Edificacion_Rural: capa opcional, usada solo como fallback de
+    # proxy para comunas sin ninguna manzana urbana ni de aldea (ver
+    # apply_rural_proxy_fallback más abajo).
+    try:
+        puntos_rural = cd.load_layer("puntos_rural", base_dir=base_dir,
+                                      regions=[region_code])
+    except FileNotFoundError:
+        puntos_rural = None
+
     # Agregar población desde manzanas
     pop_urb = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
     pop_ald = cd.aggregate_population(mz_ald, level="distrito", source="aldea")
@@ -449,6 +531,17 @@ def analizar_region(
         pop[["CUT", "COD_DISTRITO", "viviendas"]],
         on=["CUT", "COD_DISTRITO"], how="left"
     ).fillna({"viviendas": 0})
+    distritos["viviendas"] = distritos["viviendas"].astype(int)
+    # Fallback: comunas sin ninguna manzana urbana ni de aldea (proxy=0 tras
+    # el merge+fillna de arriba — incluye comunas que no aparecían siquiera
+    # en pop_urb/pop_ald) usan conteo de edificaciones rurales en su lugar.
+    # Debe aplicarse aquí, DESPUÉS del merge contra distritos (no antes,
+    # sobre pop): pop solo contiene combinaciones CUT+COD_DISTRITO con al
+    # menos una manzana, así que una comuna sin ninguna manzana (ej. Lago
+    # Verde, CUT 11102 — ver tests/test_integration_r11.py) no aparece ahí
+    # en absoluto, ni siquiera como 0 — recién existe como 0 explícito tras
+    # el .fillna({"viviendas": 0}) contra el universo completo de distritos.
+    distritos = cd.apply_rural_proxy_fallback(distritos, puntos_rural)
     distritos["viviendas"] = distritos["viviendas"].astype(int)
 
     # ── Enriquecer con fuente de población alternativa ────────────────────────
@@ -466,6 +559,11 @@ def analizar_region(
         scenario = dataclasses.replace(scenario, pop_col=_resolved_pop_col)
 
     pop_col       = scenario.pop_col
+    # Etiqueta de salida para la magnitud de población (CLI/tablas). Derivada
+    # de pop_col ya resuelto (no de --pop-source directamente) para que
+    # coincida con la fuente REAL usada, incluido el fallback a "viviendas"
+    # cuando --census-path/--padron-path no se pasan.
+    pop_label     = POP_LABELS.get(pop_col, pop_col)
     decision_unit = scenario.decision_unit
 
     # ── Preparar GDF según unidad de decisión ────────────────────────────────
@@ -492,30 +590,19 @@ def analizar_region(
         return {"region": region_code, "status": "sin_poblacion",
                 "scenario": scenario.name}
 
-    # Ajustar n_distritos para unidades pequeñas
-    n_distritos_max = max(2, n_units // 4)
-    n_distritos_eff = n_distritos
-    if n_distritos_eff > n_distritos_max:
-        print(f"  ⚠ n_distritos ajustado: {n_distritos_eff} → {n_distritos_max} "
-              f"({n_units} unidades de decisión)")
-        n_distritos_eff = n_distritos_max
-
-    ideal_pop = total_viv / n_distritos_eff
-
-    print(f"\n  Unidades dec.  : {n_units} ({id_col})")
-    if id_col == "ID_DIST":
-        print(f"  Comunas (CUT)  : {n_comunas}")
-    print(f"  Viviendas      : {total_viv:,}")
-    print(f"  Ideal/distrito : {ideal_pop:,.0f}")
-    print(f"  N grupos       : {n_distritos_eff}")
-
-    # ── Preflight: factibilidad poblacional ──────────────────────────────────
+    # ── Preflight: factibilidad poblacional (con n_distritos ORIGINAL) ───────
     # Determinista, sin gerrychain: si una unidad de decisión indivisible por
     # sí sola excede pop_tol respecto del ideal, ningún recursive_tree_part
     # ni número de semillas puede producir un plan que cumpla la tolerancia.
+    # Se evalúa ANTES del guard de n_distritos_max (más abajo): ese guard
+    # sustituye n_distritos por una razón topológica (muy pocas unidades
+    # para que ReCom encuentre cortes, ej. Arica 37 APC/Aysén 56 APC), no
+    # porque el n_distritos pedido sea poblacionalmente inviable. Evaluar
+    # la factibilidad ya con n_distritos sustituido respondería una
+    # pregunta distinta a la que pidió el usuario.
     unit_pops = dict(zip(gdf_dec[id_col], gdf_dec[pop_col]))
     feasibility = cd.check_population_feasibility(
-        unit_pops, n_distritos_eff, pop_tol
+        unit_pops, n_distritos, pop_tol
     )
     if not feasibility.feasible:
         print(f"\n  ⚠ {feasibility.diagnostic_message()}")
@@ -533,6 +620,28 @@ def analizar_region(
             "minimum_required_tolerance": feasibility.minimum_required_tolerance,
             "requested_tolerance": feasibility.requested_tolerance,
         }
+
+    # Ajustar n_distritos solo para regiones con muy pocas unidades de
+    # decisión en términos ABSOLUTOS (topología de grafo: ReCom no puede
+    # encontrar cortes balanceados con pocos nodos) — no relativo a
+    # n_distritos. Para n_units >= 80 el usuario controla n_distritos
+    # directamente; el preflight de arriba ya evaluó la factibilidad
+    # poblacional sobre el n_distritos real pedido.
+    n_distritos_max = max(2, n_units // 4)
+    n_distritos_eff = n_distritos
+    if n_units < 80 and n_distritos_eff > n_distritos_max:
+        print(f"  ⚠ n_distritos ajustado: {n_distritos_eff} → {n_distritos_max} "
+              f"({n_units} unidades de decisión)")
+        n_distritos_eff = n_distritos_max
+
+    ideal_pop = total_viv / n_distritos_eff
+
+    print(f"\n  Unidades dec.  : {n_units} ({id_col})")
+    if id_col == "ID_DIST":
+        print(f"  Comunas (CUT)  : {n_comunas}")
+    print(f"  {pop_label.capitalize():<15}: {total_viv:,}")
+    print(f"  Ideal/distrito : {ideal_pop:,.0f}")
+    print(f"  N grupos       : {n_distritos_eff}")
 
     # ── Grafo gerrychain ──────────────────────────────────────────────────────
     try:
@@ -568,47 +677,7 @@ def analizar_region(
     )
 
     # Conectar islas y componentes en el grafo gerrychain
-    centroids = {}
-    for n in graph.nodes():
-        geom = gdf_gc.iloc[n].geometry
-        centroids[n] = (geom.centroid.x, geom.centroid.y)
-
-    islands_gc = [n for n in graph.nodes() if graph.degree(n) == 0]
-    if islands_gc:
-        print(f"  Conectando {len(islands_gc)} isla(s) en grafo gerrychain...")
-        non_islands = [n for n in graph.nodes() if graph.degree(n) > 0]
-        if non_islands:
-            for island in islands_gc:
-                ix, iy = centroids[island]
-                nearest = min(non_islands,
-                              key=lambda n: (centroids[n][0]-ix)**2
-                                            + (centroids[n][1]-iy)**2)
-                graph.add_edge(island, nearest)
-
-    if not nx.is_connected(graph):
-        n_comp = nx.number_connected_components(graph)
-        print(f"  Conectando {n_comp} componentes desconectados...")
-        components = list(nx.connected_components(graph))
-        for i in range(1, len(components)):
-            comp0  = list(components[0])[:50]
-            comp_i = list(components[i])[:50]
-            best_d, best_u, best_v = float("inf"), None, None
-            for u in comp0:
-                ux, uy = centroids[u]
-                for v in comp_i:
-                    vx, vy = centroids[v]
-                    d = (ux-vx)**2 + (uy-vy)**2
-                    if d < best_d:
-                        best_d, best_u, best_v = d, u, v
-            if best_u is not None:
-                graph.add_edge(best_u, best_v)
-            components[0] = components[0] | components[i]
-
-    if nx.is_connected(graph):
-        print(f"  ✓ Grafo conexo ({graph.number_of_nodes()} nodos · "
-              f"{graph.number_of_edges()} aristas)")
-    else:
-        print(f"  ⚠ Grafo aún no conexo — algunos pasos pueden fallar")
+    conectar_islas_y_componentes(graph, gdf_gc)
 
     # ── Partición inicial ─────────────────────────────────────────────────────
     print(f"\n  Buscando partición inicial...")
@@ -617,10 +686,67 @@ def analizar_region(
                     30 if n_units < 100 else
                     20 if n_units < 200 else 10)
 
-    best_assignment, best_dev, best_tol = buscar_particion_inicial(
-        graph, n_distritos_eff, pop_col, ideal_pop, node_repeats, seed,
-        recursive_tree_part,
-    )
+    # preserve_mode="hard" + CUT en preserve_units + decision_unit != CUT
+    # (ej. apc_strict): recursive_tree_part sobre el grafo ID_DIST no tiene
+    # ningún concepto de "no partir comunas" -- puede (y en la práctica
+    # suele) repartir los ID_DIST de un mismo CUT en grupos distintos, lo
+    # que la restricción preserve_CUT de gerrychain rechaza al arrancar la
+    # cadena. Fix: construir la partición inicial en dos pasos -- (1)
+    # recursive_tree_part sobre el grafo comunal contraído, para obtener
+    # n_distritos_eff grupos de CUT; (2) expandir, cada ID_DIST hereda el
+    # grupo de su CUT. Por construcción, ningún ID_DIST de un mismo CUT
+    # puede terminar en grupos distintos.
+    if (scenario.preserve_mode == "hard"
+            and "CUT" in scenario.preserve_units
+            and id_col != "CUT"):
+
+        # Paso 1: grafo comunal contraído
+        gdf_cut = cd.contract_to_decision_units(
+            distritos, decision_unit="CUT",
+            agg_spec={pop_col: "sum"},
+        )
+        graph_cut = gc.Graph.from_geodataframe(
+            gdf_cut.reset_index(drop=True).to_crs("EPSG:32719"),
+            adjacency="queen",
+            cols_to_add=["CUT", pop_col],
+        )
+        conectar_islas_y_componentes(graph_cut, gdf_cut)
+
+        # Paso 2: buscar partición sobre el grafo comunal (reusa la misma
+        # función de búsqueda, solo con graph_cut en vez de graph)
+        cut_assignment, best_dev, best_tol = buscar_particion_inicial(
+            graph_cut, n_distritos_eff, pop_col, ideal_pop, node_repeats, seed,
+            recursive_tree_part,
+        )
+
+        if cut_assignment is None:
+            print(f"\n  ⚠ {diagnostico_busqueda_agotada()}")
+            return {
+                "region": region_code,
+                "region_name": region_name,
+                "scenario": scenario.name,
+                "status": "sin_particion",
+                "reason": REASON_INITIALIZATION_SEARCH_EXHAUSTED,
+            }
+
+        # Paso 3: expandir ID_DIST → grupo del CUT (atributo "CUT" ya
+        # presente en ambos grafos vía cols_to_add)
+        cut_index = {
+            graph_cut.nodes[n]["CUT"]: cut_assignment[n]
+            for n in graph_cut.nodes()
+        }
+        best_assignment = {
+            node: cut_index[graph.nodes[node]["CUT"]]
+            for node in graph.nodes()
+        }
+        print(f"  Partición inicial (vía CUT): tol=±{best_tol*100:.0f}%,"
+              f" desv={best_dev:.1f}%")
+
+    else:
+        best_assignment, best_dev, best_tol = buscar_particion_inicial(
+            graph, n_distritos_eff, pop_col, ideal_pop, node_repeats, seed,
+            recursive_tree_part,
+        )
 
     if best_assignment is None:
         print(f"\n  ⚠ {diagnostico_busqueda_agotada()}")
@@ -643,7 +769,13 @@ def analizar_region(
 
     # ── Warm-up (solo contigüidad) ────────────────────────────────────────────
     epsilon_warmup = max(best_dev / 100 + 0.05, pop_tol)
-    N_WARMUP       = min(500, n_steps // 4)
+    # Presupuesto escalado por n_units: menos unidades (ej. legal, CUT) implica
+    # recombinaciones más "grandes"/costosas de balancear por paso, así que
+    # necesitan más pasos de warm-up que apc_free/apc_soft (ID_DIST, más
+    # unidades y más finas).
+    _warmup_base = 2000 if n_units <= 100 else (
+                   1000 if n_units <= 200 else 500)
+    N_WARMUP       = min(_warmup_base, n_steps // 4)
 
     recom_kwargs_warmup = dict(
         pop_col=pop_col, pop_target=ideal_pop,
@@ -658,36 +790,214 @@ def analizar_region(
         pass
 
     recom_warmup = partial(recom, **recom_kwargs_warmup)
-    chain_warmup = gc.MarkovChain(
-        proposal=recom_warmup, constraints=[contiguous],
-        accept=always_accept, initial_state=partition,
-        total_steps=N_WARMUP,
-    )
 
-    warmed_state       = partition
-    n_warmup_efectivo  = 0
-    try:
-        for step_w, state_w in enumerate(chain_warmup):
-            warmed_state      = state_w
-            n_warmup_efectivo = step_w + 1
-            pop_w = list(state_w["population"].values())
-            dev_w = max(abs(p - ideal_pop)/ideal_pop for p in pop_w) * 100
-            if dev_w <= pop_tol * 100 * 1.5:
-                print(f"  Warm-up convergió en paso {step_w} (desv={dev_w:.1f}%)")
-                break
-    except (IndexError, RuntimeError) as e:
-        print(f"  ⚠ Warmup interrumpido ({e.__class__.__name__}) — "
-              f"usando partición inicial")
-        warmed_state = partition
+    if (scenario.preserve_mode == "hard"
+            and "CUT" in scenario.preserve_units
+            and id_col != "CUT"):
+        # apc_strict: warm-up sobre el grafo comunal contraído (graph_cut,
+        # ya construido arriba para la partición inicial), no sobre el
+        # grafo ID_DIST. preserve_CUT es tautológico en graph_cut (cada
+        # nodo ya es una comuna distinta), así que basta contiguous --
+        # sin el problema de auto-loops por rechazo que tenía la versión
+        # anterior (preserve_CUT añadido al grafo ID_DIST de 451 nodos).
+        #
+        # Epsilon calibrado a lo que 52 comunas pueden alcanzar (best_dev
+        # de la partición inicial + 5pp, con floor de 20%), no a pop_tol:
+        # en R13, Puente Alto solo es 61% del ideal por distrito, lo que
+        # hace ±10% inalcanzable con piezas del tamaño de una comuna. La
+        # cadena principal balanceará después con las piezas finas de
+        # ID_DIST -- este warm-up solo necesita dejarla en un punto de
+        # partida razonable, no en pop_tol.
+        epsilon_warmup_cut = max(best_dev / 100 + 0.05, 0.20)
 
-    dev_warmed = max(
-        abs(p - ideal_pop)/ideal_pop
-        for p in warmed_state["population"].values()
-    ) * 100
+        recom_warmup_cut = partial(
+            recom, pop_col=pop_col, pop_target=ideal_pop,
+            epsilon=epsilon_warmup_cut, node_repeats=node_repeats,
+        )
+
+        updaters_cut = {
+            "population": gc.updaters.Tally(pop_col, alias="population"),
+        }
+        partition_cut = gc.Partition(
+            graph=graph_cut,
+            assignment={n: cut_assignment[n] for n in graph_cut.nodes()},
+            updaters=updaters_cut,
+        )
+        chain_warmup_cut = gc.MarkovChain(
+            proposal=recom_warmup_cut,
+            constraints=[contiguous],
+            accept=always_accept,
+            initial_state=partition_cut,
+            total_steps=N_WARMUP,
+        )
+
+        warmed_cut = partition_cut
+        n_warmup_efectivo = 0
+        try:
+            for step_w, state_w in enumerate(chain_warmup_cut):
+                warmed_cut = state_w
+                n_warmup_efectivo = step_w + 1
+                pop_w = list(state_w["population"].values())
+                dev_w = max(abs(p - ideal_pop) / ideal_pop for p in pop_w) * 100
+                if dev_w <= epsilon_warmup_cut * 100 * 0.8:
+                    print(f"  Warm-up comunal convergió en paso {step_w}"
+                          f" (desv={dev_w:.1f}%)")
+                    break
+        except (IndexError, RuntimeError) as e:
+            print(f"  ⚠ Warm-up comunal interrumpido: {e}")
+
+        cut_index_warmed = {
+            graph_cut.nodes[n]["CUT"]: warmed_cut.assignment[n]
+            for n in graph_cut.nodes()
+        }
+        expanded = {
+            node: cut_index_warmed[graph.nodes[node]["CUT"]]
+            for node in graph.nodes()
+        }
+        warmed_state = gc.Partition(
+            graph=graph, assignment=expanded, updaters=updaters,
+        )
+
+        dev_warmed = max(
+            abs(p - ideal_pop) / ideal_pop
+            for p in warmed_state["population"].values()
+        ) * 100
+        print(f"  Warm-up comunal expandido: dev={dev_warmed:.1f}%")
+
+        # Segunda ronda: warm-up fino sobre graph (451 ID_DIST). El warm-up
+        # comunal (arriba) solo puede llegar a lo que 52 piezas permiten
+        # (~15-25% en R13); esta ronda usa las piezas finas de ID_DIST para
+        # bajar de ahí a ≤pop_tol. Parte de warmed_state, que ya respeta CUT
+        # por construcción (viene expandido desde graph_cut) -- por eso esta
+        # ronda SÍ necesita preserve_CUT en constraints: sin ella, ReCom
+        # podría partir una comuna al buscar el balance fino, y warmed_state
+        # ya no sería válido para la cadena principal (que exige preserve_CUT
+        # desde su propio initial_state).
+        epsilon_warmup2 = max(dev_warmed / 100 + 0.02, pop_tol)
+
+        recom_warmup2 = partial(
+            recom, pop_col=pop_col, pop_target=ideal_pop,
+            epsilon=epsilon_warmup2, node_repeats=node_repeats,
+        )
+
+        constraints_warmup2 = [contiguous, cd.make_preserve_constraint("CUT")]
+
+        chain_warmup2 = gc.MarkovChain(
+            proposal=recom_warmup2,
+            constraints=constraints_warmup2,
+            accept=always_accept,
+            initial_state=warmed_state,
+            total_steps=N_WARMUP * 3,
+            # presupuesto generoso: la restricción conjunta (balance +
+            # preserve_CUT) rechaza más propuestas que solo contiguous.
+        )
+
+        step_w2 = -1
+        try:
+            for step_w2, state_w2 in enumerate(chain_warmup2):
+                warmed_state = state_w2
+                pop_w2 = list(state_w2["population"].values())
+                dev_w2 = max(abs(p - ideal_pop) / ideal_pop
+                             for p in pop_w2) * 100
+                if dev_w2 <= pop_tol * 100:
+                    print(f"  Warm-up fino convergió en paso {step_w2}"
+                          f" (desv={dev_w2:.1f}%)")
+                    break
+        except (IndexError, RuntimeError) as e:
+            print(f"  ⚠ Warm-up fino interrumpido: {e}")
+
+        n_warmup_efectivo += step_w2 + 1
+        dev_warmed = max(
+            abs(p - ideal_pop) / ideal_pop
+            for p in warmed_state["population"].values()
+        ) * 100
+
+    else:
+        chain_warmup = gc.MarkovChain(
+            proposal=recom_warmup, constraints=[contiguous],
+            accept=always_accept, initial_state=partition,
+            total_steps=N_WARMUP,
+        )
+
+        warmed_state       = partition
+        n_warmup_efectivo  = 0
+        try:
+            for step_w, state_w in enumerate(chain_warmup):
+                warmed_state      = state_w
+                n_warmup_efectivo = step_w + 1
+                pop_w = list(state_w["population"].values())
+                dev_w = max(abs(p - ideal_pop)/ideal_pop for p in pop_w) * 100
+                if dev_w <= pop_tol * 100:
+                    print(f"  Warm-up convergió en paso {step_w} (desv={dev_w:.1f}%)")
+                    break
+        except (IndexError, RuntimeError) as e:
+            print(f"  ⚠ Warmup interrumpido ({e.__class__.__name__}) — "
+                  f"usando partición inicial")
+            warmed_state = partition
+
+        dev_warmed = max(
+            abs(p - ideal_pop)/ideal_pop
+            for p in warmed_state["population"].values()
+        ) * 100
+
+        warmup_converged_first_pass = bool(dev_warmed <= pop_tol * 100)
+
+        # Si el warm-up no bajó de ±pop_tol, extenderlo una vez (mismo proposal,
+        # continuando desde warmed_state) antes de rendirse. Sin esto, la cadena
+        # principal terminaría fijando epsilon_recom por encima de pop_tol para
+        # no bloquearse — el modelo B que el modelo A busca evitar.
+        if not warmup_converged_first_pass:
+            print(f"  ⚠ Warm-up no convergió a ±{pop_tol*100:.0f}% "
+                  f"(dev_warmed={dev_warmed:.1f}%) — extendiendo...")
+            chain_warmup_ext = gc.MarkovChain(
+                proposal=recom_warmup, constraints=[contiguous],
+                accept=always_accept, initial_state=warmed_state,
+                total_steps=N_WARMUP * 2,
+            )
+            step_w = -1
+            try:
+                for step_w, state_w in enumerate(chain_warmup_ext):
+                    warmed_state = state_w
+                    pop_w = list(state_w["population"].values())
+                    dev_w = max(abs(p - ideal_pop)/ideal_pop for p in pop_w) * 100
+                    if dev_w <= pop_tol * 100:
+                        print(f"  Warm-up (extendido) convergió en paso {step_w} "
+                              f"(desv={dev_w:.1f}%)")
+                        break
+            except (IndexError, RuntimeError) as e:
+                print(f"  ⚠ Warmup extendido interrumpido ({e.__class__.__name__})")
+
+            # Posición final (no acumulación por iteración): N_WARMUP (paso 1,
+            # fijo) + pasos consumidos en la extensión hasta converger/salir.
+            n_warmup_efectivo = N_WARMUP + (step_w + 1)
+
+            dev_warmed = max(
+                abs(p - ideal_pop)/ideal_pop
+                for p in warmed_state["population"].values()
+            ) * 100
+
+    # ── Chequeo final de convergencia de warm-up (compartido por ambas ramas) ──
+    warmup_converged = bool(dev_warmed <= pop_tol * 100)
+
+    if not warmup_converged:
+        print(f"  ⚠ Warm-up agotó {n_warmup_efectivo} pasos sin converger "
+              f"a ±{pop_tol*100:.0f}% (dev_warmed={dev_warmed:.1f}%)")
+        return {
+            "region": region_code,
+            "region_name": region_name,
+            "scenario": scenario.name,
+            "status": "sin_convergencia_warmup",
+            "reason": REASON_WARMUP_DID_NOT_CONVERGE,
+            "n_warmup_steps": n_warmup_efectivo,
+            "warmup_final_dev": dev_warmed,
+        }
 
     # ── Cadena principal ──────────────────────────────────────────────────────
-    # epsilon_recom se define AQUÍ, post-warmup, con la desviación real
-    epsilon_recom = max(dev_warmed / 100 + 0.02, pop_tol)
+    # Modelo A: epsilon_recom = pop_tol directamente. El warm-up (arriba) ya
+    # garantiza dev_warmed <= pop_tol, así que la restricción dura de la
+    # cadena principal es exactamente la tolerancia solicitada desde el
+    # draw 0 — no una versión inflada por dev_warmed (modelo B).
+    epsilon_recom = pop_tol
 
     recom_kwargs_main = dict(
         pop_col=pop_col, pop_target=ideal_pop,
@@ -934,12 +1244,13 @@ def analizar_region(
         (pop_summary[pop_col] - ideal_pop) / ideal_pop * 100
     ).round(2)
 
+    pop_label_col = pop_label.capitalize()
     if id_col == "ID_DIST":
-        col_names = ["Distrito", "Viviendas", "N_APC", "N_Comunas", "Desv_%"]
+        col_names = ["Distrito", pop_label_col, "N_APC", "N_Comunas", "Desv_%"]
         if "CUT" not in gdf_dec.columns:
-            col_names = ["Distrito", "Viviendas", "N_APC", "Desv_%"]
+            col_names = ["Distrito", pop_label_col, "N_APC", "Desv_%"]
     else:
-        col_names = ["Distrito", "Viviendas", "N_Comunas", "Desv_%"]
+        col_names = ["Distrito", pop_label_col, "N_Comunas", "Desv_%"]
 
     try:
         pop_summary.columns = col_names
@@ -950,11 +1261,13 @@ def analizar_region(
     print(pop_summary.to_string(index=False))
 
     # ── Métricas de comunas partidas del plan de referencia ───────────────────
+    n_split_ref = 0
     if id_col == "ID_DIST" and "CUT" in gdf_dec.columns:
         split_summary = cd.split_unit_summary(
             ref_plan_mapped, gdf_dec,
             unit_col="CUT", id_col="ID_DIST", pop_col=pop_col,
         )
+        n_split_ref = len(split_summary)
         if not split_summary.empty:
             print(f"\n  Comunas partidas en plan de referencia: {len(split_summary)}")
             print(split_summary[["CUT","nombre","n_fragmentos",
@@ -966,6 +1279,12 @@ def analizar_region(
 
     # ── Guardar CSVs ──────────────────────────────────────────────────────────
     df_mc = pd.DataFrame(metricas_mc)
+    # is_valid vive a nivel de draw en metricas_cadena.csv (no en
+    # assignments.parquet, que no lleva columna de validez — evita repetir
+    # el valor una vez por unidad de decisión por plan). Mismo umbral que
+    # ensemble.validity_filter en run_manifest.json (pop_tol*100, no
+    # pop_tol_effective — la tolerancia declarada, no la relajada por fallback).
+    df_mc["is_valid"] = df_mc["max_dev_pct"] <= pop_tol * 100
     # Primario: en run_dir (con run_id)
     df_mc.to_csv(os.path.join(run_dir, "metricas_cadena.csv"), index=False)
     df_ensemble.to_csv(os.path.join(run_dir, "ensemble_stats.csv"), index=False)
@@ -1121,9 +1440,6 @@ def analizar_region(
         print(f"\n  Figuras guardadas en {run_dir_figuras}/")
 
     # ── Resumen final ─────────────────────────────────────────────────────────
-    n_split_ref = int(df_ensemble.loc[ref_idx, "n_comunas_partidas"]) \
-        if not pd.isna(df_ensemble.loc[ref_idx, "n_comunas_partidas"]) else 0
-
     timestamp_end = datetime.datetime.now().isoformat(timespec="seconds")
 
     # ── run_manifest.json ─────────────────────────────────────────────────────
@@ -1147,6 +1463,44 @@ def analizar_region(
             region_name=region_name,
             n_units=n_units,
             n_islands_found=len(islands_gc),
+            extra={
+                "sampler_diagnostics": {
+                    "epsilon_recom":     epsilon_recom,
+                    "warmup_converged":  warmup_converged,
+                    "warmup_final_dev":  dev_warmed,
+                    "total_draws":       n_generados,
+                    "valid_draws":       len(planes),
+                    "valid_fraction":    (len(planes) / n_generados) if n_generados else 0.0,
+                    "pop_tol_used":      pop_tol,
+                    "warmup_steps":      n_warmup_efectivo,
+                    # gerrychain emite warnings de bipartición fallida vía
+                    # warnings.warn() dentro de recom()/bipartition_tree, sin
+                    # exponer un contador accesible desde MarkovChain. Mejora
+                    # futura: envolver el bucle de la cadena en
+                    # warnings.catch_warnings(record=True) y contar las
+                    # entradas correspondientes. Por ahora, null.
+                    "bipartition_warnings": None,
+                },
+                "population_source":  pop_source,
+                "population_measure": pop_label,
+                # Contrato de datos explícito entre assignments.parquet (todos
+                # los draws, sin filtrar) y ensemble_stats.csv (solo draws
+                # válidos) — ver metricas_cadena.csv:is_valid para la condición
+                # a nivel de draw y CAMBIO 3 de compare_scenarios.py, que
+                # verifica este threshold contra el pop_tol de la comparación.
+                "ensemble": {
+                    "assignments_scope":       "all_draws",
+                    "assignments_n_draws":     n_generados,
+                    "analysis_scope":          "valid_draws_only",
+                    "analysis_n_draws":        len(pares_validos),
+                    "validity_filter": {
+                        "metric":    "max_dev_pob_pct",
+                        "operator":  "<=",
+                        "threshold": pop_tol * 100,
+                    },
+                    "canonical_analysis_file": "ensemble_stats.csv",
+                },
+            },
         )
         save_run_manifest(manifest, run_dir)
     except Exception as e:
