@@ -89,6 +89,12 @@ def main() -> int:
     parser.add_argument("--data-dir", required=True,
                          help="Directorio raíz con SERVEL_2025/, TRICEL_2025/ "
                               "y SHP_APC2023_R* (ver .env.example).")
+    parser.add_argument(
+        "--base-dir",
+        default="./SHP_APC2023",
+        help="Carpeta SHP_APC2023 con shapefiles APC "
+             "(default: ./SHP_APC2023)"
+    )
     parser.add_argument("--servel-candidates", required=True,
                          help="CSV de candidatos SERVEL (CUT, cod_candidato, "
                               "nombre_candidato, partido, pacto, votos).")
@@ -117,7 +123,10 @@ def main() -> int:
           f"{candidates_servel['district_id'].nunique()} distritos.")
 
     print(f"  Importando proclamaciones TRICEL desde {args.data_dir}/TRICEL_2025 ...")
-    proclamations, proc_provenance = cd.import_proclamations(base_dir=args.data_dir)
+    proclamations, proc_provenance = cd.import_proclamations(
+        source_dir=args.data_dir,
+        base_dir=args.base_dir,
+    )
     print(f"  {proc_provenance['districts_loaded']} distritos leídos, "
           f"{proc_provenance['candidates_matched']} candidatos cruzados con SERVEL, "
           f"{len(proc_provenance['candidates_unmatched'])} sin cruce.")
