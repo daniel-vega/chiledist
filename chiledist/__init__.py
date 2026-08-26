@@ -423,7 +423,7 @@ __all__ = [
     "autocorrelation_function", "effective_sample_size", "gelman_rubin",
     "mixing_diagnostics", "plot_trace", "plot_acf",
     "plot_gelman_rubin_evolution", "run_multiple_chains",
-    "generate_redist_script", "load_redist_results", "RHAT_THRESHOLD",
+    "RHAT_THRESHOLD",
     # persistence
     "PlanEnsemble", "new_run_id", "sha256_file", "get_package_versions",
     "save_assignments_parquet", "build_run_manifest", "save_run_manifest",
