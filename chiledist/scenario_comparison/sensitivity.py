@@ -135,8 +135,8 @@ def position_plan_vigente(
     """
     import warnings
     import geopandas as gpd
-    from chiledist.metrics import cut_edges as _cut_edges, polsby_popper
-    from chiledist.split_metrics import plan_split_metrics
+    from ..engines.metrics import cut_edges as _cut_edges, polsby_popper
+    from ..split_metrics import plan_split_metrics
 
     districts = sorted(set(assignment.values()))
     n_districts = len(districts)

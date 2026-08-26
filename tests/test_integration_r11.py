@@ -263,7 +263,7 @@ def test_4_census2024_join_preserves_r11_population_total():
     that fixed the Lago Verde finding — see module docstring, finding #2.
     """
     import chiledist as cd
-    from chiledist.data import census2024 as c24
+    from chiledist.domain.data import census2024 as c24
 
     assert CENSUS_PATH.exists(), f"No se encontró {CENSUS_PATH}"
 

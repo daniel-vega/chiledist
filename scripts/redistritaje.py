@@ -64,13 +64,13 @@ from functools import partial
 
 import chiledist as cd
 from chiledist.config import ScenarioConfig, SCENARIOS, load_scenario
-from chiledist.persistence import (
+from chiledist.domain.persistence import (
     new_run_id,
     sha256_file,
     build_run_manifest,
     save_run_manifest,
 )
-from chiledist.samplers.recom import run_recom_chain
+from chiledist.engines.samplers.recom import run_recom_chain
 
 
 # Reason estable/machine-readable para status="sin_particion": el preflight de
@@ -367,7 +367,7 @@ def enrich_population(
             print("  ⚠ --pop-source manzana requiere --census-path con "
                   "Base_manzana_entidad_CPV24.csv. Usando viviendas como fallback.")
             return distritos, "viviendas"
-        from chiledist.data import census2024 as c24
+        from chiledist.domain.data import census2024 as c24
         try:
             mz  = c24.load_manzana_censo2024(census_path)
             gdf = c24.join_manzana_to_apc(distritos, mz)
@@ -382,7 +382,7 @@ def enrich_population(
             print("  ⚠ --pop-source censo2024 requiere --census-path. "
                   "Usando viviendas como fallback.")
             return distritos, "viviendas"
-        from chiledist.data import census2024 as c24
+        from chiledist.domain.data import census2024 as c24
         try:
             census = c24.load_census2024(census_path)
             gdf = c24.join_census_multilevel(
@@ -399,7 +399,7 @@ def enrich_population(
             print("  ⚠ --pop-source padron requiere --padron-path. "
                   "Usando viviendas como fallback.")
             return distritos, "viviendas"
-        from chiledist.data import servel as sv
+        from chiledist.domain.data import servel as sv
         try:
             padron = sv.load_padron_electoral(padron_path)
             gdf    = sv.join_padron_to_apc(

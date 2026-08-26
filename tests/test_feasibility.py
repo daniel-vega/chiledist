@@ -7,7 +7,7 @@ Unit tests for the deterministic population feasibility preflight
 
 import pytest
 
-from chiledist.feasibility import (
+from chiledist.rules.feasibility import (
     PopulationFeasibilityResult,
     REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND,
     check_population_feasibility,

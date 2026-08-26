@@ -25,16 +25,18 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from chiledist.electoral import (
+from chiledist.electoral import normalize_party_name
+from chiledist.engines.allocation import (
     dhondt,
     dhondt_binivel,
     run_electoral_plan,
     run_electoral_plan_binivel,
     plan_electoral_metrics,
     national_shares,
+)
+from chiledist.evaluation import (
     gallagher_index,
     seat_bonus,
-    normalize_party_name,
 )
 
 

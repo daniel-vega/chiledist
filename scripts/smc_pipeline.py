@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 
 import chiledist as cd
 from chiledist.config import load_scenario, SCENARIOS
-from chiledist.data import REGIONES_APC
+from chiledist.domain.data import REGIONES_APC
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -16,8 +16,8 @@ import geopandas as gpd
 import scipy.sparse as sp
 from shapely.geometry import Point, Polygon
 
-from chiledist.equivalence import CRS_METRIC
-from chiledist.metrics import cut_edges, polsby_popper, population_balance, reock
+from chiledist.domain.equivalence import CRS_METRIC
+from chiledist.engines.metrics import cut_edges, polsby_popper, population_balance, reock
 
 
 def _gdf(geom) -> gpd.GeoDataFrame:

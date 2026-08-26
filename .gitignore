@@ -8,3 +8,5 @@
 
 # Bundles
 **/bundles/
+__pycache__/
+*.pyc

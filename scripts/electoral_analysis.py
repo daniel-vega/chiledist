@@ -74,9 +74,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.data import servel as sv
-from chiledist.data import census2024 as c24
-from chiledist.persistence import PlanEnsemble
+from chiledist.domain.data import servel as sv
+from chiledist.domain.data import census2024 as c24
+from chiledist.domain.persistence import PlanEnsemble
 
 BG          = "#F8F7F4"
 C_UNI       = "#1A5C8A"   # uninivel

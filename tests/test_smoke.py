@@ -162,14 +162,14 @@ class TestImportWithoutGerrychain(unittest.TestCase):
         self.assertIsNotNone(cd.SCENARIO_APC_SOFT)
 
     def test_plan_ensemble_importable(self):
-        from chiledist.persistence import PlanEnsemble
+        from chiledist.domain.persistence import PlanEnsemble
         self.assertTrue(hasattr(PlanEnsemble, "load"))
         self.assertTrue(hasattr(PlanEnsemble, "save"))
         self.assertTrue(hasattr(PlanEnsemble, "filter"))
         self.assertTrue(hasattr(PlanEnsemble, "sample"))
 
     def test_chiledist_map_importable(self):
-        from chiledist.map import ChileDistMap
+        from chiledist.domain.map import ChileDistMap
         self.assertTrue(hasattr(ChileDistMap, "from_apc"))
         self.assertTrue(hasattr(ChileDistMap, "to_dict"))
 

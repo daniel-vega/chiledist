@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 import chiledist as cd
-from chiledist.persistence import (
+from chiledist.domain.persistence import (
     PlanEnsemble,
     build_run_manifest,
     get_package_versions,

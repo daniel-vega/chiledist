@@ -16,8 +16,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-import chiledist.malapportionment as mala
-from chiledist.malapportionment import (
+import chiledist.evaluation.malapportionment as mala
+from chiledist.evaluation.malapportionment import (
     samuels_snyder_index,
     loosemore_hanby_malapportionment,
     gini_personas_por_escano,

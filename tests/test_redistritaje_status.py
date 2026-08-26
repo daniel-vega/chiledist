@@ -17,7 +17,7 @@ import re
 import pytest
 
 import chiledist as cd
-from chiledist.feasibility import REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND
+from chiledist.rules.feasibility import REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND
 
 
 def _import_redistritaje():

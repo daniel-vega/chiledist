@@ -30,7 +30,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from chiledist.data import census2024 as c24
+from chiledist.domain.data import census2024 as c24
 
 
 def _make_gdf_apc_single_region() -> gpd.GeoDataFrame:

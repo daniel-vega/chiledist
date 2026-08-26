@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import geopandas as gpd
 
-from chiledist.equivalence import CRS_METRIC
-from chiledist.hierarchy import contract_to_decision_units, validate_hierarchy
+from chiledist.domain.equivalence import CRS_METRIC
+from chiledist.domain.hierarchy import contract_to_decision_units, validate_hierarchy
 from shapely.geometry import Polygon
 
 

@@ -16,7 +16,7 @@ dict (see tests/test_entrypoints_n_distritos.py).
 
 import pytest
 
-from chiledist.data import REGIONES_APC
+from chiledist.domain.data import REGIONES_APC
 
 
 class TestRegionesApc:
@@ -67,5 +67,5 @@ class TestRegionesApc:
 
     def test_importable_via_documented_path(self):
         """The exact import path the affected scripts use."""
-        from chiledist.data import REGIONES_APC as imported
+        from chiledist.domain.data import REGIONES_APC as imported
         assert imported is REGIONES_APC

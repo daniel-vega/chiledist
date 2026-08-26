@@ -25,8 +25,8 @@ import geopandas as gpd
 import networkx as nx
 from shapely.geometry import Polygon
 
-from chiledist.equivalence import CRS_METRIC
-from chiledist.graph import build_graph, contract_graph
+from chiledist.domain.equivalence import CRS_METRIC
+from chiledist.domain.graph import build_graph, contract_graph
 
 
 def _grid_gdf() -> gpd.GeoDataFrame:

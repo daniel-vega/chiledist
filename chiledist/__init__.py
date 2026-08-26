@@ -39,7 +39,7 @@ Referencias
     gerrychain (Python):     https://gerrychain.readthedocs.io
 """
 
-__version__ = "0.2.0"
+from ._version import __version__
 __author__  = "chiledist"
 
 # Configuración de escenarios
@@ -54,15 +54,15 @@ from .config import (
     save_scenario,
 )
 
-# Preflight de factibilidad poblacional
-from .feasibility import (
+# Preflight de factibilidad poblacional (capa 1 — rules)
+from .rules.feasibility import (
     PopulationFeasibilityResult,
     check_population_feasibility,
     REASON_INDIVISIBLE_UNIT_EXCEEDS_BOUND,
 )
 
-# Jerarquía y contracción de unidades
-from .hierarchy import (
+# Jerarquía y contracción de unidades (capa 0 — domain)
+from .domain.hierarchy import (
     contract_to_decision_units,
     build_decision_layer,
     validate_hierarchy,
@@ -90,8 +90,8 @@ from .split_metrics import (
     plan_split_metrics,
 )
 
-# Equivalencia USA-Chile
-from .equivalence import (
+# Equivalencia USA-Chile (capa 0 — domain)
+from .domain.equivalence import (
     get_equivalence_table,
     get_unit,
     get_analog,
@@ -105,8 +105,8 @@ from .equivalence import (
     POPULATION_FIELDS,
 )
 
-# Carga de datos
-from .loader import (
+# Carga de datos (capa 0 — domain)
+from .domain.loader import (
     build_national,
     load_layer,
     load_all,
@@ -120,8 +120,8 @@ from .loader import (
     CRS_GEO,
 )
 
-# Grafos y matrices
-from .graph import (
+# Grafos y matrices (capa 0 — domain)
+from .domain.graph import (
     build_graph,
     contract_graph,
     save_graph,
@@ -131,8 +131,8 @@ from .graph import (
     subgraph_region,
 )
 
-# Métricas
-from .metrics import (
+# Métricas (capa 2 — engines)
+from .engines.metrics import (
     polsby_popper,
     reock,
     convex_hull_ratio,
@@ -146,8 +146,8 @@ from .metrics import (
     plan_summary,
 )
 
-# Fuentes de población externas (Censo 2024 + SERVEL)
-from . import data as data
+# Fuentes de población externas (Censo 2024 + SERVEL) (capa 0 — domain)
+from .domain import data as data
 
 # Comparación de escenarios
 from .scenario_comparison import (
@@ -174,8 +174,8 @@ from .scenario_comparison import (
     PESOS_DEFAULT,
 )
 
-# Análisis continuo de la frontera Pareto (barrido de split_penalty)
-from .pareto_sweep import (
+# Análisis continuo de la frontera Pareto (barrido de split_penalty) (capa 3 — inference)
+from .inference.pareto_sweep import (
     sweep_split_penalty,
     build_tradeoff_frontier,
     detect_knee_point,
@@ -186,8 +186,8 @@ from .pareto_sweep import (
     METRIC_LABELS,
 )
 
-# Malapportionment geográfico: índices comparables internacionalmente
-from .malapportionment import (
+# Malapportionment geográfico: índices comparables internacionalmente (capa 4 — evaluation)
+from .evaluation.malapportionment import (
     samuels_snyder_index,
     loosemore_hanby_malapportionment,
     gini_personas_por_escano,
@@ -201,8 +201,8 @@ from .malapportionment import (
     BENCHMARK_MALAPPORTIONMENT,
 )
 
-# Ensemble electoral: análisis distribucional sobre ensembles de planes
-from .electoral_ensemble import (
+# Ensemble electoral: análisis distribucional sobre ensembles de planes (capa 3 — inference)
+from .inference.electoral_ensemble import (
     run_electoral_ensemble,
     ensemble_gallagher,
     ensemble_seat_bonus,
@@ -214,8 +214,8 @@ from .electoral_ensemble import (
     plot_ensemble_ecdf,
 )
 
-# Electoral: D'Hondt, magnitudes, proporcionalidad
-from .fairshare import (
+# Fair share biproporcional (capa 2 — engines)
+from .engines.fairshare import (
     fair_share_matrix,
     results_to_matrix,
     l1_distance_fair_share,
@@ -224,29 +224,8 @@ from .fairshare import (
     fair_share_summary,
 )
 
+# Constantes legales del sistema electoral (lo que queda de electoral/)
 from .electoral import (
-    dhondt,
-    dhondt_binivel,
-    assign_seat_magnitudes,
-    assign_seat_magnitudes_dhondt,
-    aggregate_votes,
-    run_electoral_plan,
-    run_electoral_plan_binivel,
-    national_shares,
-    gallagher_index,
-    loosemore_hanby,
-    rae_index,
-    effective_number_of_parties,
-    proportionality_summary,
-    plan_electoral_metrics,
-    # malapportionment
-    personas_por_escano,
-    peso_relativo_del_voto,
-    weighted_population_balance,
-    comparar_magnitudes,
-    umbral_efectivo,
-    margen_ultimo_escano,
-    seat_bonus,
     TOTAL_ESCANOS_CAMARA,
     MIN_ESCANOS_DISTRITO,
     MAX_ESCANOS_DISTRITO,
@@ -256,8 +235,37 @@ from .electoral import (
     normalize_party_name,
 )
 
-# Persistencia reproducible
-from .persistence import (
+# Asignación de escaños: D'Hondt, magnitudes, agregador de plan (capa 2 — engines)
+from .engines.allocation import (
+    dhondt,
+    dhondt_binivel,
+    assign_seat_magnitudes,
+    assign_seat_magnitudes_dhondt,
+    aggregate_votes,
+    run_electoral_plan,
+    run_electoral_plan_binivel,
+    national_shares,
+    comparar_magnitudes,
+    plan_electoral_metrics,
+)
+
+# Proporcionalidad y malapportionment distrital (capa 4 — evaluation)
+from .evaluation import (
+    gallagher_index,
+    loosemore_hanby,
+    rae_index,
+    effective_number_of_parties,
+    proportionality_summary,
+    seat_bonus,
+    personas_por_escano,
+    peso_relativo_del_voto,
+    weighted_population_balance,
+    umbral_efectivo,
+    margen_ultimo_escano,
+)
+
+# Persistencia reproducible (capa 0 — domain)
+from .domain.persistence import (
     PlanEnsemble,
     new_run_id,
     sha256_file,
@@ -267,12 +275,12 @@ from .persistence import (
     save_run_manifest,
 )
 
-# Contenedor de datos cargados
-from .map import ChileDistMap
+# Contenedor de datos cargados (capa 0 — domain)
+from .domain.map import ChileDistMap
 
-# Muestreo: ReCom, SMC y diagnósticos de convergencia
-from . import samplers as samplers
-from .samplers import (
+# Muestreo: ReCom, SMC y diagnósticos de convergencia (capa 2 — engines)
+from .engines import samplers as samplers
+from .engines.samplers import (
     # recom
     initial_partition,
     run_recom,

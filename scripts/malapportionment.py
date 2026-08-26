@@ -65,8 +65,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.data import servel as sv
-from chiledist.data import census2024 as c24
+from chiledist.domain.data import servel as sv
+from chiledist.domain.data import census2024 as c24
 
 # ── Nombres cortos para los 28 distritos electorales vigentes ─────────────────
 NOMBRES_DIST = {

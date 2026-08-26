@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from chiledist.pareto_sweep import (
+from chiledist.inference.pareto_sweep import (
     SWEEP_METRICS,
     METRIC_DIRECTIONS,
     METRIC_LABELS,

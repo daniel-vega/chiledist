@@ -14,7 +14,9 @@ import pytest
 from chiledist.electoral import (
     MAGNITUDES_LEGALES_LEY20840,
     TOTAL_ESCANOS_CAMARA,
-    comparar_magnitudes,
+)
+from chiledist.engines.allocation import comparar_magnitudes
+from chiledist.evaluation import (
     personas_por_escano,
     peso_relativo_del_voto,
 )

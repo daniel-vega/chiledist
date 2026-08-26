@@ -507,7 +507,7 @@ def plot_equivalence_table(
     save_path: Optional[str] = None,
 ) -> plt.Figure:
     """Visualiza la tabla de equivalencia USA-Chile como figura."""
-    from .equivalence import get_equivalence_table
+    from .domain.equivalence import get_equivalence_table
 
     df = get_equivalence_table("compact")
     df.columns = ["Nivel", "USA", "Chile INE",
