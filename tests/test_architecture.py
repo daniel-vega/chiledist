@@ -299,25 +299,15 @@ class TestNumericEquivalence:
     # -- d) ReCom sintético: misma semilla → mismo assignment.
     #       run_recom_chain() es "la única fuente de verdad para el muestreo"
     #       (su propio docstring) — es la función de verdad de bajo nivel que
-    #       scripts/redistritaje.py ejecuta en producción, a diferencia de
-    #       run_recom() (una envoltura de conveniencia con dos bugs latentes
-    #       no relacionados con esta refactorización — ver nota abajo — que
-    #       la vuelven no invocable hoy). gerrychain usa random.random() del
-    #       stdlib internamente para el muestreo de árboles de expansión, NO
-    #       numpy — sembrar random.seed() (no np.random.seed) es lo que
-    #       controla la reproducibilidad real de la cadena.
+    #       scripts/redistritaje.py ejecuta en producción. run_recom() (la
+    #       envoltura de conveniencia de alto nivel) tenía varios bugs
+    #       latentes que la volvían no invocable — corregidos en la Etapa 3
+    #       (BUGs 2 y 3, ver tests/test_recom.py). gerrychain usa
+    #       random.random() del stdlib internamente para el muestreo de
+    #       árboles de expansión, NO numpy — sembrar random.seed() (no
+    #       np.random.seed) es lo que controla la reproducibilidad real de
+    #       la cadena.
     def test_recom_reproducibilidad_por_semilla(self):
-        # tests/test_persistence.py y tests/test_smoke.py inyectan
-        # sys.modules["gerrychain"] = MagicMock() a nivel de módulo, sin
-        # limpiarlo después — si ya corrieron en esta sesión de pytest,
-        # `import gerrychain` devuelve el mock en vez del paquete real.
-        # Purgar las entradas de gerrychain antes de importar fuerza un
-        # import genuino, sin importar el orden de ejecución de los tests.
-        import sys
-        for mod_name in list(sys.modules):
-            if mod_name == "gerrychain" or mod_name.startswith("gerrychain."):
-                del sys.modules[mod_name]
-
         gc = pytest.importorskip("gerrychain")
         import random
 

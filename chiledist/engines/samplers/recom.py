@@ -8,6 +8,8 @@ Compatible con gerrychain 0.3.2. Para SMC ver samplers.smc.
 """
 
 from __future__ import annotations
+import functools
+import random
 import warnings
 from typing import Optional
 
@@ -108,6 +110,11 @@ def run_recom(
     """
     try:
         import gerrychain as gc
+        from gerrychain.proposals import recom as _recom_proposal
+        try:
+            from gerrychain.accept import always_accept
+        except ImportError:
+            always_accept = gc.accept.always_accept
     except ImportError:
         raise ImportError(
             "gerrychain no está instalado. "
@@ -117,6 +124,10 @@ def run_recom(
     if crs_metric is None:
         crs_metric = get_optimal_crs(gdf)
 
+    # gerrychain usa random.random() del stdlib internamente para el
+    # muestreo de árboles de expansión (recom), no numpy — sembrar solo
+    # np.random no controla la reproducibilidad real de la cadena.
+    random.seed(random_seed)
     np.random.seed(random_seed)
     gdf = gdf.copy().reset_index(drop=True)
 
@@ -159,7 +170,7 @@ def run_recom(
         print(f"  Islas conectadas en gerrychain "
               f"({island_policy}): {n_connected}/{len(isolated)}")
 
-    if not graph.is_connected():
+    if not nx.is_connected(graph):
         n_comp = len(list(nx.connected_components(graph)))
         warnings.warn(
             f"El grafo gerrychain tiene {n_comp} componentes desconectados. "
@@ -171,8 +182,14 @@ def run_recom(
         assignment_col = _make_initial_assignment(gdf, id_col, pop_col,
                                                    n_districts, graph)
     else:
-        gdf["__init_dist__"] = gdf[id_col].map(initial_assignment)
-        assignment_col = "__init_dist__"
+        # {nodo: distrito}, no un nombre de columna — gc.Partition espera
+        # un dict o un atributo ya presente en graph.nodes[...] (ver
+        # _make_initial_assignment). Los nodos del grafo están indexados
+        # 0..n-1 en el mismo orden que gdf (reset_index arriba).
+        assignment_col = {
+            i: initial_assignment[gdf[id_col].iloc[i]]
+            for i in range(len(gdf))
+        }
 
     updaters = {
         "population": gc.updaters.Tally(pop_col, alias="population"),
@@ -199,10 +216,18 @@ def run_recom(
             lambda p: p["splits"].total == 0
         )
 
+    ideal_pop = gdf[pop_col].sum() / n_districts
+    proposal = functools.partial(
+        _recom_proposal,
+        pop_col=pop_col,
+        pop_target=ideal_pop,
+        epsilon=pop_tolerance,
+    )
+
     chain = gc.MarkovChain(
-        proposal=gc.proposals.recom,
+        proposal=proposal,
         constraints=constraints,
-        accept=gc.accept.always_accept,
+        accept=always_accept,
         initial_state=partition,
         total_steps=n_steps,
     )
@@ -218,11 +243,13 @@ def run_recom(
         plans.append(assignment)
 
         if step % save_every == 0:
+            # state["population"] es un dict plano {distrito: población}
+            # en esta versión de gerrychain (no un objeto con .ideal_pop);
+            # se reutiliza el ideal_pop ya calculado más arriba.
             pop_dev = max(
-                abs(pop - state["population"].ideal_pop)
-                / state["population"].ideal_pop
+                abs(pop - ideal_pop) / ideal_pop
                 for pop in state["population"].values()
-            ) * 100
+            ) * 100 if ideal_pop > 0 else 0.0
             n_cuts = len(state["cut_edges"])
             metrics.append({
                 "step":        step,
@@ -351,15 +378,24 @@ def run_recom_chain(
 
 
 def _make_initial_assignment(gdf, id_col, pop_col, n_districts, graph):
-    """Genera una asignación inicial aleatoria válida."""
-    try:
-        import gerrychain as gc
-        return gc.constraints.contiguous_bfs(graph, n_districts)
-    except Exception:
-        warnings.warn("No se pudo generar partición contigua inicial. "
-                      "Usando asignación por módulo.")
-        gdf["__init__"] = [i % n_districts for i in range(len(gdf))]
-        return "__init__"
+    """
+    Genera una asignación inicial {nodo: distrito} por módulo.
+
+    gc.constraints.contiguous_bfs() en gerrychain 0.3.2 *valida* una
+    partición existente (recibe un Partition, retorna bool) — no genera
+    una, así que no sirve como generador de partición inicial aquí. Se
+    retorna un dict {nodo: distrito} en vez de un nombre de columna:
+    gc.Partition(assignment=...) espera un dict o un atributo ya presente
+    en los nodos del grafo, y una columna agregada a `gdf` después de que
+    el grafo ya fue construido desde `gdf` nunca llega a graph.nodes[...].
+    """
+    warnings.warn(
+        "contiguous_bfs no genera particiones en esta versión de "
+        "gerrychain (solo valida una existente) — usando asignación "
+        "inicial por módulo.",
+        stacklevel=2,
+    )
+    return {node: i % n_districts for i, node in enumerate(graph.nodes())}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
