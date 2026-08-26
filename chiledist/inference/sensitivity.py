@@ -1,6 +1,6 @@
 """
-scenario_comparison.sensitivity
-==================================
+inference.sensitivity
+========================
 Posicionamiento del plan vigente en el espacio de métricas del ensemble
 (H1/H2), frecuencia de comunas partidas, y tests de sensibilidad
 metodológica / concordancia de ranking (H5).
@@ -14,7 +14,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from .scoring import METRICAS_STD
+from ..evaluation.scoring import METRICAS_STD
 
 # ──────────────────────────────────────────────────────────────────────────────
 # split_frequency_table
@@ -135,8 +135,11 @@ def position_plan_vigente(
     """
     import warnings
     import geopandas as gpd
-    from ..engines.metrics import cut_edges as _cut_edges, polsby_popper
-    from ..split_metrics import plan_split_metrics
+    from ..engines.metrics import (
+        cut_edges as _cut_edges,
+        polsby_popper,
+        plan_split_metrics,
+    )
 
     districts = sorted(set(assignment.values()))
     n_districts = len(districts)

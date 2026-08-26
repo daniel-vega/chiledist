@@ -1,14 +1,22 @@
 """
-scenario_comparison.scoring
-==============================
-Configuración de puntaje compuesto (:class:`ScoringConfig`) y constantes
-de estilo/métricas estándar compartidas por el resto del paquete.
+evaluation.scoring
+=====================
+Puntaje compuesto ponderado entre escenarios — capa 4 (Political Evaluation).
+
+``PESOS_DEFAULT`` encierra un juicio de valor explícito: cuánto pesa cada
+métrica (balance poblacional, compacidad, comunas partidas, ...) frente a
+las demás al decidir qué escenario es "mejor". ``ScoringConfig`` permite
+sobreescribir esos pesos; ``rank_scenarios`` aplica la configuración a una
+tabla de comparación y produce el ranking.
 """
 
 from __future__ import annotations
 
 import dataclasses
 from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
 
 # ── Constantes de visualización ───────────────────────────────────────────────
 
@@ -133,3 +141,96 @@ class ScoringConfig:
         if extra_directions:
             directions.update(extra_directions)
         return cls(weights=weights, directions=directions, normalization=normalization)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# rank_scenarios
+# ──────────────────────────────────────────────────────────────────────────────
+
+def rank_scenarios(
+    df_comp: pd.DataFrame,
+    weights: Optional[Dict[str, float]] = None,
+    scoring_config: Optional[ScoringConfig] = None,
+) -> pd.DataFrame:
+    """
+    Ordena escenarios por score compuesto ponderado.
+
+    Cada métrica se normaliza a [0, 1] según la estrategia de ScoringConfig;
+    el score parcial es val_norm (max-better) o 1 − val_norm (min-better).
+    La suma ponderada forma el composite_score (mayor = mejor).
+
+    Parameters
+    ----------
+    weights : dict, opcional
+        Pesos por columna base, ej. {"max_dev_pob_pct": 0.4}.
+        Si None y scoring_config es None, usa PESOS_DEFAULT.
+        Ignorado si scoring_config está presente.
+    scoring_config : ScoringConfig, opcional
+        Configuración completa (pesos + direcciones + normalización).
+        Tiene precedencia sobre `weights`.
+
+    Returns
+    -------
+    df_comp con columnas adicionales:
+        composite_score  — puntaje total (mayor = mejor)
+        rank             — posición ordinal (1 = mejor)
+        score_<col>      — contribución parcial de cada métrica al score
+
+    Examples
+    --------
+    >>> tabla = cd.compare_ensembles(ensembles)
+    >>> cd.rank_scenarios(tabla)
+
+    >>> # Priorizar compacidad
+    >>> sc = cd.ScoringConfig.from_weights({"pp_promedio": 0.7,
+    ...                                     "max_dev_pob_pct": 0.3})
+    >>> cd.rank_scenarios(tabla, scoring_config=sc)
+    """
+    if scoring_config is None:
+        if weights is not None:
+            scoring_config = ScoringConfig.from_weights(weights)
+        else:
+            scoring_config = ScoringConfig.default()
+
+    df_out = df_comp.copy()
+    score  = pd.Series(np.zeros(len(df_out)), index=df_out.index)
+
+    for col, w in scoring_config.weights.items():
+        if w == 0.0:
+            continue
+        median_col = f"{col}_median"
+        if median_col not in df_out.columns:
+            continue
+        vals = pd.to_numeric(df_out[median_col], errors="coerce")
+        if vals.isna().all():
+            continue
+
+        direction = scoring_config.directions.get(col, "min")
+
+        if scoring_config.normalization == "minmax":
+            vmin, vmax = vals.min(), vals.max()
+            if abs(vmax - vmin) < 1e-12:
+                norm = pd.Series(0.5, index=vals.index)
+            else:
+                norm = (vals - vmin) / (vmax - vmin)
+
+        elif scoring_config.normalization == "zscore":
+            std = vals.std()
+            if std < 1e-12:
+                norm = pd.Series(0.5, index=vals.index)
+            else:
+                z = (vals - vals.mean()) / std
+                zmin, zmax = z.min(), z.max()
+                norm = (z - zmin) / (zmax - zmin + 1e-12)
+
+        elif scoring_config.normalization == "rank":
+            norm = vals.rank(pct=True, na_option="keep")
+
+        partial = norm if direction == "max" else (1.0 - norm)
+        partial = partial.fillna(0.0)
+        score += w * partial
+        df_out[f"score_{col}"] = (w * partial).round(4)
+
+    df_out["composite_score"] = score.round(4)
+    df_out["rank"] = df_out["composite_score"].rank(ascending=False).astype(int)
+    return df_out.sort_values("rank").reset_index(drop=True)

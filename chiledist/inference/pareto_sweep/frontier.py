@@ -21,7 +21,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from chiledist.scenario_comparison import pareto_frontier_nd
+from ..comparison import pareto_frontier_nd
 
 # Métricas estándar del barrido
 SWEEP_METRICS: list[str] = [

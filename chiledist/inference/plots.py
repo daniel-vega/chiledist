@@ -1,6 +1,6 @@
 """
-scenario_comparison.plots
-============================
+inference.plots
+==================
 Visualización de tradeoffs entre escenarios: scatter con frontera de
 Pareto, boxplots comparativos y radar de métricas normalizadas.
 """
@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from .scoring import ScoringConfig, COLORES_DEFAULT, NOMBRES_CORTOS, METRICAS_STD
-from .compare import pareto_frontier_nd
+from ..evaluation.scoring import ScoringConfig, COLORES_DEFAULT, NOMBRES_CORTOS, METRICAS_STD
+from .comparison import pareto_frontier_nd
 
 _BG = "#F8F7F4"
 
