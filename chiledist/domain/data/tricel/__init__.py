@@ -137,17 +137,42 @@ def _read_candidatos_sheet(path: "str | Path") -> pd.DataFrame:
     return real[["num_tricel", "candidate_name", "party_raw", "votes_tricel"]]
 
 
-def _read_electos_sheet(path: "str | Path") -> pd.DataFrame:
-    """Lee la hoja ELECTOS: lista ya resuelta de candidatos electos + votos."""
+#: Etiquetas de la columna de votos en ELECTOS que no ameritan registrarse
+#: como anomalía en provenance — variación normal entre distritos.
+_EXPECTED_ELECTOS_VOTES_LABELS = {"TOTALES", "VOTOS"}
+
+
+def _read_electos_sheet(path: "str | Path") -> "tuple[pd.DataFrame, str]":
+    """
+    Lee la hoja ELECTOS: lista ya resuelta de candidatos electos + votos.
+
+    La estructura de 4 columnas es consistente en los 28 distritos
+    (verificado por inspección directa), pero la etiqueta de la 4ta
+    columna (votos) no lo es: "TOTALES" en 11 distritos, "VOTOS" en 16,
+    y "VOCALES" en Distrito-10 — un error tipográfico del archivo
+    oficial TRICEL, tratado igual como columna de votos. Un rename por
+    nombre exacto solo capturaba "TOTALES" y fallaba con KeyError en
+    los otros 17 distritos — se renombra por posición en su lugar.
+
+    Returns
+    -------
+    (df, votes_col_label) — df con columnas candidate_name/votes_final,
+    y la etiqueta original de la columna de votos (para que
+    import_proclamations() registre la anomalía en provenance cuando no
+    es "TOTALES" ni "VOTOS").
+    """
     raw = pd.read_excel(path, sheet_name="ELECTOS", header=6)
-    raw = raw.rename(columns={
-        "CANDIDATOS ELECTOS": "candidate_name",
-        "TOTALES": "votes_final",
-    })
+    votes_col_label = str(raw.columns[3])
+
+    # Renombrar por posición — robusto ante variaciones
+    # de etiqueta entre distritos ("TOTALES"/"VOTOS"/"VOCALES")
+    raw = raw.iloc[:, [2, 3]].copy()
+    raw.columns = ["candidate_name", "votes_final"]
+
     real = raw[raw["candidate_name"].notna()].copy()
     real["candidate_name"] = real["candidate_name"].astype(str).str.strip()
     real["votes_final"] = pd.to_numeric(real["votes_final"], errors="coerce").fillna(0).astype(int)
-    return real[["candidate_name", "votes_final"]]
+    return real[["candidate_name", "votes_final"]], votes_col_label
 
 
 def import_proclamations(
@@ -192,11 +217,17 @@ def import_proclamations(
     -------
     (df_canonical, provenance) donde df_canonical tiene exactamente las
     columnas de ProclamationRecord y provenance es un dict con:
-        source                : "TRICEL"
-        districts_loaded      : int
-        candidates_matched    : int
-        candidates_unmatched  : list[str]  # nombres de ELECTOS sin cruce
-        sha256_by_district    : dict[int, str]
+        source                  : "TRICEL"
+        districts_loaded        : int
+        candidates_matched      : int
+        candidates_unmatched    : list[str]  # nombres de ELECTOS sin cruce
+        sha256_by_district      : dict[int, str]
+        votes_column_anomalies  : dict[str, str]  # {distrito: etiqueta}
+            distritos donde la columna de votos de ELECTOS no se llama
+            "TOTALES" ni "VOTOS" — ej. {"10": "VOCALES"} (columna
+            etiquetada "VOCALES" en el archivo TRICEL oficial de
+            Distrito-10, probablemente error tipográfico, tratada igual
+            como votos — ver _read_electos_sheet()).
     """
     if source_dir is None:
         source_dir = get_tricel_dir()
@@ -214,6 +245,7 @@ def import_proclamations(
     filas = []
     unmatched: list[str] = []
     sha256_by_district: dict[int, str] = {}
+    votes_column_anomalies: dict[str, str] = {}
 
     for path in archivos:
         district_id = _district_id_from_filename(path)
@@ -221,7 +253,9 @@ def import_proclamations(
         sha256_by_district[district_id] = prov.sha256
 
         candidatos = _read_candidatos_sheet(path)
-        electos = _read_electos_sheet(path)
+        electos, votes_col_label = _read_electos_sheet(path)
+        if votes_col_label not in _EXPECTED_ELECTOS_VOTES_LABELS:
+            votes_column_anomalies[str(district_id)] = votes_col_label
 
         name_to_num = dict(zip(
             candidatos["candidate_name"].apply(normalize_commune_name),
@@ -263,6 +297,7 @@ def import_proclamations(
         "candidates_matched": len(filas),
         "candidates_unmatched": unmatched,
         "sha256_by_district": sha256_by_district,
+        "votes_column_anomalies": votes_column_anomalies,
     }
     return df_canonical, provenance_info
 
