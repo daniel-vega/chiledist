@@ -48,6 +48,8 @@ import pandas as pd
 import geopandas as gpd
 
 from . import provenance
+from ...hierarchy import normalize_cut
+from ...utils import normalize_party_name
 
 
 # ── Aliases de columnas aceptados ────────────────────────────────────────────
@@ -594,8 +596,7 @@ def import_candidates(
     NORMALIZED: aplica normalize_commune_name + COMMUNE_NAME_ALIASES para
         resolver comuna → CUT (vía commune_cut_map), normaliza el CUT
         resultante con chiledist.domain.hierarchy.normalize_cut, y
-        normaliza party_id con
-        chiledist.engines.allocation.utils.normalize_party_name.
+        normaliza party_id con chiledist.domain.utils.normalize_party_name.
     CANONICAL: filtra filas administrativas con filter_administrative_rows,
         agrega por candidato (Σ votos sobre las mesas de su distrito) y
         produce un DataFrame con el schema exacto de CandidateRecord.
@@ -643,14 +644,6 @@ def import_candidates(
                 "o commune_cut_map explícito."
             )
         commune_cut_map = _build_commune_cut_map(base_dir)
-
-    # Import diferido: domain/ dependiendo de engines/ es una inversión de
-    # capa deliberada y documentada (ver ARCHITECTURE.md § Inversión de
-    # dependencia documentada) — se reutiliza la MISMA normalización que
-    # dhondt_binivel() usa para nombres de partido/pacto, en vez de
-    # duplicar la lógica localmente.
-    from ...hierarchy import normalize_cut
-    from chiledist.engines.allocation.utils import normalize_party_name
 
     archivos = _read_raw_servel_diputados(source_path)
 

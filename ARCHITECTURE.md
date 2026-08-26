@@ -157,39 +157,22 @@ esa: extraer `proportionality.py`, `district_malapportionment.py` y
 (por ejemplo `engines/indices.py`), dejando `evaluation/` solo con
 `PESOS_DEFAULT`/`rank_scenarios`/`reforma_context`.
 
-### 4.1 Excepción puntual: `domain/data/servel/__init__.py` → `engines/allocation/utils`
+### 4.1 Excepción resuelta: `normalize_party_name()`
 
-Agregada durante la refactorización de la capa de datos electorales SERVEL
-(`import_candidates`). `domain/data/servel/__init__.py::import_candidates()` reutiliza
-`chiledist.engines.allocation.utils.normalize_party_name()` para normalizar
-`party_id` — la misma función que usa `dhondt_binivel()` para resolver
-`pacto_map`, en vez de duplicar esa lógica localmente en `domain/`.
+Durante la refactorización de la capa de datos electorales SERVEL,
+`domain/data/servel/__init__.py::import_candidates()` necesitó reutilizar
+`normalize_party_name()` (la misma normalización que usa `dhondt_binivel()`
+para resolver `pacto_map`), que en ese momento vivía en
+`engines/allocation/utils.py` — una inversión `domain/ → engines/` más
+severa que la de §4 (aquí sí era la capa 0 importando de la capa 2, sin
+la categoría "fórmula descriptiva neutral" que justifica §4). Se
+documentó como excepción puntual y explícita mientras se evaluaba.
 
-A diferencia de la inversión de §4 (que es un patrón sistemático a lo
-ancho de varios archivos), esta es una **excepción puntual, única y
-documentada explícitamente** en
-`tests/test_architecture.py::TestLayerBoundaries._DOMAIN_FORWARD_IMPORT_EXCEPTIONS`
-(un allowlist exacto por `(archivo, módulo importado)`, no un wildcard —
-cualquier otra violación en `domain/` sigue fallando el test).
-
-Es más severa que la de §4: aquí sí es `domain/` (capa 0, la más baja)
-importando de `engines/` (capa 2) — no hay categoría "fórmula descriptiva
-neutral" que la justifique de la misma forma. Se aceptó porque:
-
-- `normalize_party_name()` es, en la práctica, una utilidad de
-  normalización de texto sin contenido de negocio propio de `engines/` —
-  del mismo tipo que `domain.hierarchy.normalize_cut()`, que ya vive en
-  `domain/`. Fue clasificada como capa 2 en la Etapa 2 porque en ese
-  momento no había ningún consumidor en `domain/`; ahora lo hay.
-- Duplicar su lógica en `domain/data/servel/__init__.py` (en vez de importarla)
-  habría reintroducido exactamente el tipo de divergencia numérica entre
-  dos copias que las Etapas 1-2 buscaban eliminar.
-
-**Recomendación para una etapa futura**: mover `normalize_party_name()` de
-`engines/allocation/utils.py` a `domain/` (ej. junto a `normalize_cut()`
-en `domain/hierarchy.py`, o a un nuevo `domain/text_utils.py`) — eso
-resolvería la excepción de raíz sin tocar su comportamiento, ya que la
-función en sí no tiene ninguna dependencia de `engines/`.
+**Resuelta**: `normalize_party_name()` se movió a `domain/utils.py` — es
+vocabulario de dominio (normalización de texto), no un algoritmo de
+motor, del mismo tipo que `domain.hierarchy.normalize_cut()`. No quedó
+ninguna excepción pendiente en `domain/`; `TestLayerBoundaries` no
+necesita ningún allowlist.
 
 ---
 
@@ -202,7 +185,8 @@ plana no cambió durante la refactorización, solo su implementación interna.
 `save_scenario`, `build_graph`, `contract_graph`, `load_layer`,
 `build_national`, `contract_to_decision_units`, `PlanEnsemble`,
 `save_assignments_parquet`, `load_ensembles_from_disk`,
-`assess_comparison_completeness`, `get_optimal_crs`, `data` (subpaquete)
+`assess_comparison_completeness`, `get_optimal_crs`, `normalize_party_name`,
+`data` (subpaquete)
 
 **rules** — `check_population_feasibility`, `make_preserve_constraint`,
 `build_constraints_for_scenario`, `SCENARIO_LEGAL`, `SCENARIO_APC_FREE`,
@@ -211,7 +195,7 @@ plana no cambió durante la refactorización, solo su implementación interna.
 
 **engines** — `polsby_popper`, `reock`, `population_balance`, `cut_edges`,
 `plan_split_metrics`, `count_split_units`, `dhondt`, `dhondt_binivel`,
-`assign_seat_magnitudes`, `normalize_party_name`, `run_recom`,
+`assign_seat_magnitudes`, `run_recom`,
 `run_recom_chain`, `analyze_ensemble`, `fair_share_matrix`,
 `build_updaters_for_scenario`, `make_split_penalty_accept`
 

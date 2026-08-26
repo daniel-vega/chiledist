@@ -67,7 +67,7 @@ class TestPublicAPI:
         assert hasattr(cd, "weighted_population_balance")   # evaluation
         assert hasattr(cd, "MAGNITUDES_LEGALES_LEY20840")   # rules
         assert hasattr(cd, "MAGNITUDES_CENSO2024_2026")     # rules
-        assert hasattr(cd, "normalize_party_name")           # engines.allocation
+        assert hasattr(cd, "normalize_party_name")           # domain
         # domain e inference, para completar las 5 capas
         assert hasattr(cd, "ChileDistMap")                  # domain
         assert hasattr(cd, "compare_ensembles")              # inference
@@ -173,18 +173,7 @@ class TestLayerBoundaries:
     ARCHITECTURE.md, sección "Inversión de dependencia documentada").
     """
 
-    #: Excepciones puntuales, documentadas en ARCHITECTURE.md, a la regla
-    #: general de que domain/ no importa de capas superiores. Cada entrada
-    #: es (ruta relativa al archivo, módulo importado) — un match exacto,
-    #: no un wildcard, para que una violación nueva y distinta siga
-    #: fallando el test.
-    _DOMAIN_FORWARD_IMPORT_EXCEPTIONS = {
-        ("domain/data/servel/__init__.py", "chiledist.engines.allocation.utils"),
-    }
-
-    def _assert_no_forward_imports(
-        self, layer: str, forbidden_layers: list[str], exceptions: set = frozenset(),
-    ):
+    def _assert_no_forward_imports(self, layer: str, forbidden_layers: list[str]):
         violations: list[str] = []
         for py_file in _layer_files(layer):
             rel_path = str(py_file.relative_to(PACKAGE_ROOT))
@@ -193,8 +182,6 @@ class TestLayerBoundaries:
                     if imported == f"chiledist.{forbidden}" or imported.startswith(
                         f"chiledist.{forbidden}."
                     ):
-                        if (rel_path, imported) in exceptions:
-                            continue
                         violations.append(
                             f"{rel_path} importa "
                             f"'{imported}' (capa '{forbidden}' está por encima "
@@ -207,10 +194,7 @@ class TestLayerBoundaries:
         )
 
     def test_domain_no_importa_de_capas_superiores(self):
-        self._assert_no_forward_imports(
-            "domain", ["rules", "engines", "inference", "evaluation"],
-            exceptions=self._DOMAIN_FORWARD_IMPORT_EXCEPTIONS,
-        )
+        self._assert_no_forward_imports("domain", ["rules", "engines", "inference", "evaluation"])
 
     def test_rules_no_importa_de_capas_superiores(self):
         self._assert_no_forward_imports("rules", ["engines", "inference", "evaluation"])

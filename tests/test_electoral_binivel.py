@@ -25,7 +25,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from chiledist.engines.allocation.utils import normalize_party_name
+from chiledist.domain.utils import normalize_party_name
 from chiledist.engines.allocation import (
     dhondt,
     dhondt_binivel,

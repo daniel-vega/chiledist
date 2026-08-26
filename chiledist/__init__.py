@@ -258,8 +258,8 @@ from .rules.electoral_rules import (
     MAGNITUDES_CENSO2024_2026,
 )
 
-# Normalización de nombres de partido/pacto (capa 2 — engines)
-from .engines.allocation.utils import normalize_party_name
+# Normalización de nombres de partido/pacto (capa 0 — domain)
+from .domain.utils import normalize_party_name
 
 # Asignación de escaños: D'Hondt, magnitudes, agregador de plan (capa 2 — engines)
 from .engines.allocation import (

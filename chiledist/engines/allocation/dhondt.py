@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .utils import normalize_party_name
+from chiledist.domain.utils import normalize_party_name
 
 
 # ──────────────────────────────────────────────────────────────────────────────
