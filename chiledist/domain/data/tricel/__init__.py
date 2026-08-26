@@ -82,9 +82,6 @@ _MESA_ID_COLS = {
 #: Columnas administrativas al final de MESA A MESA (no son candidatos).
 _MESA_ADMIN_COLS = {"Nulos", "Blancos", "Total votos", "Inscritos"}
 
-_DISTRITO_FILE_RE = re.compile(r"^distrito-?\d+\.xlsx$", re.IGNORECASE)
-
-
 def _district_id_from_filename(path: "str | Path") -> Optional[int]:
     """Extrae el número de distrito de un nombre tipo 'DISTRITO-01.xlsx'."""
     match = re.search(r"\d+", Path(path).stem)
@@ -92,19 +89,30 @@ def _district_id_from_filename(path: "str | Path") -> Optional[int]:
 
 
 def _list_tricel_files(source_dir: "str | Path") -> list[Path]:
-    """Lista los DISTRITO-XX.xlsx de un directorio, ordenados por distrito."""
+    """
+    Lista los DISTRITO-XX.xlsx de un directorio, ordenados por distrito.
+
+    source_dir puede ser la carpeta raíz de datos (con un subdirectorio
+    TRICEL_2025/) o ya ser la carpeta TRICEL misma — se prueba primero
+    source_dir/TRICEL_2025 y se cae de vuelta a source_dir si no existe.
+    Los archivos reales vienen como "Distrito-01.xlsx" (no "DISTRITO-"),
+    así que se prueban ambos patrones de glob.
+    """
     source_dir = Path(source_dir)
-    if not source_dir.is_dir():
-        raise FileNotFoundError(f"Directorio TRICEL no encontrado: {source_dir}")
-    archivos = sorted(
-        (p for p in source_dir.iterdir() if _DISTRITO_FILE_RE.match(p.name)),
-        key=lambda p: _district_id_from_filename(p) or 0,
-    )
+    tricel_dir = source_dir / "TRICEL_2025"
+    if not tricel_dir.exists():
+        # fallback: asumir que source_dir ya es el directorio TRICEL
+        tricel_dir = source_dir
+    if not tricel_dir.is_dir():
+        raise FileNotFoundError(f"Directorio TRICEL no encontrado: {tricel_dir}")
+
+    archivos = (list(tricel_dir.glob("DISTRITO-*.xlsx")) or
+                list(tricel_dir.glob("Distrito-*.xlsx")))
     if not archivos:
         raise FileNotFoundError(
-            f"No se encontraron archivos DISTRITO-*.xlsx en {source_dir}"
+            f"No se encontraron archivos DISTRITO-*.xlsx en {tricel_dir}"
         )
-    return archivos
+    return sorted(archivos, key=lambda p: _district_id_from_filename(p) or 0)
 
 
 def _read_candidatos_sheet(path: "str | Path") -> pd.DataFrame:
