@@ -35,3 +35,6 @@ gerrychain==0.3.2
 
 # Escenarios y configuracion
 pyyaml>=6.0
+
+# testing
+pytest-randomly>=3.12
