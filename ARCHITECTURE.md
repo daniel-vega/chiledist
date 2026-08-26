@@ -50,7 +50,7 @@ qué tema habla.
   DOMAIN    │  domain/       — modelo de datos                       │
             │  equivalence.py, loader.py, graph.py, hierarchy.py,     │
             │  scenario.py, map.py, persistence.py, ensemble_store.py,│
-            │  data/ (census2024, servel)                             │
+            │  data/ (census2024, servel, tricel)                     │
             └─────────────────────────────────────────────────────┘
 
   Dirección de dependencia permitida:  domain → rules → engines → inference → evaluation
@@ -186,7 +186,8 @@ plana no cambió durante la refactorización, solo su implementación interna.
 `build_national`, `contract_to_decision_units`, `PlanEnsemble`,
 `save_assignments_parquet`, `load_ensembles_from_disk`,
 `assess_comparison_completeness`, `get_optimal_crs`, `normalize_party_name`,
-`data` (subpaquete)
+`data` (subpaquete), `import_proclamations`, `import_votes`
+(`domain.data.tricel`)
 
 **rules** — `check_population_feasibility`, `make_preserve_constraint`,
 `build_constraints_for_scenario`, `SCENARIO_LEGAL`, `SCENARIO_APC_FREE`,
@@ -208,6 +209,9 @@ plana no cambió durante la refactorización, solo su implementación interna.
 `personas_por_escano`, `peso_relativo_del_voto`, `umbral_efectivo`,
 `seat_bonus`, `ScoringConfig`, `rank_scenarios`, `PESOS_DEFAULT`,
 `reforma_context`, `samuels_snyder_index`, `international_comparison`
+
+**validation** (no es una capa 0-4, ver §7) — `validate_election`,
+`ValidationReport`
 
 ---
 
@@ -273,3 +277,26 @@ número distinto, probablemente está en la capa correcta ya.
 accesible vía `cd.<símbolo>`, y agrégalo a la lista explícita o al loop de
 `tests/test_architecture.py::TestPublicAPI` si es un símbolo central que
 merece un assert nombrado.
+
+---
+
+## 7. `chiledist.validation` — validación contra fuentes oficiales (no es una capa)
+
+`validation/` (`ValidationReport`, `validate_election()`) compara los
+escaños que el motor D'Hondt de `engines/allocation/dhondt.py` *calcula*
+a partir de los votos SERVEL contra los que TRICEL *proclamó*
+oficialmente (`domain/data/tricel.import_proclamations()`). No es una
+sexta capa 0-4: es, igual que `plots.py` (visualización, §6), una
+preocupación transversal — un consumidor terminal que lee la salida de
+`engines/` (capa 2) y una fuente de verdad externa (capa 0) sin aportar
+comportamiento a ninguna capa por encima de él. Nada del paquete importa
+de `validation/`, así que no participa de la regla de dependencia
+`domain → rules → engines → inference → evaluation` del §1 ni de las
+comprobaciones de `tests/test_architecture.py::TestLayerBoundaries`
+(que solo recorren `domain/` y `rules/`).
+
+Un nuevo chequeo de reproducción contra otra fuente oficial (ej. un
+padrón de otra elección) va en `validation/`, no en `inference/`: a
+diferencia de `inference/comparison.py` (que compara escenarios
+*hipotéticos* entre sí, capa 3), `validation/` compara una salida
+calculada contra un dato *ya ocurrido* — no hay contrafactual.

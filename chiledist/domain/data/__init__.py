@@ -45,7 +45,8 @@ datos/<REGION>/... por scripts/redistritaje.py y scripts/compare_scenarios.py.
                        #  "nombre_carpeta": "R13_METROPOLITANA"}
 """
 
-from . import census2024, servel
+from . import census2024, servel, tricel
+from ._paths import get_servel_dir, get_tricel_dir
 from .servel import (
     normalize_commune_name,
     COMMUNE_NAME_ALIASES,
@@ -72,6 +73,7 @@ REGIONES_APC = {
 }
 
 __all__ = [
-    "census2024", "servel", "REGIONES_APC",
+    "census2024", "servel", "tricel", "REGIONES_APC",
     "normalize_commune_name", "COMMUNE_NAME_ALIASES", "filter_administrative_rows",
+    "get_servel_dir", "get_tricel_dir",
 ]

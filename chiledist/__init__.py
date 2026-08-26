@@ -160,6 +160,13 @@ from .engines.metrics import (
 from .domain import data as data
 from .domain.data import normalize_commune_name
 
+# Proclamaciones y votación oficial TRICEL (capa 0 — domain)
+from .domain.data.tricel import import_proclamations, import_votes
+
+# Validación del motor D'Hondt contra el resultado oficial TRICEL
+# (consumidor terminal — no es una de las 5 capas)
+from .validation import validate_election, ValidationReport
+
 # Comparación de escenarios
 # Carga de ensembles desde disco y completitud (capa 0 — domain)
 from .domain.ensemble_store import (
@@ -374,6 +381,10 @@ __all__ = [
     "spatial_summary", "cut_edges", "contiguity_check", "plan_summary",
     # data (subpaquete — acceder vía cd.data.census2024 / cd.data.servel)
     "data", "normalize_commune_name",
+    # TRICEL (proclamaciones y votación oficial)
+    "import_proclamations", "import_votes",
+    # validation (consumidor terminal — valida el motor D'Hondt vs TRICEL)
+    "validate_election", "ValidationReport",
     # scenario_comparison
     "ScoringConfig",
     "load_ensembles_from_disk", "load_scenario_statuses_from_disk",

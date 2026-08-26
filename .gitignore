@@ -10,3 +10,11 @@
 **/bundles/
 __pycache__/
 *.pyc
+
+# Fuentes de datos electorales crudas (SERVEL/TRICEL) — no se distribuyen
+datos/fuentes/
+*.xlsx
+!tests/fixtures/*.xlsx
+
+# Variables de entorno locales
+.env
