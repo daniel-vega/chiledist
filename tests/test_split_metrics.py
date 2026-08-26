@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import box
 
-from chiledist.split_metrics import (
+from chiledist.engines.metrics import (
     count_split_units,
     plan_split_metrics,
     pop_afectada_pct,
