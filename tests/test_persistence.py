@@ -11,14 +11,9 @@ Ejecutar:
 
 import dataclasses
 import json
-import sys
 import tempfile
 import unittest
-import unittest.mock as mock
 from pathlib import Path
-
-if "gerrychain" not in sys.modules:
-    sys.modules["gerrychain"] = mock.MagicMock()
 
 import numpy as np
 import pandas as pd

@@ -10,13 +10,7 @@ Ejecutar:
 """
 
 import dataclasses
-import sys
 import unittest
-import unittest.mock as mock
-
-# ── Mock de gerrychain para que los imports no fallen ─────────────────────────
-if "gerrychain" not in sys.modules:
-    sys.modules["gerrychain"] = mock.MagicMock()
 
 import chiledist as cd
 from chiledist.domain.scenario import ScenarioConfig
