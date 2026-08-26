@@ -33,7 +33,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import chiledist as cd
-from chiledist.config import SCENARIOS, load_scenario
+from chiledist.domain.scenario import load_scenario
+from chiledist.rules.scenario_rules import SCENARIOS
 
 REGION_NOMBRES = {
     1:  "R01_TARAPACA",    2:  "R02_ANTOFAGASTA",

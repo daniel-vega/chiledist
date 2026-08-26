@@ -42,7 +42,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import chiledist as cd
-from chiledist.config import load_scenario, SCENARIOS
+from chiledist.domain.scenario import load_scenario
+from chiledist.rules.scenario_rules import SCENARIOS
 from chiledist.domain.data import REGIONES_APC
 
 

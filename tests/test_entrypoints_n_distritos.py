@@ -135,7 +135,7 @@ class TestCompareScenariosNDistritos:
         """A scenario with n_districts=6 must reach analizar_region as 6
         when --n-distritos is not passed."""
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         captured_calls = []
 
@@ -164,7 +164,7 @@ class TestCompareScenariosNDistritos:
 
     def test_explicit_cli_override_wins(self, mod, monkeypatch, tmp_path):
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         captured_calls = []
 
@@ -198,7 +198,7 @@ class TestCompareScenariosNDistritos:
         silently force both to the same number.
         """
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         captured_calls = []
 
@@ -241,7 +241,7 @@ class TestParetoSweepNDistritos:
 
     def test_run_or_load_uses_scenario_n_districts_without_override(self, mod, tmp_path):
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         captured = {}
 
@@ -268,7 +268,7 @@ class TestParetoSweepNDistritos:
 
     def test_run_or_load_explicit_override_wins(self, mod, tmp_path):
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         captured = {}
 
@@ -299,7 +299,7 @@ class TestParetoSweepNDistritos:
         must each keep their own value when no override is given.
         """
         import dataclasses
-        from chiledist.config import SCENARIO_LEGAL, SCENARIO_APC_FREE
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL, SCENARIO_APC_FREE
 
         captured_by_name = {}
 

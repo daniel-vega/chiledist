@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 import chiledist as cd
-from chiledist.config import SCENARIOS
+from chiledist.rules.scenario_rules import SCENARIOS
 # REGION_NOMBRES y parse_regiones ya existen en redistritaje.py -- se
 # reutilizan aquí en vez de reimplementar la resolución de rutas/regiones.
 from redistritaje import REGION_NOMBRES, parse_regiones

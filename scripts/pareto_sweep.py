@@ -56,7 +56,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.config import ScenarioConfig, SCENARIOS
+from chiledist.domain.scenario import ScenarioConfig
+from chiledist.rules.scenario_rules import SCENARIOS
 
 REGION_NOMBRES = {
     1:  "R01_TARAPACA",    2:  "R02_ANTOFAGASTA",

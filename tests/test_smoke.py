@@ -19,7 +19,8 @@ if "gerrychain" not in sys.modules:
     sys.modules["gerrychain"] = mock.MagicMock()
 
 import chiledist as cd
-from chiledist.config import ScenarioConfig, SCENARIO_LEGAL, SCENARIO_APC_FREE
+from chiledist.domain.scenario import ScenarioConfig
+from chiledist.rules.scenario_rules import SCENARIO_LEGAL, SCENARIO_APC_FREE
 
 
 class TestScenarioLegalValidates(unittest.TestCase):

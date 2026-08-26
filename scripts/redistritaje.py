@@ -63,7 +63,8 @@ import networkx as nx
 from functools import partial
 
 import chiledist as cd
-from chiledist.config import ScenarioConfig, SCENARIOS, load_scenario
+from chiledist.domain.scenario import ScenarioConfig, load_scenario
+from chiledist.rules.scenario_rules import SCENARIOS
 from chiledist.domain.persistence import (
     new_run_id,
     sha256_file,

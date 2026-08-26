@@ -122,7 +122,7 @@ class TestBuildScenarioDoesNotOverrideSilently:
     def test_predefined_scenario_n_districts_not_forced(self, redistritaje):
         """A predefined --scenario keeps its own n_districts when the flag
         is absent, instead of being forced to a CLI-level constant."""
-        from chiledist.config import SCENARIO_LEGAL
+        from chiledist.rules.scenario_rules import SCENARIO_LEGAL
 
         cfg = redistritaje.build_scenario(_fake_args(scenario="legal"))
         assert cfg.n_districts == SCENARIO_LEGAL.n_districts

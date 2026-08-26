@@ -1,0 +1,95 @@
+"""
+rules.scenario_rules
+======================
+Escenarios predefinidos — capa 1 (Legal-as-Code).
+
+Cada preset encierra una interpretación legal concreta de qué restricción
+aplica al redistritaje. ``SCENARIO_LEGAL`` es el único que respeta la
+Ley 18.700 (comuna indivisible); el resto son contrafactuales de reforma,
+explícitamente no vigentes bajo la norma actual.
+
+    legal         → Régimen vigente: CUT indivisible (Ley 18.700).
+    apc_strict    → Control metodológico: APC como unidad mínima,
+                    pero comunas aún preservadas (hard). Aísla efecto
+                    de resolución del efecto de restricción.
+    apc_soft      → Reforma intermedia: APC como unidad mínima,
+                    partición comunal permitida pero penalizada.
+    apc_free      → Reforma fuerte: APC como unidad mínima,
+                    sin restricción de partición comunal.
+
+Los escenarios APC son instrumentos de análisis contrafactual:
+representan lo que ocurriría bajo una reforma legislativa que
+cambiara la unidad mínima legal de redistritaje desde la comuna
+hacia unidades subcomunales (APC). Ninguno es legal bajo la
+norma vigente. La comparación legal vs apc_* estima el efecto
+conjunto de mayor resolución geográfica y menor restricción
+comunal; no aísla estos dos componentes por separado.
+"""
+
+from __future__ import annotations
+
+from ..domain.scenario import ScenarioConfig
+
+SCENARIO_LEGAL = ScenarioConfig(
+    name="legal_comunas",
+    description=(
+        "Régimen vigente (Ley 18.700): comunas indivisibles. "
+        "Unidad de decisión = CUT. Baseline de comparación para H1."
+    ),
+    tipo_reforma="vigente",
+    observation_unit="ID_DIST",
+    decision_unit="CUT",
+    preserve_units=["CUT"],
+    preserve_mode="hard",
+)
+
+SCENARIO_APC_STRICT = ScenarioConfig(
+    name="apc_comunas_preservadas",
+    description=(
+        "Control metodológico: APCs como unidad mínima, pero comunas "
+        "aún preservadas con restricción hard. Permite aislar el efecto "
+        "de resolución geográfica del efecto de eliminación de restricción. "
+        "No es un escenario de reforma legislativa directo."
+    ),
+    tipo_reforma="control_metodologico",
+    observation_unit="ID_DIST",
+    decision_unit="ID_DIST",
+    preserve_units=["CUT"],
+    preserve_mode="hard",
+)
+
+SCENARIO_APC_SOFT = ScenarioConfig(
+    name="contrafactual_apc_soft",
+    description=(
+        "Reforma intermedia: APCs como unidad mínima. Partir comunas está "
+        "permitido pero penalizado. Escenario contrafactual: no es legal "
+        "bajo la norma vigente."
+    ),
+    tipo_reforma="contrafactual_intermedio",
+    observation_unit="ID_DIST",
+    decision_unit="ID_DIST",
+    preserve_units=["CUT"],
+    preserve_mode="soft",
+    split_penalty=0.25,
+)
+
+SCENARIO_APC_FREE = ScenarioConfig(
+    name="contrafactual_apc_libre",
+    description=(
+        "Reforma fuerte: APCs como unidad mínima, sin restricción de "
+        "partición comunal. Escenario contrafactual: no es legal bajo "
+        "la norma vigente."
+    ),
+    tipo_reforma="contrafactual_fuerte",
+    observation_unit="ID_DIST",
+    decision_unit="ID_DIST",
+    preserve_units=[],
+    preserve_mode="none",
+)
+
+SCENARIOS: dict[str, ScenarioConfig] = {
+    "legal":       SCENARIO_LEGAL,
+    "apc_strict":  SCENARIO_APC_STRICT,
+    "apc_soft":    SCENARIO_APC_SOFT,
+    "apc_free":    SCENARIO_APC_FREE,
+}

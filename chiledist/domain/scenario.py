@@ -1,26 +1,12 @@
 """
-config.py
-=========
+domain.scenario
+=================
 ScenarioConfig: objeto de configuración para escenarios de redistritaje.
 
-Escenarios predefinidos
------------------------
-    legal         → Régimen vigente: CUT indivisible (Ley 18.700).
-    apc_strict    → Control metodológico: APC como unidad mínima,
-                    pero comunas aún preservadas (hard). Aísla efecto
-                    de resolución del efecto de restricción.
-    apc_soft      → Reforma intermedia: APC como unidad mínima,
-                    partición comunal permitida pero penalizada.
-    apc_free      → Reforma fuerte: APC como unidad mínima,
-                    sin restricción de partición comunal.
-
-Los escenarios APC son instrumentos de análisis contrafactual:
-representan lo que ocurriría bajo una reforma legislativa que
-cambiara la unidad mínima legal de redistritaje desde la comuna
-hacia unidades subcomunales (APC). Ninguno es legal bajo la
-norma vigente. La comparación legal vs apc_* estima el efecto
-conjunto de mayor resolución geográfica y menor restricción
-comunal; no aísla estos dos componentes por separado.
+Modelo de datos puro (capa 0 — domain): campos, validación estructural
+interna, representación textual e I/O genérico (YAML). No contiene los
+presets legales concretos (ver ``rules.scenario_rules``) ni el texto de
+encuadre legislativo (ver ``evaluation.framing``).
 """
 
 from __future__ import annotations
@@ -46,7 +32,7 @@ class ScenarioConfig:
 
     Uso rápido
     ----------
-    >>> from chiledist.config import SCENARIO_LEGAL, SCENARIO_APC_FREE
+    >>> from chiledist.rules.scenario_rules import SCENARIO_LEGAL, SCENARIO_APC_FREE
     >>> legal = SCENARIO_LEGAL
     >>> # o desde YAML:
     >>> cfg = load_scenario("scenarios/legal_comunas.yml")
@@ -177,42 +163,6 @@ class ScenarioConfig:
             f"preserve_units={self.preserve_units})"
         )
 
-    def reforma_context(self) -> str:
-        """
-        Texto de encuadre para uso en discusiones legislativas y reportes.
-        Describe qué tipo de régimen representa el escenario y qué no puede
-        concluirse directamente de él.
-        """
-        _framing = {
-            "vigente": (
-                f"'{self.name}' representa el régimen legal vigente "
-                "(Ley 18.700): la comuna es la unidad mínima indivisible "
-                "de redistritaje. Sirve como baseline de comparación."
-            ),
-            "contrafactual_fuerte": (
-                f"'{self.name}' es un escenario contrafactual de reforma fuerte: "
-                "las APCs son la unidad mínima y no existe restricción de "
-                "partición comunal. No es legal bajo la norma actual. "
-                "La comparación con el escenario vigente estima el efecto "
-                "conjunto de mayor resolución geográfica y eliminación de la "
-                "restricción comunal; no aísla estos componentes por separado."
-            ),
-            "contrafactual_intermedio": (
-                f"'{self.name}' es un escenario contrafactual de reforma intermedia: "
-                "las APCs son la unidad mínima y la partición comunal está "
-                f"permitida pero penalizada (split_penalty={self.split_penalty}). "
-                "No es legal bajo la norma actual."
-            ),
-            "control_metodologico": (
-                f"'{self.name}' es un control metodológico: las APCs son la "
-                "unidad mínima pero las comunas permanecen indivisibles. "
-                "Permite aislar el efecto de la resolución geográfica del "
-                "efecto de eliminar la restricción comunal. No es directamente "
-                "un escenario de reforma legislativa."
-            ),
-        }
-        return _framing[self.tipo_reforma]
-
     def summary(self) -> str:
         """Texto descriptivo del escenario para logs."""
         lines = [
@@ -240,75 +190,6 @@ class ScenarioConfig:
             f"  CRS métrico    : {crs_str}",
         ]
         return "\n".join(lines)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Escenarios predefinidos
-# ──────────────────────────────────────────────────────────────────────────────
-
-SCENARIO_LEGAL = ScenarioConfig(
-    name="legal_comunas",
-    description=(
-        "Régimen vigente (Ley 18.700): comunas indivisibles. "
-        "Unidad de decisión = CUT. Baseline de comparación para H1."
-    ),
-    tipo_reforma="vigente",
-    observation_unit="ID_DIST",
-    decision_unit="CUT",
-    preserve_units=["CUT"],
-    preserve_mode="hard",
-)
-
-SCENARIO_APC_STRICT = ScenarioConfig(
-    name="apc_comunas_preservadas",
-    description=(
-        "Control metodológico: APCs como unidad mínima, pero comunas "
-        "aún preservadas con restricción hard. Permite aislar el efecto "
-        "de resolución geográfica del efecto de eliminación de restricción. "
-        "No es un escenario de reforma legislativa directo."
-    ),
-    tipo_reforma="control_metodologico",
-    observation_unit="ID_DIST",
-    decision_unit="ID_DIST",
-    preserve_units=["CUT"],
-    preserve_mode="hard",
-)
-
-SCENARIO_APC_SOFT = ScenarioConfig(
-    name="contrafactual_apc_soft",
-    description=(
-        "Reforma intermedia: APCs como unidad mínima. Partir comunas está "
-        "permitido pero penalizado. Escenario contrafactual: no es legal "
-        "bajo la norma vigente."
-    ),
-    tipo_reforma="contrafactual_intermedio",
-    observation_unit="ID_DIST",
-    decision_unit="ID_DIST",
-    preserve_units=["CUT"],
-    preserve_mode="soft",
-    split_penalty=0.25,
-)
-
-SCENARIO_APC_FREE = ScenarioConfig(
-    name="contrafactual_apc_libre",
-    description=(
-        "Reforma fuerte: APCs como unidad mínima, sin restricción de "
-        "partición comunal. Escenario contrafactual: no es legal bajo "
-        "la norma vigente."
-    ),
-    tipo_reforma="contrafactual_fuerte",
-    observation_unit="ID_DIST",
-    decision_unit="ID_DIST",
-    preserve_units=[],
-    preserve_mode="none",
-)
-
-SCENARIOS: dict[str, ScenarioConfig] = {
-    "legal":       SCENARIO_LEGAL,
-    "apc_strict":  SCENARIO_APC_STRICT,
-    "apc_soft":    SCENARIO_APC_SOFT,
-    "apc_free":    SCENARIO_APC_FREE,
-}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
