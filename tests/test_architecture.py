@@ -173,16 +173,30 @@ class TestLayerBoundaries:
     ARCHITECTURE.md, sección "Inversión de dependencia documentada").
     """
 
-    def _assert_no_forward_imports(self, layer: str, forbidden_layers: list[str]):
+    #: Excepciones puntuales, documentadas en ARCHITECTURE.md, a la regla
+    #: general de que domain/ no importa de capas superiores. Cada entrada
+    #: es (ruta relativa al archivo, módulo importado) — un match exacto,
+    #: no un wildcard, para que una violación nueva y distinta siga
+    #: fallando el test.
+    _DOMAIN_FORWARD_IMPORT_EXCEPTIONS = {
+        ("domain/data/servel/__init__.py", "chiledist.engines.allocation.utils"),
+    }
+
+    def _assert_no_forward_imports(
+        self, layer: str, forbidden_layers: list[str], exceptions: set = frozenset(),
+    ):
         violations: list[str] = []
         for py_file in _layer_files(layer):
+            rel_path = str(py_file.relative_to(PACKAGE_ROOT))
             for imported in _imports_of(py_file):
                 for forbidden in forbidden_layers:
                     if imported == f"chiledist.{forbidden}" or imported.startswith(
                         f"chiledist.{forbidden}."
                     ):
+                        if (rel_path, imported) in exceptions:
+                            continue
                         violations.append(
-                            f"{py_file.relative_to(PACKAGE_ROOT)} importa "
+                            f"{rel_path} importa "
                             f"'{imported}' (capa '{forbidden}' está por encima "
                             f"de '{layer}')"
                         )
@@ -193,7 +207,10 @@ class TestLayerBoundaries:
         )
 
     def test_domain_no_importa_de_capas_superiores(self):
-        self._assert_no_forward_imports("domain", ["rules", "engines", "inference", "evaluation"])
+        self._assert_no_forward_imports(
+            "domain", ["rules", "engines", "inference", "evaluation"],
+            exceptions=self._DOMAIN_FORWARD_IMPORT_EXCEPTIONS,
+        )
 
     def test_rules_no_importa_de_capas_superiores(self):
         self._assert_no_forward_imports("rules", ["engines", "inference", "evaluation"])

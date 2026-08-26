@@ -46,6 +46,11 @@ datos/<REGION>/... por scripts/redistritaje.py y scripts/compare_scenarios.py.
 """
 
 from . import census2024, servel
+from .servel import (
+    normalize_commune_name,
+    COMMUNE_NAME_ALIASES,
+    filter_administrative_rows,
+)
 
 REGIONES_APC = {
     1:  {"nombre": "Región de Tarapacá",                                  "nombre_carpeta": "R01_TARAPACA"},
@@ -66,4 +71,7 @@ REGIONES_APC = {
     16: {"nombre": "Región de Ñuble",                                     "nombre_carpeta": "R16_NUBLE"},
 }
 
-__all__ = ["census2024", "servel", "REGIONES_APC"]
+__all__ = [
+    "census2024", "servel", "REGIONES_APC",
+    "normalize_commune_name", "COMMUNE_NAME_ALIASES", "filter_administrative_rows",
+]

@@ -1,5 +1,5 @@
 """
-chiledist/data/servel.py
+chiledist.domain.data.servel
 ========================
 Carga y preprocesamiento de datos del SERVEL (Servicio Electoral de Chile).
 
@@ -22,7 +22,7 @@ Ver download_instructions() para el formato esperado.
 
 Flujo típico
 ------------
-    import chiledist.data.servel as sv
+    import chiledist.domain.data.servel as sv
 
     padron = sv.load_padron_electoral("datos/padron_2024.csv")
     gdf    = sv.join_padron_to_apc(gdf, padron, proxy_col="viviendas")
@@ -36,12 +36,18 @@ Flujo típico
 
 from __future__ import annotations
 
+import dataclasses
+import glob
+import re
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+
+from . import provenance
 
 
 # ── Aliases de columnas aceptados ────────────────────────────────────────────
@@ -92,7 +98,7 @@ Alias aceptados para HOMBRES:  HOMBRES, H, VARONES
 Alias aceptados para MUJERES:  MUJERES, M, FEMENINO
 
 Uso:
-    import chiledist.data.servel as sv
+    import chiledist.domain.data.servel as sv
     padron = sv.load_padron_electoral("datos/padron_2024.csv")
     gdf    = sv.join_padron_to_apc(gdf, padron, proxy_col="viviendas")
 """)
@@ -418,6 +424,385 @@ def votos_por_comuna(
         .sort_values([cut_col, votos_col], ascending=[True, False])
         .reset_index(drop=True)
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Utilidades compartidas para resultados electorales por candidato
+# (equivalente empaquetado de datos/scripts_extra/escanos.py::normalizar y
+# ::ALIASES_COMUNA, verificado contra TRICEL 2025)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def normalize_commune_name(s: str) -> str:
+    """
+    Normaliza nombre de comuna para matching.
+
+    Equivalente a normalizar() en datos/scripts_extra/escanos.py:
+    NFKD + fold a ASCII (sin tildes) + mayúsculas + strip. Tolera que los
+    Excel de SERVEL y el shapefile APC2023 representen el mismo nombre de
+    comuna con distinta capitalización o acentuación.
+
+    Parameters
+    ----------
+    s : str
+
+    Returns
+    -------
+    str
+        Nombre normalizado: MAYÚSCULAS, sin tildes/caracteres no ASCII,
+        sin espacios al inicio/final. "" si `s` no es un string.
+    """
+    if not isinstance(s, str):
+        return ""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return s.strip().upper()
+
+
+#: Aliases ortográficos conocidos entre nombres de comuna en los Excel de
+#: SERVEL y N_COMUNA del shapefile APC2023. Fuente:
+#: datos/scripts_extra/escanos.py::ALIASES_COMUNA, verificado contra
+#: TRICEL 2025 (ver README.md § Datos externos, tabla de aliases).
+#: Antártica (CUT 12202) deliberadamente NO tiene alias aquí: es un caso
+#: genuino sin cobertura cartográfica en APC2023, no un problema de nombre.
+COMMUNE_NAME_ALIASES: dict[str, str] = {
+    "MARCHIGUE":                   "MARCHIHUE",
+    "TREHUACO":                    "TREGUACO",
+    "PAIHUANO":                    "PAIGUANO",
+    "LLAY-LLAY":                   "LLAILLAY",
+    "CABO DE HORNOS(EX-NAVARINO)": "CABO DE HORNOS",
+}
+
+
+def filter_administrative_rows(
+    df: pd.DataFrame,
+    candidate_col: str = "cod_candidato",
+) -> tuple[pd.DataFrame, int]:
+    """
+    Filtra filas sin candidatura real (votos nulos, blancos, totales).
+
+    Los Excel de SERVEL incluyen, por mesa, filas administrativas
+    ("Votos Nulos", "Votos en Blanco", "Total Sufragios Validamente
+    Emitidos", "Total Suma Calculada") que no representan un candidato:
+    `candidate_col` viene NaN en esas filas. A diferencia de
+    datos/scripts_extra/procesar_servel_cut.py (que las agrupa como
+    partido "IND" vía `.fillna("IND")`, inflando ese partido — ver
+    README.md § Datos externos), esta función las elimina — nunca las
+    reetiqueta como ningún partido.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    candidate_col : str
+        Columna que identifica a un candidato real (default: "cod_candidato").
+        Una fila es administrativa si esta columna es NaN/None.
+
+    Returns
+    -------
+    (df_filtrado, n_filas_eliminadas)
+    """
+    if candidate_col not in df.columns:
+        raise KeyError(
+            f"Columna '{candidate_col}' no encontrada. "
+            f"Columnas disponibles: {list(df.columns)}"
+        )
+    mask_real = df[candidate_col].notna()
+    n_removed = int((~mask_real).sum())
+    return df[mask_real].copy(), n_removed
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Schema canónico de resultados electorales por candidato
+# (equivalente empaquetado de datos/scripts_extra/escanos.py)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@dataclasses.dataclass
+class CandidateRecord:
+    """
+    Un registro por candidato en una elección, agregado sobre todas las
+    mesas de su distrito — schema canónico de import_candidates().
+    """
+    election_id: str          # ej. "CL-2025-DIP"
+    office: str                # "diputado" | "senador"
+    district_id: int           # número de distrito (1-28)
+    CUT: int                    # código único territorial
+    list_id: str                # pacto
+    party_id: str                # partido normalizado (normalize_party_name)
+    candidate_id: int            # cod_candidato
+    candidate_name: str           # nombre_candidato
+    independent_status: bool       # True si el partido crudo contiene "IND"
+    votes: int                      # Σ votos_preliminares sobre las mesas del distrito
+    officially_elected: bool         # electo_nominado == 1 en alguna mesa
+
+
+_CANDIDATE_RECORD_FIELDS: list[str] = [
+    f.name for f in dataclasses.fields(CandidateRecord)
+]
+
+
+def _parse_district_id(raw_distrito) -> Optional[int]:
+    """Extrae el número entero de un string tipo 'Distrito 1' / 'DISTRITO 1'."""
+    match = re.search(r"\d+", str(raw_distrito))
+    return int(match.group()) if match else None
+
+
+def _read_raw_servel_diputados(
+    source_path: "str | Path",
+) -> list[tuple[Path, pd.DataFrame]]:
+    """
+    Lee los Excel crudos PRELIMINARES_DIPUTADOS_DISTRITO_*.xlsx.
+
+    source_path puede ser un directorio que los contiene, o un patrón glob
+    explícito (ej. "./PRELIMINARES_DIPUTADOS_DISTRITO_*.xlsx").
+
+    Nota: hoy solo lee el patrón de diputados sin importar `office` — ver
+    deuda técnica en el reporte de esta etapa (no se confirmó el schema
+    crudo de PRELIMINARES_SENADORES_CIRCUNSCRIPCI*.xlsx).
+    """
+    source_path = Path(source_path)
+    pattern = (
+        str(source_path / "PRELIMINARES_DIPUTADOS_DISTRITO_*.xlsx")
+        if source_path.is_dir() else str(source_path)
+    )
+    archivos = sorted(glob.glob(pattern))
+    if not archivos:
+        raise FileNotFoundError(f"No se encontraron archivos con el patrón: {pattern}")
+    return [(Path(a), pd.read_excel(a, engine="openpyxl")) for a in archivos]
+
+
+def _build_commune_cut_map(base_dir: str) -> dict:
+    """
+    {nombre_comuna_normalizado: CUT}, desde cd.load_layer("comunal", ...).
+    Reutiliza la misma estrategia que
+    datos/scripts_extra/escanos.py::construir_mapa_comuna_cut.
+    """
+    from ...loader import load_layer
+
+    comunas = load_layer("comunal", base_dir=base_dir)
+    return dict(zip(comunas["N_COMUNA"].apply(normalize_commune_name), comunas["CUT"]))
+
+
+def import_candidates(
+    source_path: "str | Path",
+    election_id: str = "CL-2025-DIP",
+    office: str = "diputado",
+    base_dir: Optional[str] = None,
+    commune_cut_map: Optional[dict] = None,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Importa resultados electorales por candidato a schema canónico.
+
+    RAW: lee PRELIMINARES_DIPUTADOS_DISTRITO_*.xlsx desde source_path.
+    NORMALIZED: aplica normalize_commune_name + COMMUNE_NAME_ALIASES para
+        resolver comuna → CUT (vía commune_cut_map), normaliza el CUT
+        resultante con chiledist.domain.hierarchy.normalize_cut, y
+        normaliza party_id con
+        chiledist.engines.allocation.utils.normalize_party_name.
+    CANONICAL: filtra filas administrativas con filter_administrative_rows,
+        agrega por candidato (Σ votos sobre las mesas de su distrito) y
+        produce un DataFrame con el schema exacto de CandidateRecord.
+
+    Parameters
+    ----------
+    source_path : str | Path
+        Directorio con los 28 Excel de SERVEL, o un patrón glob explícito.
+    election_id : str
+    office : str
+        "diputado" o "senador" — se guarda en el campo `office` de cada
+        registro. No cambia qué archivos se leen (ver
+        _read_raw_servel_diputados).
+    base_dir : str, opcional
+        Directorio con SHP_APC2023_R* para resolver comuna → CUT vía
+        cd.load_layer("comunal", ...). Requerido solo si no se pasa
+        `commune_cut_map`.
+    commune_cut_map : dict, opcional
+        {nombre_comuna_normalizado: CUT} ya construido. Si se provee, se
+        usa directamente en vez de cargar el shapefile comunal — permite
+        testear/reutilizar la función sin SHP_APC2023 real. Parámetro no
+        pedido explícitamente en el encargo original; se agregó porque la
+        función no era testeable sin alguna forma de inyectar el mapeo
+        (ver "Deuda técnica" en el reporte de esta etapa).
+
+    Returns
+    -------
+    (df_canonical, provenance) donde df_canonical tiene exactamente las
+    columnas de CandidateRecord y provenance es un dict con:
+        administrative_rows_removed : int
+        commune_aliases_applied     : list[str]
+        cut_normalizations          : int
+        rows_without_party          : int
+        unresolved_entities         : list[str]  # comunas sin CUT
+        source_provenance           : list[dict]  # un ProvenanceRecord (asdict)
+                                                    # por archivo fuente leído
+    """
+    if office not in ("diputado", "senador"):
+        raise ValueError(f"office debe ser 'diputado' o 'senador', recibido: {office!r}")
+
+    if commune_cut_map is None:
+        if base_dir is None:
+            raise ValueError(
+                "Se requiere base_dir (para cd.load_layer('comunal', ...)) "
+                "o commune_cut_map explícito."
+            )
+        commune_cut_map = _build_commune_cut_map(base_dir)
+
+    # Import diferido: domain/ dependiendo de engines/ es una inversión de
+    # capa deliberada y documentada (ver ARCHITECTURE.md § Inversión de
+    # dependencia documentada) — se reutiliza la MISMA normalización que
+    # dhondt_binivel() usa para nombres de partido/pacto, en vez de
+    # duplicar la lógica localmente.
+    from ...hierarchy import normalize_cut
+    from chiledist.engines.allocation.utils import normalize_party_name
+
+    archivos = _read_raw_servel_diputados(source_path)
+
+    # Un ProvenanceRecord por archivo fuente (28 distritos = 28 registros):
+    # cada Excel tiene su propio sha256/mtime, no hay un solo "source_path"
+    # de donde calcular un único hash cuando source_path es un directorio.
+    source_provenance = [
+        dataclasses.asdict(provenance.compute_provenance(path, election_id))
+        for path, _ in archivos
+    ]
+
+    bloques = []
+    admin_removed_total = 0
+    for _, df in archivos:
+        df = df.copy()
+        df.columns = [c.strip().lower() for c in df.columns]
+        df_real, n_removed = filter_administrative_rows(df, candidate_col="cod_candidato")
+        admin_removed_total += n_removed
+        bloques.append(df_real)
+
+    df_all = pd.concat(bloques, ignore_index=True)
+
+    # NORMALIZED — comuna -> CUT
+    nombre_norm = df_all["comuna"].apply(normalize_commune_name)
+    aliases_applied = sorted(set(nombre_norm[nombre_norm.isin(COMMUNE_NAME_ALIASES)]))
+    nombre_resuelto = nombre_norm.map(lambda n: COMMUNE_NAME_ALIASES.get(n, n))
+    cut_raw = nombre_resuelto.map(commune_cut_map)
+
+    unresolved_mask = cut_raw.isna()
+    unresolved_entities = sorted(set(
+        df_all.loc[unresolved_mask, "comuna"].dropna().astype(str).unique()
+    ))
+    if unresolved_entities:
+        print(f"  ⚠ comunas sin CUT mapeado: {unresolved_entities}")
+
+    df_all = df_all.loc[~unresolved_mask].copy()
+    df_all["CUT"] = cut_raw[~unresolved_mask].apply(lambda v: int(normalize_cut(v)))
+    cut_normalizations = len(df_all)
+
+    # NORMALIZED — partido
+    rows_without_party = int(df_all["partido"].isna().sum())
+    df_all["party_id"] = df_all["partido"].apply(
+        lambda p: normalize_party_name(str(p)) if pd.notna(p) else ""
+    )
+    df_all["independent_status"] = df_all["partido"].apply(
+        lambda p: "IND" in str(p).upper() if pd.notna(p) else False
+    )
+
+    df_all["district_id"] = df_all["distrito"].apply(_parse_district_id)
+    df_all["votos_preliminares"] = pd.to_numeric(
+        df_all["votos_preliminares"], errors="coerce"
+    ).fillna(0)
+    df_all["electo_nominado"] = pd.to_numeric(
+        df_all["electo_nominado"], errors="coerce"
+    ).fillna(0)
+
+    # CANONICAL — un registro por candidato, agregado sobre las mesas del distrito
+    agrupado = (
+        df_all.groupby(
+            ["CUT", "cod_candidato", "nombre_candidato", "pacto", "party_id",
+             "district_id", "independent_status"],
+            dropna=False, as_index=False,
+        )
+        .agg(votes=("votos_preliminares", "sum"),
+             officially_elected=("electo_nominado", "max"))
+    )
+
+    df_canonical = pd.DataFrame({
+        "election_id":         election_id,
+        "office":              office,
+        "district_id":         agrupado["district_id"].astype(int),
+        "CUT":                 agrupado["CUT"].astype(int),
+        "list_id":             agrupado["pacto"].astype(str).str.strip(),
+        "party_id":            agrupado["party_id"],
+        "candidate_id":        agrupado["cod_candidato"].astype(int),
+        "candidate_name":      agrupado["nombre_candidato"].astype(str).str.strip(),
+        "independent_status":  agrupado["independent_status"].astype(bool),
+        "votes":               agrupado["votes"].astype(int),
+        "officially_elected":  agrupado["officially_elected"] == 1,
+    })[_CANDIDATE_RECORD_FIELDS]
+
+    provenance_info = {
+        "administrative_rows_removed": admin_removed_total,
+        "commune_aliases_applied":     aliases_applied,
+        "cut_normalizations":          cut_normalizations,
+        "rows_without_party":          rows_without_party,
+        "unresolved_entities":         unresolved_entities,
+        "source_provenance":           source_provenance,
+    }
+    return df_canonical, provenance_info
+
+
+def import_results(
+    source_path: "str | Path",
+    election_id: str = "CL-2025-DIP",
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Importa escaños oficiales por distrito y pacto a schema canónico.
+
+    Equivalente empaquetado de escanos_oficiales_2025.csv
+    (datos/scripts_extra/escanos.py::procesar_y_validar_escanos, sin la
+    validación de invariantes con `assert` — ver "Deuda técnica").
+
+    Parameters
+    ----------
+    source_path : str | Path
+        Directorio con los 28 Excel de SERVEL, o un patrón glob explícito.
+    election_id : str
+
+    Returns
+    -------
+    (df_canonical, provenance) donde df_canonical tiene columnas:
+        election_id, district_id, list_id, seats_won
+    y provenance es un dict con: total_seats, districts_covered.
+    """
+    archivos = _read_raw_servel_diputados(source_path)
+
+    bloques = []
+    for _, df in archivos:
+        df = df.copy()
+        df.columns = [c.strip().lower() for c in df.columns]
+        df["electo_nominado"] = pd.to_numeric(
+            df["electo_nominado"], errors="coerce"
+        ).fillna(0).astype(int)
+        df_electos = df[df["electo_nominado"] == 1]
+        bloques.append(
+            df_electos[["distrito", "pacto", "cod_candidato"]]
+            .drop_duplicates(subset=["distrito", "cod_candidato"])
+        )
+
+    df_all = pd.concat(bloques, ignore_index=True)
+    df_all["district_id"] = df_all["distrito"].apply(_parse_district_id)
+
+    tabla = (
+        df_all.groupby(["district_id", "pacto"], as_index=False)
+        .agg(seats_won=("cod_candidato", "count"))
+        .sort_values(["district_id", "pacto"])
+        .reset_index(drop=True)
+    )
+
+    df_canonical = pd.DataFrame({
+        "election_id": election_id,
+        "district_id": tabla["district_id"].astype(int),
+        "list_id":     tabla["pacto"].astype(str).str.strip(),
+        "seats_won":   tabla["seats_won"].astype(int),
+    })
+
+    provenance_info = {
+        "total_seats":       int(df_canonical["seats_won"].sum()),
+        "districts_covered": int(df_canonical["district_id"].nunique()),
+    }
+    return df_canonical, provenance_info
 
 
 def resumen_padron_regional(

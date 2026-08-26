@@ -158,6 +158,7 @@ from .engines.metrics import (
 
 # Fuentes de población externas (Censo 2024 + SERVEL) (capa 0 — domain)
 from .domain import data as data
+from .domain.data import normalize_commune_name
 
 # Comparación de escenarios
 # Carga de ensembles desde disco y completitud (capa 0 — domain)
@@ -372,7 +373,7 @@ __all__ = [
     "all_compactness", "population_balance", "ideal_population",
     "spatial_summary", "cut_edges", "contiguity_check", "plan_summary",
     # data (subpaquete — acceder vía cd.data.census2024 / cd.data.servel)
-    "data",
+    "data", "normalize_commune_name",
     # scenario_comparison
     "ScoringConfig",
     "load_ensembles_from_disk", "load_scenario_statuses_from_disk",

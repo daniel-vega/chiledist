@@ -157,6 +157,40 @@ esa: extraer `proportionality.py`, `district_malapportionment.py` y
 (por ejemplo `engines/indices.py`), dejando `evaluation/` solo con
 `PESOS_DEFAULT`/`rank_scenarios`/`reforma_context`.
 
+### 4.1 Excepción puntual: `domain/data/servel/__init__.py` → `engines/allocation/utils`
+
+Agregada durante la refactorización de la capa de datos electorales SERVEL
+(`import_candidates`). `domain/data/servel/__init__.py::import_candidates()` reutiliza
+`chiledist.engines.allocation.utils.normalize_party_name()` para normalizar
+`party_id` — la misma función que usa `dhondt_binivel()` para resolver
+`pacto_map`, en vez de duplicar esa lógica localmente en `domain/`.
+
+A diferencia de la inversión de §4 (que es un patrón sistemático a lo
+ancho de varios archivos), esta es una **excepción puntual, única y
+documentada explícitamente** en
+`tests/test_architecture.py::TestLayerBoundaries._DOMAIN_FORWARD_IMPORT_EXCEPTIONS`
+(un allowlist exacto por `(archivo, módulo importado)`, no un wildcard —
+cualquier otra violación en `domain/` sigue fallando el test).
+
+Es más severa que la de §4: aquí sí es `domain/` (capa 0, la más baja)
+importando de `engines/` (capa 2) — no hay categoría "fórmula descriptiva
+neutral" que la justifique de la misma forma. Se aceptó porque:
+
+- `normalize_party_name()` es, en la práctica, una utilidad de
+  normalización de texto sin contenido de negocio propio de `engines/` —
+  del mismo tipo que `domain.hierarchy.normalize_cut()`, que ya vive en
+  `domain/`. Fue clasificada como capa 2 en la Etapa 2 porque en ese
+  momento no había ningún consumidor en `domain/`; ahora lo hay.
+- Duplicar su lógica en `domain/data/servel/__init__.py` (en vez de importarla)
+  habría reintroducido exactamente el tipo de divergencia numérica entre
+  dos copias que las Etapas 1-2 buscaban eliminar.
+
+**Recomendación para una etapa futura**: mover `normalize_party_name()` de
+`engines/allocation/utils.py` a `domain/` (ej. junto a `normalize_cut()`
+en `domain/hierarchy.py`, o a un nuevo `domain/text_utils.py`) — eso
+resolvería la excepción de raíz sin tocar su comportamiento, ya que la
+función en sí no tiene ninguna dependencia de `engines/`.
+
 ---
 
 ## 5. Símbolos públicos principales por capa
