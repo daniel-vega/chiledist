@@ -12,7 +12,7 @@ from typing import Optional, Union
 import pandas as pd
 
 from chiledist.engines.allocation.magnitudes import assign_seat_magnitudes
-from chiledist.electoral.constants import (
+from chiledist.rules.electoral_rules import (
     TOTAL_ESCANOS_CAMARA,
     MIN_ESCANOS_DISTRITO,
     MAX_ESCANOS_DISTRITO,

@@ -29,7 +29,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from chiledist.electoral import MAGNITUDES_LEGALES_LEY20840
+from chiledist.rules.electoral_rules import MAGNITUDES_LEGALES_LEY20840
 from chiledist.engines.allocation import plan_electoral_metrics
 
 # ─────────────────────────────────────────────────────────────────────────────

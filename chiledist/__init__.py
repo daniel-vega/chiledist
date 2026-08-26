@@ -42,17 +42,24 @@ Referencias
 from ._version import __version__
 __author__  = "chiledist"
 
-# Configuración de escenarios
-from .config import (
+# Configuración de escenarios: dataclass + I/O (capa 0 — domain)
+from .domain.scenario import (
     ScenarioConfig,
+    load_scenario,
+    save_scenario,
+)
+
+# Presets legales de escenario (capa 1 — rules)
+from .rules.scenario_rules import (
     SCENARIO_LEGAL,
     SCENARIO_APC_STRICT,
     SCENARIO_APC_SOFT,
     SCENARIO_APC_FREE,
     SCENARIOS,
-    load_scenario,
-    save_scenario,
 )
+
+# Texto de encuadre legislativo (capa 4 — evaluation)
+from .evaluation.framing import reforma_context
 
 # Preflight de factibilidad poblacional (capa 1 — rules)
 from .rules.feasibility import (
@@ -70,24 +77,20 @@ from .domain.hierarchy import (
     normalize_cut,
 )
 
-# Restricciones para gerrychain
-from .constraints import (
+# Restricción legal de preservación (capa 1 — rules)
+from .rules.constraints import (
     make_preserve_constraint,
-    build_updaters_for_scenario,
     build_constraints_for_scenario,
-    score_with_split_penalty,
-    make_split_severity_updater,
-    make_split_penalty_accept,
 )
 
-# Métricas de comunas partidas
-from .split_metrics import (
-    count_split_units,
-    split_severity_index,
-    split_unit_summary,
-    small_fragment_count,
-    pop_afectada_pct,
-    plan_split_metrics,
+# Mecánica de motor para el modo "soft" (capa 2 — engines)
+from .engines.samplers.updaters import (
+    build_updaters_for_scenario,
+    make_split_severity_updater,
+)
+from .engines.samplers.accept import (
+    make_split_penalty_accept,
+    score_with_split_penalty,
 )
 
 # Equivalencia USA-Chile (capa 0 — domain)
@@ -144,30 +147,50 @@ from .engines.metrics import (
     cut_edges,
     contiguity_check,
     plan_summary,
+    # métricas de comunas partidas (regla en .rules.split_rules)
+    count_split_units,
+    split_severity_index,
+    split_unit_summary,
+    small_fragment_count,
+    pop_afectada_pct,
+    plan_split_metrics,
 )
 
 # Fuentes de población externas (Censo 2024 + SERVEL) (capa 0 — domain)
 from .domain import data as data
 
 # Comparación de escenarios
-from .scenario_comparison import (
-    ScoringConfig,
+# Carga de ensembles desde disco y completitud (capa 0 — domain)
+from .domain.ensemble_store import (
     load_ensembles_from_disk,
     load_scenario_statuses_from_disk,
     build_scenario_overview,
     assess_comparison_completeness,
+)
+
+# Comparación estadística y contrafactual entre ensembles (capa 3 — inference)
+from .inference.comparison import (
     compare_ensembles,
     scenario_delta,
-    rank_scenarios,
     pareto_frontier_nd,
     pareto_optimal_scenarios,
-    plot_tradeoff_frontier,
-    plot_boxplots_comparativos,
-    plot_radar_comparativo,
+)
+from .inference.sensitivity import (
     split_frequency_table,
     position_plan_vigente,
     compare_sensitivity,
     ranking_concordance,
+)
+from .inference.plots import (
+    plot_tradeoff_frontier,
+    plot_boxplots_comparativos,
+    plot_radar_comparativo,
+)
+
+# Puntaje compuesto ponderado (capa 4 — evaluation)
+from .evaluation.scoring import (
+    ScoringConfig,
+    rank_scenarios,
     COLORES_DEFAULT,
     NOMBRES_CORTOS,
     METRICAS_STD,
@@ -224,16 +247,18 @@ from .engines.fairshare import (
     fair_share_summary,
 )
 
-# Constantes legales del sistema electoral (lo que queda de electoral/)
-from .electoral import (
+# Constantes legales del sistema electoral (capa 1 — rules)
+from .rules.electoral_rules import (
     TOTAL_ESCANOS_CAMARA,
     MIN_ESCANOS_DISTRITO,
     MAX_ESCANOS_DISTRITO,
     MAGNITUDES_LEGALES_LEY20840,
     MAGNITUDES_LEGALES_2021,
     MAGNITUDES_CENSO2024_2026,
-    normalize_party_name,
 )
+
+# Normalización de nombres de partido/pacto (capa 2 — engines)
+from .engines.allocation.utils import normalize_party_name
 
 # Asignación de escaños: D'Hondt, magnitudes, agregador de plan (capa 2 — engines)
 from .engines.allocation import (
@@ -317,7 +342,7 @@ __all__ = [
     "ScenarioConfig",
     "SCENARIO_LEGAL", "SCENARIO_APC_STRICT",
     "SCENARIO_APC_SOFT", "SCENARIO_APC_FREE", "SCENARIOS",
-    "load_scenario", "save_scenario",
+    "load_scenario", "save_scenario", "reforma_context",
     # hierarchy
     "contract_to_decision_units", "build_decision_layer",
     "validate_hierarchy", "propagate_district_assignment",

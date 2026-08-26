@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from chiledist.electoral import (
+from chiledist.rules.electoral_rules import (
     MAGNITUDES_LEGALES_LEY20840,
     TOTAL_ESCANOS_CAMARA,
 )

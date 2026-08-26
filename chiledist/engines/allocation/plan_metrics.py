@@ -13,7 +13,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from chiledist.electoral.constants import TOTAL_ESCANOS_CAMARA, MIN_ESCANOS_DISTRITO, MAX_ESCANOS_DISTRITO
+from chiledist.rules.electoral_rules import TOTAL_ESCANOS_CAMARA, MIN_ESCANOS_DISTRITO, MAX_ESCANOS_DISTRITO
 from .magnitudes import assign_seat_magnitudes
 from .dhondt import (
     aggregate_votes,

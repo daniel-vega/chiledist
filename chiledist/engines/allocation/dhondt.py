@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from chiledist.electoral.constants import normalize_party_name
+from .utils import normalize_party_name
 
 
 # ──────────────────────────────────────────────────────────────────────────────

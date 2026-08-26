@@ -29,7 +29,7 @@ from chiledist.evaluation.proportionality import (
     seat_bonus,
 )
 from chiledist.evaluation.district_malapportionment import umbral_efectivo
-from chiledist.electoral.constants import (
+from chiledist.rules.electoral_rules import (
     TOTAL_ESCANOS_CAMARA,
     MIN_ESCANOS_DISTRITO,
     MAX_ESCANOS_DISTRITO,
