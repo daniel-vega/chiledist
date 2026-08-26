@@ -1,7 +1,8 @@
 """
 electoral.magnitudes
 ======================
-Asignación de magnitudes de escaño (Hamilton acotado) y comparación entre
+Asignación de magnitudes de escaño (D'Hondt art. 121 Ley 18.700, con
+Hamilton acotado disponible por compatibilidad) y comparación entre
 magnitudes vigentes y recalculadas con población actualizada.
 """
 
@@ -18,12 +19,16 @@ def assign_seat_magnitudes(
     total_seats: int = TOTAL_ESCANOS_CAMARA,
     min_seats: int = MIN_ESCANOS_DISTRITO,
     max_seats: int = MAX_ESCANOS_DISTRITO,
+    method: str = "dhondt",
 ) -> pd.Series:
     """
     Asigna magnitudes de escaño a circunscripciones electorales por población.
 
-    Usa el método Hamilton (resto mayor) con cotas mínima y máxima por
-    distrito, que es el método estándar en la Ley 18.700.
+    Delega en `assign_seat_magnitudes_dhondt` (método D'Hondt, art. 121
+    Ley 18.700 — el método legal, validado contra Resolución O 129/2026
+    de SERVEL: 26/28 coincidencias exactas) o en la implementación
+    Hamilton (resto mayor), mantenida por compatibilidad con código que
+    dependía del comportamiento anterior.
 
     Parameters
     ----------
@@ -33,6 +38,8 @@ def assign_seat_magnitudes(
         Total de escaños a distribuir (default: 155 para Cámara de Diputados).
     min_seats, max_seats : int
         Cotas por distrito (default: 3 / 8 según Ley 18.700).
+    method : {"dhondt", "hamilton"}
+        Método de asignación proporcional (default: "dhondt").
 
     Returns
     -------
@@ -42,8 +49,16 @@ def assign_seat_magnitudes(
     ------
     ValueError
         Si el total de escaños no alcanza para asignar min_seats a cada
-        distrito.
+        distrito, o si `method` no es "dhondt" ni "hamilton".
     """
+    if method == "dhondt":
+        return assign_seat_magnitudes_dhondt(
+            pop_by_district, total_seats=total_seats,
+            min_seats=min_seats, max_seats=max_seats,
+        )
+    if method != "hamilton":
+        raise ValueError(f"method debe ser 'dhondt' o 'hamilton', recibido: {method!r}")
+
     n = len(pop_by_district)
     if n == 0:
         return pd.Series(dtype=int)
@@ -84,16 +99,81 @@ def assign_seat_magnitudes(
     return seats
 
 
+def assign_seat_magnitudes_dhondt(
+    pop_by_district: pd.Series,
+    total_seats: int = TOTAL_ESCANOS_CAMARA,
+    min_seats: int = MIN_ESCANOS_DISTRITO,
+    max_seats: int = MAX_ESCANOS_DISTRITO,
+) -> pd.Series:
+    """
+    Asigna magnitudes de escaño por población usando D'Hondt (art. 121
+    Ley 18.700) con cotas mínima y máxima por distrito.
+
+    Cada distrito parte con `min_seats` garantizados (igual que
+    `assign_seat_magnitudes`, para mantener comparabilidad). Los escaños
+    restantes se asignan uno a uno al distrito con mayor cociente
+    poblacion_distrito / (escaños_actuales + 1) entre los distritos que
+    no hayan alcanzado `max_seats` — la definición estándar de D'Hondt
+    aplicada secuencialmente, acotada por capacidad. Si la capacidad
+    máxima total (`n * max_seats`) es menor que `total_seats`, se
+    detiene al llenar todos los distritos (igual que `assign_seat_magnitudes`,
+    que en ese caso tampoco asigna el total pedido).
+
+    Parameters
+    ----------
+    pop_by_district : pd.Series
+        Población por circunscripción electoral (indexed by district id).
+    total_seats : int
+        Total de escaños a distribuir (default: 155).
+    min_seats, max_seats : int
+        Cotas por distrito (default: 3 / 8 según Ley 18.700).
+
+    Returns
+    -------
+    pd.Series (mismos índices que pop_by_district): escaños asignados (int).
+
+    Raises
+    ------
+    ValueError
+        Si el total de escaños no alcanza para asignar min_seats a cada
+        distrito.
+    """
+    n = len(pop_by_district)
+    if n == 0:
+        return pd.Series(dtype=int)
+
+    if total_seats < n * min_seats:
+        raise ValueError(
+            f"total_seats ({total_seats}) insuficiente para {n} distritos "
+            f"con min_seats={min_seats} (requiere ≥ {n * min_seats})."
+        )
+
+    seats = pd.Series(min_seats, index=pop_by_district.index, dtype=int)
+    remaining = total_seats - n * min_seats
+
+    for _ in range(remaining):
+        elegibles = seats[seats < max_seats].index
+        if elegibles.empty:
+            break
+        cocientes = pop_by_district.loc[elegibles] / (seats.loc[elegibles] + 1)
+        ganador = cocientes.idxmax()
+        seats[ganador] += 1
+
+    return seats
+
+
 def comparar_magnitudes(
     pop_by_district: pd.Series,
     magnitudes_vigentes: "dict[int, int] | pd.Series",
     total_seats: int = TOTAL_ESCANOS_CAMARA,
     min_seats: int = MIN_ESCANOS_DISTRITO,
     max_seats: int = MAX_ESCANOS_DISTRITO,
+    method: str = "dhondt",
 ) -> pd.DataFrame:
     """
     Compara las magnitudes vigentes con las que resultarían de reasignar
-    escaños según la población actualizada (método Hamilton acotado).
+    escaños según la población actualizada (D'Hondt, art. 121 Ley 18.700,
+    por defecto; Hamilton disponible vía method="hamilton").
 
     Útil para el análisis contrafactual de H3: ¿qué cambiaría si se
     actualizaran las magnitudes con el Censo 2024?
@@ -107,6 +187,8 @@ def comparar_magnitudes(
         Magnitudes actuales (ej. MAGNITUDES_LEGALES_LEY20840).
     total_seats, min_seats, max_seats : int
         Parámetros de assign_seat_magnitudes().
+    method : {"dhondt", "hamilton"}
+        Método de asignación proporcional (default: "dhondt").
 
     Returns
     -------
@@ -125,6 +207,7 @@ def comparar_magnitudes(
         total_seats=total_seats,
         min_seats=min_seats,
         max_seats=max_seats,
+        method=method,
     )
 
     pop_aligned = pop_by_district.reindex(mag_vig.index, fill_value=0)

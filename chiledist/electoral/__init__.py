@@ -46,6 +46,7 @@ from .constants import (
     MAX_ESCANOS_DISTRITO,
     MAGNITUDES_LEGALES_LEY20840,
     MAGNITUDES_LEGALES_2021,
+    MAGNITUDES_CENSO2024_2026,
     normalize_party_name,
 )
 from .dhondt import (
@@ -56,7 +57,7 @@ from .dhondt import (
     run_electoral_plan_binivel,
     national_shares,
 )
-from .magnitudes import assign_seat_magnitudes, comparar_magnitudes
+from .magnitudes import assign_seat_magnitudes, assign_seat_magnitudes_dhondt, comparar_magnitudes
 from .proportionality import (
     gallagher_index,
     loosemore_hanby,
@@ -68,6 +69,7 @@ from .proportionality import (
 from .district_malapportionment import (
     personas_por_escano,
     peso_relativo_del_voto,
+    weighted_population_balance,
     umbral_efectivo,
     margen_ultimo_escano,
 )
@@ -77,6 +79,7 @@ __all__ = [
     "dhondt",
     "dhondt_binivel",
     "assign_seat_magnitudes",
+    "assign_seat_magnitudes_dhondt",
     "aggregate_votes",
     "run_electoral_plan",
     "run_electoral_plan_binivel",
@@ -90,6 +93,7 @@ __all__ = [
     # malapportionment distrital
     "personas_por_escano",
     "peso_relativo_del_voto",
+    "weighted_population_balance",
     "comparar_magnitudes",
     "umbral_efectivo",
     "margen_ultimo_escano",
@@ -99,5 +103,6 @@ __all__ = [
     "MAX_ESCANOS_DISTRITO",
     "MAGNITUDES_LEGALES_LEY20840",
     "MAGNITUDES_LEGALES_2021",
+    "MAGNITUDES_CENSO2024_2026",
     "normalize_party_name",
 ]

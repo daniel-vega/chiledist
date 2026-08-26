@@ -47,6 +47,8 @@ Uso:
         --assignment-path datos/asignacion_vigente.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -68,16 +70,16 @@ from chiledist.data import census2024 as c24
 
 # ── Nombres cortos para los 28 distritos electorales vigentes ─────────────────
 NOMBRES_DIST = {
-    1: "Arica-Parinacota",  2: "Tarapacá",         3: "Antofagasta",
-    4: "Atacama",           5: "Coquimbo Norte",    6: "Coquimbo Sur",
-    7: "Aconcagua",         8: "Valparaíso Costa",  9: "Valparaíso Interior",
-    10: "Santiago Nor",     11: "Santiago Cen",     12: "Santiago Nor-Or",
-    13: "Santiago Or",      14: "Santiago Sur-Or",  15: "Santiago Sur",
-    16: "Santiago Pon-Nor", 17: "Santiago Pon-Sur", 18: "Santiago Sur2",
-    19: "O'Higgins Nor",    20: "O'Higgins Sur",    21: "Maule Norte",
-    22: "Maule Sur",        23: "Biobío Nor",        24: "Biobío Sur",
-    25: "Araucanía Nor",    26: "Araucanía Sur",    27: "Los Ríos-Los Lagos",
-    28: "Magallanes-Aysén",
+    1: "Arica y Parinacota", 2: "Tarapacá",           3: "Antofagasta",
+    4: "Atacama",            5: "Coquimbo",           6: "Valparaíso Costa",
+    7: "Valparaíso Interior", 8: "Santiago Nor-Oriente", 9: "Santiago Oriente",
+    10: "Santiago Norte",    11: "Santiago Centro",   12: "Santiago Nor-Poniente",
+    13: "Santiago Sur-Oriente", 14: "Santiago Sur",   15: "O'Higgins Norte",
+    16: "O'Higgins Sur",     17: "Maule Norte",       18: "Maule Sur",
+    19: "Ñuble",             20: "Biobío Norte",      21: "Biobío Sur",
+    22: "Araucanía Norte",   23: "Araucanía Sur",     24: "Los Ríos",
+    25: "Los Lagos Norte",   26: "Los Lagos Sur",     27: "Aysén",
+    28: "Magallanes",
 }
 
 # ── Paleta del proyecto ───────────────────────────────────────────────────────
@@ -111,6 +113,15 @@ def parse_args():
     p.add_argument("--demo",           action="store_true",
                    help="Datos sintéticos para todos los análisis (no requiere archivos externos)")
     p.add_argument("--skip-viz",       action="store_true")
+    p.add_argument("--magnitudes",     default="ley20840",
+                   choices=["ley20840", "censo2026", "2015", "2026"],
+                   help="Régimen de magnitudes vigente: 'ley20840' (alias: '2015') usa "
+                        "MAGNITUDES_LEGALES_LEY20840 + método Hamilton para A2 — "
+                        "reproduce el régimen histórico 2017/2021/2025; "
+                        "'censo2026' (alias: '2026') usa MAGNITUDES_CENSO2024_2026 + "
+                        "método D'Hondt para A2 (art. 121 Ley 18.700) — régimen vigente "
+                        "desde la Resolución O 129/2026 de SERVEL (18-ABR-2026). "
+                        "Default: ley20840.")
     return p.parse_args()
 
 
@@ -308,11 +319,22 @@ def analisis_pxe(
 # Análisis A2 — Comparación magnitudes vigentes vs proporcionales
 # ──────────────────────────────────────────────────────────────────────────────
 
-def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
+def analisis_comparacion(
+    pop_por_distrito: pd.Series,
+    magnitudes_legales: dict | None = None,
+    method: str = "dhondt",
+) -> pd.DataFrame:
     """
     Tabla: magnitudes vigentes vs proporcionales al Censo 2024.
+
+    `method` selecciona el método de asignación proporcional usado para
+    calcular "magnitud_nueva" (D'Hondt art. 121 Ley 18.700 por defecto;
+    "hamilton" reproduce el cálculo histórico usado antes de validar
+    contra la Resolución O 129/2026).
     """
-    mag_dict = {k: v for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
+    mag_dict = {k: v for k, v in magnitudes_legales.items()
                 if k in pop_por_distrito.index}
     df = cd.comparar_magnitudes(
         pop_por_distrito,
@@ -320,6 +342,7 @@ def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
         total_seats=155,
         min_seats=3,
         max_seats=8,
+        method=method,
     )
     df["nombre"] = df["distrito"].map(NOMBRES_DIST).fillna(df["distrito"].apply(lambda d: f"D{d:02d}"))
 
@@ -343,12 +366,14 @@ def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
 # Análisis A3 — Umbral efectivo por circunscripción
 # ──────────────────────────────────────────────────────────────────────────────
 
-def analisis_umbrales() -> pd.DataFrame:
+def analisis_umbrales(magnitudes_legales: dict | None = None) -> pd.DataFrame:
     """
     Tabla de umbral efectivo para cada circunscripción según Ley 20840.
     """
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
     rows = []
-    for dist, mag in sorted(cd.MAGNITUDES_LEGALES_LEY20840.items()):
+    for dist, mag in sorted(magnitudes_legales.items()):
         mag_int = int(mag)
         T_U     = cd.umbral_efectivo(mag_int)
         T_L     = 1 / (2 * mag_int) if mag_int > 0 else 1.0
@@ -390,6 +415,7 @@ def analisis_electoral(
     votes_df: pd.DataFrame,
     pop_by_unit: pd.Series,
     pacto_map: dict | None,
+    magnitudes_legales: dict | None = None,
 ) -> pd.DataFrame:
     """
     Ejecuta plan_electoral_metrics en modo 'fijas' y 'calculadas' y compara.
@@ -421,8 +447,10 @@ def analisis_electoral(
     else:
         votes_df["CUT"] = votes_df["CUT"].astype(type(sample_key))
 
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
     mag_series = pd.Series(
-        {k: int(v) for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+        {k: int(v) for k, v in magnitudes_legales.items()
          if k in set(assignment.values())}
     )
 
@@ -663,6 +691,14 @@ def main():
     print(f"\nchiledist — Malapportionment (H3)")
     print(f"  output: {out_dir}")
 
+    es_ley20840 = args.magnitudes in ("ley20840", "2015")
+    magnitudes_legales   = cd.MAGNITUDES_LEGALES_LEY20840 if es_ley20840 else cd.MAGNITUDES_CENSO2024_2026
+    metodo_comparacion   = "hamilton" if es_ley20840 else "dhondt"
+    print(f"  magnitudes: "
+          + ("MAGNITUDES_LEGALES_LEY20840, Ley 20.840 (método A2: hamilton — reproduce cálculo histórico)"
+             if es_ley20840 else
+             "MAGNITUDES_CENSO2024_2026, Resolución O 129/2026 SERVEL (método A2: dhondt — art. 121 Ley 18.700)"))
+
     # ── Cargar datos ──────────────────────────────────────────────────────────
     if args.demo:
         pop_por_distrito, assignment, votes_df = _demo_data()
@@ -729,12 +765,12 @@ def main():
     # ── Magnitudes vigentes ───────────────────────────────────────────────────
     districts_en_assignment = set(assignment.values())
     magnitudes = pd.Series(
-        {k: int(v) for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+        {k: int(v) for k, v in magnitudes_legales.items()
          if k in districts_en_assignment}
     )
 
     # Si la asignación no cubre todos los 28 distritos, avisamos
-    faltantes = set(cd.MAGNITUDES_LEGALES_LEY20840.keys()) - districts_en_assignment
+    faltantes = set(magnitudes_legales.keys()) - districts_en_assignment
     if faltantes:
         print(f"  ⚠ {len(faltantes)} distritos sin cobertura en la asignación: "
               f"{sorted(faltantes)[:5]}{'...' if len(faltantes) > 5 else ''}")
@@ -746,17 +782,18 @@ def main():
     df_pxe = analisis_pxe(pop_por_distrito, magnitudes)
 
     # ── Análisis A2 ───────────────────────────────────────────────────────────
-    df_comp = analisis_comparacion(pop_por_distrito)
+    df_comp = analisis_comparacion(pop_por_distrito, magnitudes_legales, metodo_comparacion)
 
     # ── Análisis A3 ───────────────────────────────────────────────────────────
-    df_umb = analisis_umbrales()
+    df_umb = analisis_umbrales(magnitudes_legales)
 
     # ── Análisis A4 (opcional) ────────────────────────────────────────────────
     df_elec = None
     if votes_df is not None:
         try:
             df_elec = analisis_electoral(assignment, votes_df,
-                                         pop_by_unit, pacto_map)
+                                         pop_by_unit, pacto_map,
+                                         magnitudes_legales)
         except Exception as e:
             import traceback
             print(f"  ⚠ A4 falló: {e}")

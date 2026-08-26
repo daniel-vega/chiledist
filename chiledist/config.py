@@ -84,6 +84,12 @@ class ScenarioConfig:
     n_steps_warmup: int = 500
     seed: int = 42
 
+    # Balance poblacional: None = ideal uniforme (total_pop/n_districts,
+    # comportamiento actual). dict {distrito: magnitud} = ideal ponderado
+    # por magnitud (ver chiledist.weighted_population_balance) — para
+    # sistemas multimember con magnitud variable (ej. Chile, M∈[3,8]).
+    magnitudes: Optional[dict] = None
+
     # Conectividad e islas
     contiguity: str = "queen"
     island_policy: str = "nearest"
@@ -141,6 +147,12 @@ class ScenarioConfig:
 
         if self.n_districts < 2:
             raise ValueError("n_districts debe ser >= 2.")
+
+        if self.magnitudes is not None and not isinstance(self.magnitudes, dict):
+            raise ValueError(
+                "magnitudes debe ser dict {distrito: escaños} o None "
+                "(balance uniforme)."
+            )
 
         if not 0 < self.pop_tolerance < 1:
             raise ValueError("pop_tolerance debe estar en (0, 1).")
@@ -220,6 +232,7 @@ class ScenarioConfig:
         lines += [
             f"  Pop col        : {self.pop_col}",
             f"  Pop tolerancia : ±{self.pop_tolerance*100:.0f}%",
+            f"  Balance        : {'ponderado por magnitud' if self.magnitudes else 'uniforme'}",
             f"  Sampler        : {self.sampler}",
             f"  Steps          : {self.n_steps:,}",
             f"  Seed           : {self.seed}",
@@ -350,6 +363,7 @@ def load_scenario(path: str) -> ScenarioConfig:
     flat.setdefault("seed",            sampler_cfg.get("seed", 42))
 
     flat.setdefault("n_districts", districts.get("n_districts", flat.pop("n_districts", 8)))
+    flat.setdefault("magnitudes", districts.get("magnitudes", flat.get("magnitudes", None)))
 
     connectivity = data.pop("connectivity", {}) or {}
     flat.setdefault("contiguity",          connectivity.get("contiguity",
@@ -369,6 +383,7 @@ def load_scenario(path: str) -> ScenarioConfig:
         "min_fragment_pop_share", "pop_col", "pop_tolerance", "pop_source",
         "sampler", "n_districts", "n_steps", "n_steps_warmup", "seed",
         "contiguity", "island_policy", "island_threshold_km", "crs_metric",
+        "magnitudes",
     }
     flat = {k: v for k, v in flat.items() if k in valid_fields}
 
@@ -410,6 +425,7 @@ def save_scenario(config: ScenarioConfig, path: str) -> None:
         },
         "districts": {
             "n_districts": config.n_districts,
+            "magnitudes":  config.magnitudes,
         },
         "sampler": {
             "method":         config.sampler,

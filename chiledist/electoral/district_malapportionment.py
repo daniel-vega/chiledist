@@ -80,6 +80,98 @@ def peso_relativo_del_voto(
     return (pxe / media_nacional).rename("peso_relativo_del_voto")
 
 
+def weighted_population_balance(
+    pop_by_district: pd.Series,
+    magnitudes: "dict[int, int] | pd.Series",
+    id_to_district: "dict | None" = None,
+) -> pd.DataFrame:
+    """
+    Balance poblacional ponderado por magnitud distrital.
+
+    `population_balance()` (`chiledist.metrics`) usa un ideal uniforme
+    (`total_pop / n_distritos`), correcto para sistemas uninominales o
+    de magnitud fija. En un sistema multimember con magnitud variable
+    por distrito (M∈[3,8] en Chile, pero la fórmula no depende de eso:
+    `magnitudes` es cualquier dict/Series {distrito: escaños} que el
+    llamador provea), el principio de igualdad del voto exige que el
+    ideal sea proporcional a los escaños que reparte cada distrito:
+
+        ideal_i = total_pop * M_i / sum(M)
+        dev_i   = (pop_i - ideal_i) / ideal_i * 100
+        pxe_i   = pop_i / M_i               (personas por escaño)
+        peso_i  = pxe_i / (total_pop/sum(M))  (peso relativo del voto)
+
+    `pxe_i`/`peso_i` se calculan con `personas_por_escano()` y
+    `peso_relativo_del_voto()` de este mismo módulo, para mantener una
+    única definición de esas métricas en el paquete.
+
+    Parameters
+    ----------
+    pop_by_district : pd.Series
+        Población. Indexada por distrito, salvo que se pase
+        `id_to_district`, en cuyo caso puede estar indexada por unidad
+        (ej. CUT) y se agrega a nivel de distrito primero.
+    magnitudes : dict | pd.Series
+        Magnitudes {distrito: escaños}. Debe cubrir todos los distritos
+        de `pop_by_district` (ya agregada, si corresponde).
+    id_to_district : dict, opcional
+        Mapeo {unit_id: distrito} para agregar `pop_by_district` de
+        nivel de unidad a nivel de distrito antes de calcular el
+        balance. Si None, `pop_by_district` ya debe estar indexada por
+        distrito.
+
+    Returns
+    -------
+    pd.DataFrame, ordenado por deviation_pct descendente, con columnas:
+        district_id, population, magnitud, ideal_pop,
+        deviation_pct, personas_por_escano, peso_relativo.
+
+    Raises
+    ------
+    ValueError
+        Si `id_to_district` no cubre alguna unidad de `pop_by_district`,
+        o si `magnitudes` no cubre algún distrito resultante.
+    """
+    if id_to_district is not None:
+        distrito_de = pop_by_district.index.map(id_to_district)
+        if distrito_de.isna().any():
+            faltantes = pop_by_district.index[pd.isna(distrito_de)].tolist()
+            raise ValueError(
+                f"id_to_district no cubre {len(faltantes)} unidades de "
+                f"pop_by_district: {faltantes[:5]}{'...' if len(faltantes) > 5 else ''}"
+            )
+        pop_por_distrito = pop_by_district.groupby(distrito_de).sum()
+    else:
+        pop_por_distrito = pop_by_district.copy()
+
+    mag = pd.Series(magnitudes) if isinstance(magnitudes, dict) else magnitudes.copy()
+    mag = mag.reindex(pop_por_distrito.index)
+    if mag.isna().any():
+        faltantes = mag.index[mag.isna()].tolist()
+        raise ValueError(f"magnitudes no cubre {len(faltantes)} distritos: {faltantes}")
+    mag = mag.astype(int)
+    pop_por_distrito = pop_por_distrito.reindex(mag.index)
+
+    total_pop = pop_por_distrito.sum()
+    total_mag = mag.sum()
+    ideal_pop = total_pop * mag / total_mag
+
+    pxe   = personas_por_escano(pop_por_distrito, mag)
+    peso  = peso_relativo_del_voto(pop_por_distrito, mag)
+
+    df = pd.DataFrame({
+        "district_id":         pop_por_distrito.index,
+        "population":          pop_por_distrito.values,
+        "magnitud":            mag.values,
+        "ideal_pop":           ideal_pop.values,
+        "deviation_pct":       ((pop_por_distrito - ideal_pop) / ideal_pop * 100).values,
+        "personas_por_escano": pxe.reindex(pop_por_distrito.index).values,
+        "peso_relativo":       peso.reindex(pop_por_distrito.index).values,
+    })
+
+    return df.sort_values("deviation_pct", ascending=False).reset_index(drop=True)
+
+
 def umbral_efectivo(magnitud: int) -> float:
     """
     Umbral superior (T_U) de Taagepera para un distrito de M escaños.

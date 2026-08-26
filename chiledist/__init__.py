@@ -228,6 +228,7 @@ from .electoral import (
     dhondt,
     dhondt_binivel,
     assign_seat_magnitudes,
+    assign_seat_magnitudes_dhondt,
     aggregate_votes,
     run_electoral_plan,
     run_electoral_plan_binivel,
@@ -241,6 +242,7 @@ from .electoral import (
     # malapportionment
     personas_por_escano,
     peso_relativo_del_voto,
+    weighted_population_balance,
     comparar_magnitudes,
     umbral_efectivo,
     margen_ultimo_escano,
@@ -250,6 +252,7 @@ from .electoral import (
     MAX_ESCANOS_DISTRITO,
     MAGNITUDES_LEGALES_LEY20840,
     MAGNITUDES_LEGALES_2021,
+    MAGNITUDES_CENSO2024_2026,
     normalize_party_name,
 )
 
@@ -370,16 +373,18 @@ __all__ = [
     "max_cell_deviation", "fair_share_summary",
     # electoral
     "dhondt", "dhondt_binivel",
-    "assign_seat_magnitudes", "aggregate_votes",
+    "assign_seat_magnitudes", "assign_seat_magnitudes_dhondt", "aggregate_votes",
     "run_electoral_plan", "run_electoral_plan_binivel", "national_shares",
     "gallagher_index", "loosemore_hanby", "rae_index",
     "effective_number_of_parties", "proportionality_summary",
     "plan_electoral_metrics",
     # malapportionment
-    "personas_por_escano", "peso_relativo_del_voto", "comparar_magnitudes",
+    "personas_por_escano", "peso_relativo_del_voto", "weighted_population_balance",
+    "comparar_magnitudes",
     "umbral_efectivo", "margen_ultimo_escano", "seat_bonus",
     "TOTAL_ESCANOS_CAMARA", "MIN_ESCANOS_DISTRITO", "MAX_ESCANOS_DISTRITO",
     "MAGNITUDES_LEGALES_LEY20840", "MAGNITUDES_LEGALES_2021",
+    "MAGNITUDES_CENSO2024_2026",
     "normalize_party_name",
     # diagnostics
     "autocorrelation_function", "effective_sample_size", "gelman_rubin",

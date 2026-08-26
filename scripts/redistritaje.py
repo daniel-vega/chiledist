@@ -39,6 +39,8 @@ Uso:
         --n-distritos 8 --pop-tol 0.05
 """
 
+from __future__ import annotations
+
 import argparse
 import dataclasses
 import datetime
@@ -180,7 +182,7 @@ def diagnostico_busqueda_agotada() -> str:
     )
 
 
-def conectar_islas_y_componentes(graph, gdf_nodos) -> None:
+def conectar_islas_y_componentes(graph, gdf_nodos) -> int:
     """
     Conecta islas (grado 0) al nodo más cercano y fusiona componentes
     desconectados por distancia de centroides. Modifica `graph` in-place.
@@ -189,6 +191,9 @@ def conectar_islas_y_componentes(graph, gdf_nodos) -> None:
     `graph` (reset_index(drop=True) antes de construir el grafo con
     gc.Graph.from_geodataframe) — se usa solo para leer la geometría de
     cada nodo vía posición entera (`.iloc[n]`).
+
+    Retorna el número de islas encontradas (antes de conectarlas) --
+    el caller lo necesita para el run_manifest.json (n_islands_found).
     """
     centroids = {}
     for n in graph.nodes():
@@ -231,6 +236,8 @@ def conectar_islas_y_componentes(graph, gdf_nodos) -> None:
               f"{graph.number_of_edges()} aristas)")
     else:
         print(f"  ⚠ Grafo aún no conexo — algunos pasos pueden fallar")
+
+    return len(islands_gc)
 
 
 REGION_NOMBRES = {
@@ -313,6 +320,23 @@ def parse_args():
                     help="Ruta al CSV/Excel del padrón SERVEL "
                          "(solo con --pop-source padron).")
 
+    # Balance poblacional ponderado por magnitud (opcional, no afecta el default)
+    mg = p.add_argument_group("Balance poblacional ponderado por magnitud")
+    mg.add_argument("--magnitudes", default="uniforme",
+                     choices=["uniforme", "ley20840", "censo2026"],
+                     help="Target de balance poblacional para la cadena ReCom. "
+                          "'uniforme' (default): comportamiento actual, "
+                          "ideal_pop = total_pop/n_distritos igual para todos. "
+                          "'ley20840'/'censo2026': ideal ponderado por la magnitud "
+                          "legal real del distrito de cada unidad (MAGNITUDES_LEGALES_LEY20840 "
+                          "/ MAGNITUDES_CENSO2024_2026, vía chiledist.weighted_population_balance), "
+                          "consistente con el principio de igualdad del voto en sistemas "
+                          "multimember (M variable por distrito). Requiere --assignment-path.")
+    mg.add_argument("--assignment-path", default=None,
+                     help="JSON {CUT_str: n_circunscripcion} — crosswalk comuna→distrito "
+                          "legal, requerido si --magnitudes != uniforme "
+                          "(default: <base-dir>/datos/asignacion_vigente.json).")
+
     return p.parse_args()
 
 
@@ -390,6 +414,108 @@ def enrich_population(
     return distritos, "viviendas"
 
 
+def ponderar_poblacion_por_magnitud(
+    gdf: gpd.GeoDataFrame,
+    pop_col: str,
+    magnitudes: dict,
+    assignment_path: str,
+    cut_col: str = "CUT",
+) -> tuple:
+    """
+    Deriva una columna de población "ponderada" tal que un target UNIFORME
+    de ReCom sobre ella produce, en la población real, un ideal
+    proporcional a la magnitud legal del distrito de cada unidad
+    (`ideal_i = total_pop * M_i / sum(M)` — ver `chiledist.weighted_population_balance`,
+    la misma fórmula, generalizable a cualquier sistema con magnitud variable,
+    no solo Chile).
+
+    gerrychain (`recom`/`recursive_tree_part`) balancea un único
+    `pop_target` escalar igual para todas las partes — no soporta un
+    ideal distinto por distrito. El truco estándar para lograr un target
+    NO uniforme sin tocar el sampler es re-escalar la columna de
+    población que se le entrega: si cada unidad U (con distrito legal
+    real d(U), magnitud M_{d(U)}) se pondera con
+    `peso_U = M_{d(U)} / sum(M)` y se define
+    `pop_ponderada_U = pop_U / peso_U`, entonces un target uniforme sobre
+    `pop_ponderada` en n zonas produce, para una zona dominada por
+    unidades del distrito i, población real ≈ target * peso_i —
+    exactamente `ideal_i` de la fórmula de arriba.
+
+    Esto es una aproximación: usa el distrito legal VIGENTE de cada
+    unidad (desde `assignment_path`), no el distrito que ReCom termine
+    asignándole. Es exacta cuando el número de zonas que arma ReCom
+    coincide con el número de distritos reales del régimen de
+    magnitudes elegido para la región; en otro caso es un sesgo
+    razonable hacia esa proporcionalidad, no una garantía exacta.
+
+    Parameters
+    ----------
+    gdf : GeoDataFrame
+        Unidades de decisión (o la capa APC antes de contraer), con
+        columna `cut_col` y `pop_col`.
+    pop_col : str
+        Columna de población real a ponderar (ej. "viviendas", "personas").
+    magnitudes : dict
+        {distrito legal: magnitud}. P.ej. MAGNITUDES_LEGALES_LEY20840
+        o MAGNITUDES_CENSO2024_2026 — no hay nada específico de Chile
+        hardcodeado aquí, es cualquier dict {distrito: escaños}.
+    assignment_path : str
+        JSON {CUT_str: n_circunscripcion} — crosswalk comuna→distrito legal.
+    cut_col : str
+        Columna de `gdf` con el CUT de comuna (default "CUT").
+
+    Returns
+    -------
+    (gdf_con_columna_nueva, nombre_columna_ponderada, magnitudes_region)
+        magnitudes_region: dict {distrito: magnitud} restringido a los
+        distritos presentes en `gdf` (para diagnóstico/logging).
+    """
+    import json
+
+    if not os.path.exists(assignment_path):
+        raise FileNotFoundError(
+            f"--assignment-path no encontrado: {assignment_path}. "
+            "Requerido para --magnitudes != uniforme."
+        )
+    with open(assignment_path, "r", encoding="utf-8") as f:
+        assignment = json.load(f)
+    assignment = {cd.normalize_cut(k): int(v) for k, v in assignment.items()}
+
+    distrito_legal = gdf[cut_col].map(lambda c: assignment.get(cd.normalize_cut(c)))
+    faltantes = int(distrito_legal.isna().sum())
+    if faltantes > 0:
+        print(f"  ⚠ {faltantes}/{len(gdf)} unidades sin distrito legal en "
+              f"{assignment_path} — se les asigna la magnitud promedio regional.")
+
+    distritos_region = sorted(d for d in distrito_legal.dropna().unique())
+    magnitudes_region = {d: int(magnitudes[d]) for d in distritos_region if d in magnitudes}
+    sin_magnitud = set(distritos_region) - set(magnitudes_region)
+    if sin_magnitud:
+        print(f"  ⚠ {len(sin_magnitud)} distritos sin magnitud en el diccionario "
+              f"provisto: {sorted(sin_magnitud)} — se excluyen del cálculo de peso.")
+
+    total_magnitud = sum(magnitudes_region.values())
+    n_distritos_region = len(magnitudes_region)
+    if total_magnitud == 0 or n_distritos_region == 0:
+        raise ValueError(
+            "magnitudes no cubre ningún distrito presente en la región — "
+            "no se puede ponderar."
+        )
+    magnitud_promedio = total_magnitud / n_distritos_region
+
+    magnitud_unidad = distrito_legal.map(magnitudes_region).fillna(magnitud_promedio)
+    peso_unidad = magnitud_unidad / total_magnitud
+
+    pop_col_pond = f"{pop_col}_pond"
+    gdf = gdf.copy()
+    gdf[pop_col_pond] = gdf[pop_col] / peso_unidad
+
+    print(f"  Balance ponderado por magnitud: {n_distritos_region} distritos legales "
+          f"cubiertos, sum(M)={total_magnitud}, magnitud media={magnitud_promedio:.2f}")
+
+    return gdf, pop_col_pond, magnitudes_region
+
+
 def build_scenario(args) -> ScenarioConfig:
     """Construye ScenarioConfig desde los argumentos CLI."""
     # Prioridad: scenario-file > --scenario > overrides manuales > default
@@ -428,6 +554,10 @@ def build_scenario(args) -> ScenarioConfig:
         changes["n_steps"] = args.n_steps
     if args.seed:
         changes["seed"] = args.seed
+    if getattr(args, "magnitudes", "uniforme") != "uniforme":
+        changes["magnitudes"] = (cd.MAGNITUDES_LEGALES_LEY20840
+                                  if args.magnitudes == "ley20840"
+                                  else cd.MAGNITUDES_CENSO2024_2026)
 
     if changes:
         cfg = dataclasses.replace(cfg, **changes)
@@ -452,6 +582,7 @@ def analizar_region(
     pop_source: str = "viviendas",
     census_path: str | None = None,
     padron_path: str | None = None,
+    assignment_path: str | None = None,
 ) -> dict:
     """Ejecuta el análisis completo de redistritaje para una región."""
 
@@ -566,12 +697,24 @@ def analizar_region(
     pop_label     = POP_LABELS.get(pop_col, pop_col)
     decision_unit = scenario.decision_unit
 
+    # ── Balance ponderado por magnitud (opcional — default None = uniforme) ──
+    magnitudes_region = None
+    if scenario.magnitudes is not None:
+        resolved_assignment_path = assignment_path or os.path.join(
+            base_dir, "datos", "asignacion_vigente.json"
+        )
+        distritos, pop_col, magnitudes_region = ponderar_poblacion_por_magnitud(
+            distritos, pop_col, scenario.magnitudes, resolved_assignment_path,
+        )
+
     # ── Preparar GDF según unidad de decisión ────────────────────────────────
     if decision_unit == "CUT":
         print("\n  Contrayendo APC → comunas (modo legal)...")
         agg_spec = {pop_col: "sum"}
         if pop_col != "viviendas":
             agg_spec["viviendas"] = "sum"
+        if magnitudes_region is not None and pop_label not in agg_spec:
+            agg_spec[pop_label] = "sum"
         gdf_dec = cd.contract_to_decision_units(
             distritos, decision_unit="CUT",
             agg_spec=agg_spec,
@@ -639,9 +782,17 @@ def analizar_region(
     print(f"\n  Unidades dec.  : {n_units} ({id_col})")
     if id_col == "ID_DIST":
         print(f"  Comunas (CUT)  : {n_comunas}")
-    print(f"  {pop_label.capitalize():<15}: {total_viv:,}")
-    print(f"  Ideal/distrito : {ideal_pop:,.0f}")
+    print(f"  {pop_label.capitalize():<15}: {total_viv:,}"
+          + ("  (ponderada por magnitud, no población real)" if magnitudes_region else ""))
+    print(f"  Ideal/distrito : {ideal_pop:,.0f}"
+          + ("  (target uniforme sobre la población ponderada — el ideal real "
+             "por distrito es proporcional a su magnitud)" if magnitudes_region else ""))
     print(f"  N grupos       : {n_distritos_eff}")
+    if magnitudes_region is not None and n_distritos_eff != len(magnitudes_region):
+        print(f"  ⚠ n_distritos ({n_distritos_eff}) != distritos legales cubiertos "
+              f"por el régimen de magnitudes ({len(magnitudes_region)}) — la "
+              "proporcionalidad al ideal por magnitud es aproximada, no exacta "
+              "(ver docstring de ponderar_poblacion_por_magnitud).")
 
     # ── Grafo gerrychain ──────────────────────────────────────────────────────
     try:
@@ -677,7 +828,7 @@ def analizar_region(
     )
 
     # Conectar islas y componentes en el grafo gerrychain
-    conectar_islas_y_componentes(graph, gdf_gc)
+    n_islands_found = conectar_islas_y_componentes(graph, gdf_gc)
 
     # ── Partición inicial ─────────────────────────────────────────────────────
     print(f"\n  Buscando partición inicial...")
@@ -1462,7 +1613,7 @@ def analizar_region(
             region_code=region_code,
             region_name=region_name,
             n_units=n_units,
-            n_islands_found=len(islands_gc),
+            n_islands_found=n_islands_found,
             extra={
                 "sampler_diagnostics": {
                     "epsilon_recom":     epsilon_recom,
@@ -1551,6 +1702,9 @@ def main():
           f"{'  (--pop-tol explícito)' if args.pop_tol is not None else '  (desde escenario)'}")
     print(f"  n_steps     : {args.n_steps:,}")
     print(f"  pop_source  : {args.pop_source}")
+    print(f"  magnitudes  : {args.magnitudes}"
+          + ("  (balance uniforme, comportamiento actual)" if args.magnitudes == "uniforme"
+             else "  (balance ponderado por magnitud legal)"))
 
     resultados = []
     for r in regiones:
@@ -1568,6 +1722,7 @@ def main():
                 pop_source=args.pop_source,
                 census_path=getattr(args, "census_path", None),
                 padron_path=getattr(args, "padron_path", None),
+                assignment_path=getattr(args, "assignment_path", None),
             )
             resultados.append(res)
         except Exception as e:

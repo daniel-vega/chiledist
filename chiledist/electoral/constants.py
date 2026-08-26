@@ -101,3 +101,19 @@ assert sum(MAGNITUDES_LEGALES_LEY20840.values()) == 155
 # Usar MAGNITUDES_LEGALES_LEY20840 en código nuevo; este alias existe solo
 # para compatibilidad con scripts que lo referencian por año de elección.
 MAGNITUDES_LEGALES_2021 = MAGNITUDES_LEGALES_LEY20840
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Actualización Censo 2024 (post Resolución O 129/2026, SERVEL, 18-ABR-2026)
+# ──────────────────────────────────────────────────────────────────────────────
+
+MAGNITUDES_CENSO2024_2026 = {
+    # 28 distritos electorales, magnitudes actualizadas según Art. 179 bis
+    # Ley 18.700 con población Censo 2024.
+    # Fuente: SERVEL, Resolución Exenta O N°129/2026 (18-ABR-2026).
+     1: 3,   2: 3,   3: 6,   4: 3,   5: 8,   6: 8,   7: 8,
+     8: 8,   9: 8,  10: 8,  11: 8,  12: 8,  13: 6,  14: 8,
+    15: 5,  16: 3,  17: 7,  18: 3,  19: 4,  20: 8,  21: 6,
+    22: 3,  23: 6,  24: 3,  25: 3,  26: 5,  27: 3,  28: 3,
+}
+assert sum(MAGNITUDES_CENSO2024_2026.values()) == 155

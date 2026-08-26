@@ -864,30 +864,43 @@ Barre valores de `split_penalty` para la frontera Pareto entre balance poblacion
 
 ```bash
 # Barrido estándar para la RM con 6 valores de penalty
-python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --region 13
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13
 
 # Rango y resolución personalizados
-python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --region 13 \
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 \
     --penalties 0.0,0.1,0.2,0.5,1.0,2.0
 
-# Solo calcular (sin re-ejecutar redistritaje)
-python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --region 13 --skip-run
+# Con población real del Censo 2024 (en vez del default --pop-source viviendas)
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --output-dir ./datos --regiones 13 \
+    --penalties 0.0,0.25,0.5,1.0,2.5,5.0,10.0,25.0 \
+    --pop-source censo2024 --census-path datos/poblacion_comunal_censo2024.csv \
+    --pop-tol 0.10 --n-steps 10000 --seed 42
+
+# Solo calcular (sin re-ejecutar redistritaje; lee ensemble_stats.csv ya existentes)
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 --skip-run
 
 # Sin figuras
-python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --region 13 --skip-viz
+python scripts/pareto_sweep.py --base-dir ./SHP_APC2023 --regiones 13 --skip-viz
 ```
 
 | Argumento | Default | Descripción |
 |-----------|---------|-------------|
-| `--region` | `13` | Región a analizar (código único, entero — a diferencia de otros scripts, no acepta lista) |
+| `--regiones` | `13` | Región(es) a analizar, separadas por coma, o `todas` |
+| `--region` | — | _(Obsoleto, usar `--regiones`)_ Alias de compatibilidad para un único código de región |
 | `--penalties` | `0.0,0.1,0.25,0.5,1.0,2.0` | Valores de `split_penalty` (coma-separados) |
 | `--n-distritos` | _(del escenario)_ | Número de particiones territoriales a generar (NO la magnitud electoral Ley 20.840). Default: cada anclaje/variante del barrido conserva su propio `n_districts`; no se homogeneiza salvo override explícito. |
+| `--pop-tol` | `0.15` | Tolerancia poblacional aplicada a todas las configuraciones del barrido |
 | `--n-steps` | `5000` | Pasos de la cadena por escenario |
+| `--seed` | `42` | Semilla aleatoria |
+| `--pop-source` | `viviendas` | Fuente de población: `viviendas`, `manzana`, `censo2024`, `padron`. **`padron` no es utilizable aquí**: requiere `--padron-path`, que este script no expone (a diferencia de `redistritaje.py`) — usarlo aborta con error. |
+| `--census-path` | — | CSV del Censo 2024 (para `censo2024`; también usado por `manzana`, ver limitación de `padron` arriba) |
 | `--no-anchors` | — | Omite los anclajes `legal`/`apc_strict`/`apc_free`, deja solo el barrido continuo de `apc_soft` |
-| `--skip-run` | — | Solo leer CSVs existentes |
+| `--skip-run` | — | Solo leer CSVs existentes (no re-ejecuta `analizar_region()`; falla por configuración si falta su `ensemble_stats.csv`) |
 | `--skip-viz` | — | Omitir figuras |
 
-**Salidas en `datos/{REGION}/pareto_sweep/`:**
+> `--output-dir` (default: `<base-dir>/datos`) determina dónde se leen/escriben los ensembles y el barrido — si se usa un `--base-dir` distinto de `.` (p. ej. `./SHP_APC2023`), pasar `--output-dir ./datos` explícitamente para que la salida quede junto al resto de `datos/`, en vez de anidada bajo `--base-dir`.
+
+**Salidas en `<output-dir>/{REGION}/pareto_sweep/`:**
 
 ```
 pareto_sweep_results.csv   # tabla completa: todas las configuraciones + is_pareto

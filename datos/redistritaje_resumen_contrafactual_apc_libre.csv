@@ -1,2 +1,2 @@
 region,region_name,scenario,decision_unit,preserve_mode,status,n_unidades,n_planes,ref_plan_id,ref_desv,comunas_partidas_ref,out_dir,run_dir,run_id
-13,R13_METROPOLITANA,contrafactual_apc_libre,ID_DIST,none,ok,451,50000,33109,6.379,26,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre/run_20260816_001325_5d9ec89d,5d9ec89d-f709-4024-952f-5e57d5c06ce0
+13,R13_METROPOLITANA,contrafactual_apc_libre,ID_DIST,none,ok,451,50000,33109,6.379,26,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre/run_20260819_194058_856910a5,856910a5-e1ad-4e8c-801f-3d78adb02390

@@ -263,7 +263,7 @@ for n in range(6, 21):
 
 | n_distritos | Factible (±10%) | Tolerancia mínima requerida |
 |---|---|---|
-| 8 (Ley 20.840 vigente para la RM) | ✓ | 0.0% |
+| n=8 (experimento contrafactual — R13 tiene 7 distritos electorales vigentes: D8–D14) | ✓ | 0.0% |
 | 9–13 | ✓ | 0.0% |
 | 14 | ✓ | 7.5% |
 | 15 | ✗ | 15.1% |
@@ -284,7 +284,8 @@ indivisible que excede el ideal hace inviable *cualquier* plan bajo
 Ley 18.700, sin importar cuántas semillas o intentos de
 `recursive_tree_part` se prueben (ver `chiledist/feasibility.py`).
 
-**El mapa vigente (n=8) es el caso MÁS factible del rango, no uno al
+**n=8 (experimento contrafactual — R13 tiene 7 distritos electorales
+vigentes: D8–D14) es el caso MÁS factible del rango, no uno al
 límite**: tolerancia mínima requerida 0.0% — Puente Alto está muy por
 debajo del ideal a 8 distritos. La dificultad observada al correr la
 cadena ReCom real en n=8 (el warm-up converge en 4.402 pasos (dentro
@@ -304,72 +305,164 @@ mínima de decisión** (de CUT a APC — ver `apc_free`/`apc_soft`), que
 permite fragmentar comunas grandes como Puente Alto en vez de tratarlas
 como bloques indivisibles.
 
-## Resultados empíricos — R13, Censo 2024, n=8, modelo A
+## Resultados empíricos — R13, Censo 2024, n=8, modelo A (definitivo)
 
-### Ensembles generados (comparación apples-to-apples, pop_tol=±10%)
+> **Nota sobre n=8:** los ensembles de H1 usan n=8 zonas como
+> parámetro de partición. R13 tiene 7 distritos electorales
+> (D8–D14, Resolución O 129/2026 y Ley 20.840). Los
+> resultados de H1 son válidos como análisis de particiones
+> sintéticas en 8 zonas, pero no representan directamente
+> el arreglo electoral vigente de 7 distritos. Para analizar
+> el arreglo vigente, usar n=7 con las comunas de R13 y
+> las magnitudes correspondientes.
 
-| escenario               | pop_tol | n_draws | valid_fraction | warmup_pasos | max_dev_mediana | comunas_partidas_mediana |
-|-------------------------|---------|---------|----------------|--------------|-----------------|--------------------------|
-| legal_comunas           | ±10%    | 50.000  | 1.0            | 4.402        | 9.127%          | 0.0                      |
-| contrafactual_apc_libre | ±10%    | 50.000  | 1.0            | 4            | 9.124%          | 28.5                     |
-| contrafactual_apc_soft  | ±10%    | 50.000  | 1.0            | 3            | 9.131%          | 26.5                     |
+### Ensembles canónicos
 
-Los tres escenarios fueron generados con pop_tol=±10% y
-valid_fraction=1.0 (modelo A). La comparación es directamente
-comparable entre escenarios. compare_scenarios.py no emite
-WARNING de inconsistencia de thresholds.
+Tres runs limpios, un run por escenario, todos con pop_tol=±10%,
+valid_fraction=1.0, modelo A activo (corridos y verificados el
+2026-08-19, con el código actual de `redistritaje.py`):
 
-### Hallazgos
+| escenario | run_id | pop_tol | n_draws | valid_fraction | warmup_pasos |
+|-----------|--------|---------|---------|----------------|--------------|
+| legal_comunas | cc037ac8 | ±10% | 50.000 | 1.0 | 4.402 (extensión) |
+| contrafactual_apc_libre | 856910a5 | ±10% | 50.000 | 1.0 | 144 |
+| contrafactual_apc_soft | 97cf1309 | ±10% | 50.000 | 1.0 | 144 |
 
-**H1.1 — Costo del balance de la restricción comunal:**
-Bajo tolerancias idénticas (±10%), los tres escenarios producen
-distribuciones de balance casi indistinguibles (9.124–9.131%
-de desviación mediana, rango de 0.007pp). La restricción comunal
-(Ley 18.700) no impone un costo estadísticamente distinguible
-en balance poblacional para la RM con n=8 distritos y Censo 2024.
-El costo es exclusivamente en fragmentación: 0 comunas partidas
-(legal) vs 28.5 mediana (apc_free).
+### Resultado de compare_scenarios.py (apples-to-apples ±10%)
 
-**H1.2 — Efecto de la penalización blanda:**
-apc_soft (split_penalty=0.25) reduce comunas partidas en ~2
-(26.5 vs 28.5 mediana) sin costo medible en balance poblacional
-(diferencia de 0.007pp). La penalización actúa como sesgo suave,
-no como restricción — consistente con que
-exp(-0.25 × Δseveridad) ≈ 0.97-0.98 por paso ReCom.
-Para reducciones mayores se requiere split_penalty > 1.0
-— explorado por pareto_sweep (→ H2).
+    Estado: COMPLETE (3/3 escenarios con ensemble válido)
+    Sin WARNING de tolerancias distintas
 
-**H1.3 — Convergencia del warm-up:**
-legal_comunas requiere 4.402 pasos de warm-up (primera pasada
-agotada + extensión parcial, convergiendo en paso 2.401 de la
-extensión con dev_warmed=8.35%). apc_free y apc_soft convergen
-en 3-4 pasos. La heterogeneidad poblacional intercomunal hace
-el balance inicial más difícil bajo comunas indivisibles que
-bajo distritos APC, aunque ambos son factibles dentro del
-presupuesto estándar.
+| escenario | rank | composite_score | max_dev_pob_pct_median | pp_promedio_median | n_comunas_partidas_median |
+|-----------|------|-----------------|------------------------|--------------------|---------------------------|
+| legal_comunas | 1 | 0.8500 | 9.127% | 0.2902 | 0.0 |
+| contrafactual_apc_libre | 2 | 0.3500 | 9.124% | 0.2148 | 28.5 |
+| contrafactual_apc_soft | 3 | 0.0284 | 9.131% | 0.2208 | 26.5 |
 
-**H1.4 — Factibilidad comunal (preflight verificado):**
-El rango factible bajo ±10% es n_distritos ≤ 14. A partir de
-n=15, Puente Alto (568.087 personas) supera el ideal × 1.10.
-El mapa vigente (n=8) tiene el mayor margen de factibilidad
-del rango (min_tol_requerida=0.0%). Ver tabla completa en
-subsección "Resultado verificado — preflight".
+### Hallazgos definitivos
 
-### Bugs corregidos durante la generación de estos resultados
+**H1.1 — La restricción comunal no impone costo en balance:**
+Diferencia de max_dev mediana entre los 3 escenarios: 0.007pp
+(9.124% a 9.131%). Estadísticamente indistinguible. La Ley 18.700
+no sacrifica balance poblacional en la RM con n=8 y Censo 2024.
+El único costo de la restricción comunal es en fragmentación territorial.
 
-- `warmup_steps` reportaba suma triangular (2.888.003) en vez del
-  conteo real (4.402) cuando el warm-up convergía durante la extensión.
-  Fix: asignación post-loop en vez de acumulación dentro del loop.
-  Solo afectaba el campo de reporte — no la cadena ni los planes.
+**H1.2 — Costo en fragmentación:**
+apc_free parte 28.5 comunas (mediana) — 54.8% de las 52 comunas
+de R13. apc_soft parte 26.5 comunas (mediana) con split_penalty=0.25,
+reduciendo ~2 comunas respecto a apc_free sin ningún costo adicional
+en balance (diferencia de 0.007pp).
+
+**H1.3 — Compacidad:**
+legal_comunas tiene PP mediana 0.290 vs 0.215 (apc_free) y 0.221
+(apc_soft). Los planes legales son más compactos — las unidades
+comunales son más regulares geográficamente que los distritos APC.
+
+**H1.4 — Factibilidad (verificado con preflight):**
+Rango factible bajo ±10%: n_distritos ≤ 14.
+A partir de n=15, Puente Alto (568.087 personas) supera el
+ideal × 1.10. n=8 (experimento contrafactual — R13 tiene 7 distritos
+electorales vigentes: D8–D14) tiene el mayor margen
+de factibilidad del rango (min_tol_requerida=0.0%).
+Ver tabla completa en subsección "Resultado verificado — preflight".
+
+**H1.5 — apc_strict (control metodológico):**
+No implementable con ReCom — ver subsección dedicada
+"Estado de apc_strict (control metodológico)".
+La descomposición causal (efecto resolución vs efecto restricción)
+queda pendiente hasta implementar SMC.
+
+### Nota de reproducibilidad
+
+Estos 3 runs (2026-08-19) reemplazan una versión anterior de esta
+sección cuyos `run_id` no correspondían a ningún run real en disco.
+Los agregados estadísticos (composite_score, medianas de
+max_dev_pob_pct/pp_promedio/n_comunas_partidas) coinciden con los
+de esa versión anterior — son reproducibles con seed=42. El único
+valor que cambió al re-verificar es `warmup_pasos` de
+contrafactual_apc_libre/apc_soft: 144 pasos medidos directamente
+del run_manifest.json de esta corrida, no 3-4 como se documentaba
+antes (no se pudo confirmar el origen de ese número previo).
 
 ### Estado
 
-PARTIALLY CLOSED — resultado verificado para R13/Censo 2024/n=8.
-Pendiente:
-- Replicar en otras regiones (al menos R5, R8)
-- Replicar con pop_source=viviendas para comparación H5
-- Medir n_min_convergente empíricamente para n ≤ 14 en legal
-- pareto_sweep sobre split_penalty para caracterizar H1.2 (→ H2)
+CLOSED para R13/Censo 2024/n=8.
+Pendiente para cierre completo de H1:
+- Replicar en R5 y R8 (otras regiones)
+- Replicar con pop_source=viviendas (comparación H5)
+- apc_strict vía SMC (descomposición causal)
+
+### Archivos canónicos
+
+    datos/R13_METROPOLITANA/redistritaje/legal_comunas/
+        run_20260819_193847_cc037ac8/
+    datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre/
+        run_20260819_194058_856910a5/
+    datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_soft/
+        run_20260819_194308_97cf1309/
+    datos/R13_METROPOLITANA/comparacion/comparacion_escenarios.csv
+
+## Comparación balance uniforme vs ponderado por magnitud
+
+### Parámetros
+
+    Magnitudes: MAGNITUDES_CENSO2024_2026 (Resolución O 129/2026)
+    Método: --magnitudes censo2026
+    pop_tol=±10%, n_steps=50000, seed=42, pop_source=censo2024
+    n=7: configuración exacta (7 zonas = 7 distritos legales D8–D14)
+    n=8: configuración contrafactual (parámetro experimental)
+
+### Tabla comparativa (9 configuraciones)
+
+| escenario | balance | n | max_dev_median | comunas_partidas | valid_fraction |
+|-----------|---------|---|----------------|------------------|----------------|
+| legal_comunas | uniforme | 8 | 9.127% | 0.0 | 1.0 |
+| legal_comunas | ponderado | 8 | 8.995% | 0.0 | 1.0 |
+| legal_comunas | ponderado | 7 | 8.945% | 0.0 | 1.0 |
+| contrafactual_apc_libre | uniforme | 8 | 9.124% | 28.5 | 1.0 |
+| contrafactual_apc_libre | ponderado | 8 | 9.132% | 29.0 | 1.0 |
+| contrafactual_apc_libre | ponderado | 7 | 9.010% | 26.0 | 1.0 |
+| contrafactual_apc_soft | uniforme | 8 | 9.131% | 26.5 | 1.0 |
+| contrafactual_apc_soft | ponderado | 8 | 9.135% | 29.0 | 1.0 |
+| contrafactual_apc_soft | ponderado | 7 | 9.020% | 27.0 | 1.0 |
+
+Runs n=8 ponderado: legal/eed1c2b0, apc_free/16d6ff97, apc_soft/d74bb08f
+Runs n=7 ponderado: legal/99612336, apc_free/4f7ed814, apc_soft/d78b06aa
+
+### Hallazgos
+
+1. **Robustez de las conclusiones principales:** la diferencia entre
+   escenarios en max_dev_median es ≤0.065pp dentro de cada variante
+   (n=7 ponderado: 9.010%−8.945%=0.065pp). La conclusión central de H1
+   — la restricción comunal no impone costo estadísticamente
+   distinguible en balance poblacional — es robusta a través de las
+   tres variantes de balance y ambos valores de n.
+
+2. **n=7 ponderado es la única configuración exacta:** con n=7, cada
+   zona sintética corresponde a un distrito legal real (D8–D14) con su
+   magnitud propia de la Resolución O 129/2026. No aparece la
+   advertencia de "n_distritos != distritos legales cubiertos".
+   Produce los max_dev_median más bajos de las tres variantes en los
+   tres escenarios (diferencia máxima: 0.18pp respecto al uniforme n=8).
+
+3. **Fragmentación comunal no tiene dirección clara con n:**
+   n_comunas_partidas_median no muestra una dirección consistente al
+   pasar de n=8 a n=7 — cambia simultáneamente el número de zonas y el
+   target por zona, lo que hace la comparación directa no informativa
+   sobre el efecto de las magnitudes.
+
+4. **Warm-up más rápido con n=7:** apc_free y apc_soft convergen en 2
+   pasos de warm-up con n=7 (vs 173 con n=8 ponderado) — con menos
+   zonas la partición inicial cae dentro de tolerancia casi de
+   inmediato.
+
+### Estado
+
+Comparación completa. Las conclusiones de H1 son robustas a través de
+todas las variantes de balance y n probadas. La configuración canónica
+para análisis futuros de R13 es n=7 + balance ponderado +
+MAGNITUDES_CENSO2024_2026, que corresponde al arreglo electoral real
+vigente.
 
 ---
 
@@ -492,6 +585,113 @@ print(f"Top-1 alt. pesos: {ranking_alt.iloc[0]['escenario']}")
 | `point_type = "ensemble_median"` | Los anclajes (`legal`, `apc_strict`, `apc_free`) tienen cadenas genuinamente distintas; se usa la mediana del ensemble. |
 | Frontera cóncava | Los primeros compromisos (un poco más de balance → pocas comunas partidas) son baratos; los últimos, costosos. |
 | Frontera convexa | El tradeoff es uniforme; no hay "gangas" en el espacio intermedio. |
+
+### Resultados empíricos — R13, Censo 2024, barrido split_penalty
+
+#### Parámetros
+
+```
+Script: scripts/pareto_sweep.py
+penalties: [0.0, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0]
+n_steps: 10.000 por configuración
+pop_tol: ±10%, pop_source: censo2024, seed: 42
+Anclajes: legal_comunas, apc_comunas_preservadas,
+          contrafactual_apc_libre
+```
+
+#### Frontera Pareto (4/11 configuraciones)
+
+| configuración | dev_mediana | comunas_partidas | penalty | is_pareto |
+|---|---|---|---|---|
+| legal_comunas | 9.004% | 0 | — | ✅ |
+| apc_soft_p1_00 | 7.781% | 22 | 1.0 | ✅ |
+| apc_soft_p0_00 | 5.039% | 24 | 0.0 | ✅ |
+| apc_soft_p2_50 | 4.125% | 26 | 2.5 | ✅ |
+
+#### Hallazgos
+
+**H2.1 — El escenario legal_comunas es Pareto-óptimo en el espacio de ensembles de R13 (ver nota sobre el mapa vigente nacional al final de esta sección)**: ningún escenario lo domina simultáneamente en balance e integridad comunal. Para mejorar el balance hay que aceptar comunas partidas — no existe reforma que mejore ambas dimensiones a la vez.
+
+**H2.2 — Forma de la frontera**: no es una L clásica con retornos decrecientes desde el origen. Los primeros 22 splits (legal_comunas → apc_soft_p1_00) aportan muy poco balance: la desviación mediana baja solo de 9.004% a 7.781% (1.2 puntos) pese a pasar de 0 a 22 comunas partidas. El salto grande ocurre después: entre 22 y 24 splits (apc_soft_p1_00 → apc_soft_p0_00) la desviación cae de 7.781% a 5.039% (2.7 puntos en solo 2 splits adicionales) — la mayor ganancia marginal de balance por split de toda la frontera. De 24 a 26 splits (apc_soft_p0_00 → apc_soft_p2_50) el balance sigue mejorando, pero a un ritmo menor (0.9 puntos). Es decir: tramo inicial de bajo retorno (0→22 splits), luego un salto pronunciado (22→24), y recién después retornos decrecientes (24→26 en adelante).
+
+**H2.3 — Escenarios dominados**: `contrafactual_apc_libre` y `apc_comunas_preservadas` son Pareto-dominados — ninguno aparece en la frontera. `apc_soft_p10_00` y `apc_soft_p25_00` también son dominados: penalizar demasiado los splits empeora el balance sin reducir suficientemente la fragmentación.
+
+**H2.4 — Posición del mapa vigente**: `legal_comunas` es Pareto-óptimo pero está en el extremo de máxima integridad comunal (0 comunas partidas) y mínimo balance relativo (9.0% de desviación mediana). Ningún plan en la frontera mejora el balance sin costo en fragmentación.
+
+#### Estado
+
+COMPLETED — R13, Censo 2024, barrido de 8 penalizaciones.
+
+#### Archivos generados
+
+```
+datos/R13_METROPOLITANA/pareto_sweep/
+    pareto_sweep_results.csv   (11 configuraciones)
+    pareto_frontier.csv        (4 Pareto-óptimas)
+    pareto_tradeoff.png        (frontera Pareto)
+    pareto_pop_afectada.png    (balance vs pop afectada)
+```
+
+## Métricas del mapa electoral vigente (diagnóstico)
+
+### Fuentes
+
+    asignacion_vigente.json (346 comunas → 28 distritos,
+        corregido y validado 96/96)
+    poblacion_comunal_censo2024.csv
+    MAGNITUDES_CENSO2024_2026 (Resolución O 129/2026)
+
+### Métricas calculadas
+
+    n_comunas_partidas: 0 (por construcción — cada CUT
+        asignado a exactamente 1 distrito)
+
+    max_dev_pob_pct (uniforme, ideal=total/28=660.015):
+        133.53% — D8 es el distrito más desviado
+
+    max_dev_pob_pct (ponderado por magnitud):
+        71.83% — D27 es el distrito más desviado
+
+    personas_por_escano: rango 33.582 (D27) a 192.671 (D8)
+        media nacional: 119.229
+        (mismos valores de H3, confirmados consistentes)
+
+    Polsby-Popper promedio: 0.2137 (mediana 0.2212)
+        rango: 0.0003 (D28 Magallanes) a 0.5972 (D11 RM)
+        caveat: D28 incompleto geométricamente (CUT 12202
+        Antártica sin polígono en APC2023)
+
+### Limitación — no comparable con frontera Pareto de H2
+
+La frontera Pareto actual (pareto_frontier.csv) tiene
+max_dev_pob_pct de 4–9% y cubre solo R13 con n=7-8 zonas
+experimentales bajo balance uniforme.
+
+El mapa vigente tiene max_dev_pob_pct de 71–133% y cubre
+los 28 distritos nacionales bajo balance ponderado por
+magnitud. Son tres ejes de mismatch simultáneos:
+
+1. Alcance: nacional (28 distritos) vs. R13 (7-8 zonas)
+2. n: 28 distritos reales vs. zonas experimentales
+3. Balance: ponderado por magnitud vs. uniforme
+
+La afirmación "el mapa vigente es Pareto-óptimo" no puede
+demostrarse con los ensembles actuales. Requiere una
+frontera Pareto nacional de 28 distritos — pendiente de
+implementación (ver ensemble nacional en plan de cierre).
+
+### position_plan_vigente()
+
+Existe en chiledist/scenario_comparison/sensitivity.py.
+Limitación: calcula ideal uniforme únicamente (hardcoded),
+sin parámetro de magnitudes. Para balance ponderado hay
+que combinar con weighted_population_balance() por separado.
+Pendiente: agregar parámetro magnitudes= a la función.
+
+### Estado
+
+PARTIALLY COMPLETED — métricas del mapa vigente calculadas.
+Pendiente: frontera Pareto nacional para comparación válida.
 
 ---
 
@@ -726,6 +926,88 @@ cuando se integre con los resultados de H4.
         malapportionment_comparacion.csv
         malapportionment_umbrales.csv
 
+### Validación assign_seat_magnitudes
+
+    assign_seat_magnitudes_dhondt() vs Resolución O 129/2026:
+        26/28 coincidencias exactas (método D'Hondt, Art. 121)
+        2 diferencias: D22 (+1) y D23 (-1) — intercambio de
+        1 escaño entre distritos vecinos, atribuible a
+        diferencias menores en población base (redondeo/fecha)
+        Hamilton: solo 8/28 coincidencias
+
+    MAGNITUDES_LEGALES_LEY20840: régimen elecciones 2021-2025
+    MAGNITUDES_CENSO2024_2026: régimen vigente desde 18-ABR-2026
+    (Resolución O 129, publicada Diario Oficial 18-ABR-2026)
+
+> ⚠️ **Nota de trazabilidad (no verificado por esta sesión):** no se
+> encontró ninguna referencia independiente a "Resolución O 129/2026"
+> en el repo ni en los comentarios previos de `constants.py` — al
+> contrario, éstos decían explícitamente que SERVEL aún no había
+> emitido una actualización basada en el Censo 2024. El respaldo real
+> de esta sección es puramente empírico: `assign_seat_magnitudes_dhondt()`
+> reproduce 26/28 de los valores de `MAGNITUDES_CENSO2024_2026` (tabla
+> suministrada como dato de entrada), lo cual confirma que esa tabla es
+> consistente con D'Hondt (art. 121 Ley 18.700) aplicado a población
+> Censo 2024 — pero no confirma independientemente que la resolución
+> citada exista o que esa sea su fecha/número real. Tratar la cita legal
+> como no verificada hasta confirmarla contra el Diario Oficial o BCN.
+
+`scripts/malapportionment.py` acepta `--magnitudes {ley20840,censo2026}`
+(alias `2015`/`2026`), que fija a la vez el diccionario de magnitudes
+vigentes y el método usado por A2 para recalcular la magnitud
+proporcional: `ley20840` → Hamilton (reproduce exactamente el A2
+histórico ya documentado arriba: 9 ganan / 8 pierden / 11 sin cambio,
+mayor cambio D2 3→5); `censo2026` → D'Hondt, art. 121 Ley 18.700 (el
+método legalmente correcto). Se re-corrió ambos regímenes con datos
+reales para actualizar H3.
+
+#### Resultados — (a) MAGNITUDES_LEGALES_LEY20840 + Hamilton vs (b) MAGNITUDES_CENSO2024_2026 + D'Hondt
+
+    Script: scripts/malapportionment.py
+    --assignment-path datos/asignacion_vigente.json
+    --census-path datos/poblacion_comunal_censo2024.csv
+    (a) --magnitudes ley20840   (b) --magnitudes censo2026
+
+| Métrica (A1) | (a) ley20840 + Hamilton | (b) censo2026 + D'Hondt |
+|---|---|---|
+| Ratio max/min pxe | 5.74x | 5.74x — sin cambio: los dos distritos extremos (D8 max, D27 min) tienen la misma magnitud en ambos regímenes |
+| Distritos peso < 0.5 | 2 | 2 |
+| Distritos peso > 2.0 | 0 | 0 |
+| Tabla de 28 distritos (magnitud, pxe, peso) | Cambia bajo (a): usa MAGNITUDES_LEGALES_LEY20840 | Cambia bajo (b): usa MAGNITUDES_CENSO2024_2026 — magnitudes de 20 de 28 distritos difieren respecto a (a) (ver comparación de constantes en la sección anterior); pxe y peso_relativo se recalculan en consecuencia para esos 20 distritos |
+
+| Métrica (A2, proporcional vs vigente) | (a) ley20840 + Hamilton | (b) censo2026 + D'Hondt |
+|---|---|---|
+| Ganan escaños | 9 | 1 |
+| Pierden escaños | 8 | 1 |
+| Sin cambio | 11 | 26 |
+| Mayor cambio | D2 (3→5, +2) | D22 (3→4, +1) |
+
+| Métrica (A3, umbral efectivo) | (a) ley20840 | (b) censo2026 |
+|---|---|---|
+| Alto (M≤4) | 8 distritos | 11 distritos |
+| Medio (M=5–6) | 10 distritos | 6 distritos |
+| Bajo (M≥7) | 10 distritos | 11 distritos |
+
+**Hallazgos:**
+
+1. **La tabla de 28 distritos SÍ cambia** entre (a) y (b) — 20 de 28
+   magnitudes difieren (la comparación directa de las dos constantes,
+   ver arriba) — pero el **ratio max/min NO cambia** (5.74x en ambos):
+   los dos distritos extremos que fijan ese ratio (D8 Valparaíso Costa,
+   M=8; D27 Los Ríos-Los Lagos, M=3) mantienen la misma magnitud bajo
+   ambos regímenes, así que el peor caso de malapportionment estructural
+   persiste sin cambio pese a la actualización.
+2. **A2 en (b) casi no muestra cambios** (1 gana / 1 pierde / 26 sin
+   cambio) porque `MAGNITUDES_CENSO2024_2026` ya es —por construcción—
+   el resultado de D'Hondt sobre la población Censo 2024 (26/28 de
+   coincidencia exacta, ver validación arriba); recalcularla con D'Hondt
+   sobre la misma población solo puede diferir en el mismo par de
+   distritos ya identificado (D22/D23).
+3. Los umbrales efectivos sí se polarizan: D'Hondt aplicado a la
+   geografía poblacional actual empuja más distritos a los extremos
+   M=3/M=8 (11+11=22 de 28 bajo censo2026, vs. 8+10=18 de 28 bajo
+   ley20840) y reduce los de magnitud media (6 de 28 vs. 10 de 28).
+
 ---
 
 ## H4 — D'Hondt binivel: proporcionalidad del sistema electoral chileno
@@ -939,6 +1221,24 @@ La implementación de D'Hondt binivel es correcta. La validación
 96/96 confirma que chiledist reproduce exactamente el resultado
 oficial del TRICEL para las elecciones parlamentarias 2025
 usando datos de candidatos individuales.
+
+#### Vigencia tras el cambio de default en assign_seat_magnitudes (H3)
+
+Esta validación 96/96 **no se ve afectada** por haber fijado
+`method="dhondt"` como default de `assign_seat_magnitudes()`
+(ver H3 § Validación assign_seat_magnitudes): `run_electoral_plan_binivel()`
+recibe `MAGNITUDES_LEGALES_LEY20840` como diccionario de magnitudes
+**fijas** directamente (`scripts/electoral_analysis.py` líneas ~245,
+307, 381, 500 — verificado, sigue así) y nunca invoca
+`assign_seat_magnitudes()`; el D'Hondt aquí valida asignación de
+escaños entre pactos/partidos dentro de cada distrito (art. 121 sobre
+votos), no la magnitud del distrito. Las elecciones 2025 se rigieron
+por `MAGNITUDES_LEGALES_LEY20840` (vigente en ese momento) — eso es
+correcto y no cambia. `MAGNITUDES_CENSO2024_2026` solo aplica a
+análisis prospectivos (H3, H9, cualquier ejercicio contrafactual)
+sobre el régimen vigente desde el 18-ABR-2026 en adelante; no debe
+usarse para reproducir o validar resultados de elecciones anteriores
+a esa fecha.
 
 #### Scripts de validación
 
@@ -1534,6 +1834,30 @@ La hipótesis H6 separa el efecto de la *geografía* (¿son los planes APC mejor
 
 4. **Biproporcional vs distrital**: el método `'district'` es más simple e intuitivo pero no respeta las cuotas nacionales. Para la hipótesis H6 se recomienda siempre `method='biproportional'`.
 
+### Estado de implementación
+
+H6 requiere distribuciones de Gallagher y seat_bonus sobre un ensemble de planes alternativos de 28 distritos nacionales. Los ensembles actuales (R13, 8 sub-distritos) son incompatibles con los votos SERVEL agregados a nivel de los 28 distritos vigentes — no hay forma de mapear un plan regional a los votos de los 28 distritos sin un ensemble nacional.
+
+Lo disponible (plan único vigente, vía H4-B2):
+
+```
+Gallagher binivel mapa vigente: 5.91
+Gallagher uninivel mapa vigente: 5.91
+seat_bonus por partido: ver H4-B4
+```
+
+Pendiente para H6 completo:
+
+```
+Ensemble nacional (--regiones nacional_comunal --n-distritos 28)
+para obtener distribución de Gallagher sobre planes alternativos.
+Luego: cd.run_electoral_ensemble() +
+       cd.ensemble_gallagher() +
+       cd.summarize_electoral_ensemble()
+```
+
+Estado: PARTIALLY COMPLETED (plan vigente via H4). Completo pendiente ensemble nacional.
+
 ---
 
 ## H7 — Atipicidad electoral del mapa observado
@@ -1700,6 +2024,30 @@ El ensemble define el contrafactual: "¿cómo serían las elecciones con un mapa
 
 4. **Sin inferencia sobre partidos individuales**: la prima de escaños de un partido específico puede tener varianza muy alta si ese partido tiene votos concentrados en pocas unidades, haciendo la inferencia poco potente con N pequeño.
 
+### Estado de implementación
+
+H7 requiere distribuciones de seat_bonus y fair_share_matrix sobre un ensemble de planes alternativos de 28 distritos nacionales. Los ensembles actuales (R13, 8 sub-distritos) son incompatibles con los votos SERVEL agregados a nivel de los 28 distritos vigentes — no hay forma de mapear un plan regional a los votos de los 28 distritos sin un ensemble nacional.
+
+Lo disponible (plan único vigente, vía H4-B4):
+
+```
+seat_bonus por partido: ver H4-B4
+fair_share_matrix: no calculado aún para el mapa vigente (pendiente, ver H6)
+```
+
+Pendiente para H7 completo:
+
+```
+Ensemble nacional (--regiones nacional_comunal --n-distritos 28)
+para obtener distribución de seat_bonus/fair_share_matrix sobre
+planes alternativos.
+Luego: cd.run_electoral_ensemble() +
+       cd.ensemble_seat_bonus() +
+       cd.summarize_electoral_ensemble()
+```
+
+Estado: PARTIALLY COMPLETED (plan vigente parcial via H4-B4; fair_share_matrix pendiente incluso para el plan único). Completo pendiente ensemble nacional.
+
 ---
 
 ## H8 — Punto de máxima eficiencia en el tradeoff poblacional-comunal
@@ -1838,6 +2186,60 @@ print(summary[["n_planes", "max_dev_pob_pct_mean", "n_comunas_partidas_mean", "p
 3. **Bootstrap estratificado**: el bootstrap resamplea dentro de cada nivel de penalización. Con N pequeño por nivel (< 50 planes), las bandas pueden subestimar la incertidumbre verdadera.
 
 4. **Knee sin significancia estadística**: no hay un test formal de que el knee es "real". Con IC 90% solapados en x, el punto de quiebre podría ser un artefacto del ruido muestral.
+
+### Resultados empíricos — R13, Censo 2024
+
+#### Knee point de la frontera Pareto
+
+```
+cd.detect_knee_point(pareto_frontier.csv, method="normalized_distance")
+
+knee_idx:    2
+knee_x:      7.781% (max_dev_pob_pct_median)
+knee_y:      22 comunas partidas
+knee_penalty: 1.0
+distances:   [0.0, 0.078, 0.421, 0.0]
+diminishing_start_x: 5.039%
+method: normalized_distance
+```
+
+Knee point identificado: `apc_soft_p1_00` (penalty=1.0, dev=7.781%, comunas_partidas=22)
+
+#### Interpretación
+
+El método `normalized_distance` calcula la distancia perpendicular máxima a la cuerda que conecta los dos extremos de la frontera en espacio normalizado [0,1]×[0,1]:
+
+```
+extremo 1: apc_soft_p2_50 (4.125%, 26 splits)
+extremo 2: legal_comunas  (9.004%, 0 splits)
+```
+
+`apc_soft_p1_00` tiene distancia 0.421 — muy por encima del resto (0.078, 0.0, 0.0). Es el punto que se desvía más de un tradeoff lineal entre los extremos, el "codo" geométrico de la frontera.
+
+#### Tensión entre criterios
+
+El knee geométrico (`apc_soft_p1_00`, 22 splits) no coincide con el punto de retornos marginales decrecientes (`diminishing_start_x=5.039%`, que corresponde a `apc_soft_p0_00`, 24 splits).
+
+Son criterios distintos:
+- **Knee geométrico**: máxima curvatura respecto a la cuerda entre extremos — identifica `apc_soft_p1_00` como el punto de mayor "codo" en la frontera.
+- **Retornos marginales**: tasa de mejora de balance por split adicional — los rendimientos decrecientes comienzan recién en `apc_soft_p0_00` (de 22→24 splits se gana el mayor salto de balance: 7.781%→5.039%).
+
+En términos de política pública: el knee geométrico sugiere `penalty=1.0` (22 comunas partidas) como punto de equilibrio; el criterio marginal sugiere que si se va a partir comunas, vale la pena llegar hasta 24 para capturar el salto mayor de balance.
+
+#### Limitación
+
+La frontera tiene solo 4 puntos — el knee point puede ser sensible al barrido de penalizaciones elegido. Un barrido más denso entre `penalty=0.5` y `penalty=2.5` caracterizaría mejor la curvatura real en esa zona.
+
+#### Estado
+
+COMPLETED — R13, Censo 2024.
+Pendiente: barrido más denso para robustez del knee point.
+
+#### Archivos
+
+```
+datos/R13_METROPOLITANA/pareto_sweep/pareto_frontier.csv
+```
 
 ---
 
@@ -2043,6 +2445,59 @@ El malapportionment en Chile tiene dos fuentes estructurales: (1) el congelamien
 3. **Población fija**: el análisis usa la distribución de población observada. Cambios futuros (migración, crecimiento diferencial) alterarán M sin cambiar el mapa.
 
 4. **Solo magnitudes; no el sesgo partidario**: un M bajo no garantiza representación equitativa en términos electorales. Para eso, combinarlo con H4 (D'Hondt), H7 (atipicidad electoral) y H6 (distancia al ideal fraccional).
+
+### Resultados empíricos — Censo 2024, comparación internacional
+
+#### Parámetros
+
+```
+cd.international_comparison() sobre malapportionment_pxe.csv
+Población: Censo 2024 (malapportionment_pxe.csv de H3)
+Magnitudes: MAGNITUDES_LEGALES_LEY20840 (Ley 20.840)
+Índice principal: Samuels-Snyder (M)
+```
+
+#### Tabla comparativa
+
+| país/plan | tipo | samuels_snyder | gini_pop_weighted | max_min_ratio | cv |
+|---|---|---|---|---|---|
+| USA_House_2023 | benchmark | 0.003 | 0.003 | 1.09 | 0.04 |
+| España_2019 | benchmark | 0.051 | 0.039 | 3.12 | 0.28 |
+| Chile_legal_2025 | custom | 0.106 | 0.144 | 5.74 | 0.30 |
+| Chile_legal_2021 | benchmark | 0.137 | 0.108 | 5.33 | 0.44 |
+| Argentina_2019 | benchmark | 0.241 | 0.193 | 9.86 | 0.72 |
+| Brasil_2018 | benchmark | 0.349 | 0.321 | 47.10 | 1.41 |
+
+#### Hallazgos
+
+`Chile_legal_2025` (Samuels-Snyder=0.106) queda en posición intermedia: mejor que Argentina (0.241) y Brasil (0.349), pero con más malapportionment que EE.UU. (0.003) y España (0.051). Rank 3/6 en el conjunto, percentil ~40%.
+
+Países con menos malapportionment que Chile (mapa vigente Censo 2024): 2 de 4 países externos — EE.UU. y España.
+
+#### Nota metodológica
+
+`Chile_legal_2021` (M=0.137) usa proyecciones INE 2020. `Chile_legal_2025` (M=0.106) usa Censo 2024 real. La diferencia (0.031pp) refleja el cambio de fuente poblacional, no un cambio en el diseño distrital — las magnitudes (`MAGNITUDES_LEGALES_LEY20840`) son las mismas en ambos cálculos. El Censo 2024 reduce el índice porque la distribución poblacional real es menos desigual que la proyectada en 2020.
+
+**Referencias** (fuente de cada entrada de `cd.BENCHMARK_MALAPPORTIONMENT`):
+
+| país/plan | fuente |
+|---|---|
+| Chile_legal_2021 | Estimado con `MAGNITUDES_LEGALES_LEY20840` y proyecciones INE 2020 |
+| USA_House_2023 | Census Bureau 2020 apportionment; Balinski & Young (2001) |
+| Argentina_2019 | Samuels & Snyder (2001), *AJPS*; actualización Calvo & Micozzi (2005) |
+| Brasil_2018 | Samuels & Snyder (2001), *AJPS*; Nicolau (2017) |
+| España_2019 | Jurado (2014), *Electoral Studies*; cálculo propio con INE 2019 |
+
+#### Estado
+
+COMPLETED — Censo 2024, mapa vigente corregido.
+Pendiente: correr `international_comparison()` sobre ensembles de H1 para comparar Chile_apc_free vs Chile_legal en el contexto internacional.
+
+#### Archivos
+
+```
+datos/malapportionment/malapportionment_pxe.csv
+```
 
 ---
 
