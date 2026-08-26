@@ -8,10 +8,10 @@ Background
 ----------
 `n_distritos` means "number of territorial partitions to generate in the
 ReCom simulation" everywhere it appears (ScenarioConfig.n_districts,
-chiledist.feasibility, chiledist.metrics.ideal_population). It is
+chiledist.rules.feasibility, chiledist.engines.metrics.ideal_population). It is
 unrelated to the Ley 20.840 electoral magnitude (seats per legal district,
-MAGNITUDES_LEGALES_LEY20840) — that lives in chiledist/electoral/ and is
-untouched here.
+MAGNITUDES_LEGALES_LEY20840) — that lives in chiledist/rules/electoral_rules.py
+and is untouched here.
 
 ScenarioConfig.n_districts is the authoritative field for this parameter.
 Before this fix, `--n-distritos` defaulted to 8 (not None), so

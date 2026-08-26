@@ -2,7 +2,7 @@
 tests/test_feasibility.py
 ==========================
 Unit tests for the deterministic population feasibility preflight
-(chiledist.feasibility.check_population_feasibility).
+(chiledist.rules.feasibility.check_population_feasibility).
 """
 
 import pytest

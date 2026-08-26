@@ -254,7 +254,7 @@ def test_4_census2024_join_preserves_r11_population_total():
     """
     Independent of the ReCom fixture above: exercises exactly the same code
     path --pop-source censo2024 --census-path ... triggers
-    (scripts/redistritaje.py::enrich_population -> chiledist.data.census2024),
+    (scripts/redistritaje.py::enrich_population -> chiledist.domain.data.census2024),
     called directly for speed/precision — this happens before the ReCom
     feasibility question entirely, so it needs neither N_DISTRITOS/POP_TOL
     nor a successful chain.

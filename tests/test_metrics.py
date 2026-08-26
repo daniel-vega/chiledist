@@ -1,7 +1,7 @@
 """
 tests/test_metrics.py
 ========================
-Unit tests for chiledist.metrics: compactness (Polsby-Popper, Reock) and
+Unit tests for chiledist.engines.metrics: compactness (Polsby-Popper, Reock) and
 redistricting metrics (population_balance, cut_edges), against synthetic
 in-memory geometries only. No real shapefiles, no gerrychain.
 

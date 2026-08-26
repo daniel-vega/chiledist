@@ -1,7 +1,7 @@
 """
 tests/test_graph_contraction.py
 =================================
-Unit tests for chiledist.graph: build_graph() y contract_graph(), contra
+Unit tests for chiledist.domain.graph: build_graph() y contract_graph(), contra
 GDFs sintéticos en memoria (rejilla 3x3). No shapefiles reales, no
 gerrychain.
 

@@ -14,14 +14,15 @@ experiments must not homogenize distinct scenarios' n_districts onto a
 single global value unless the user explicitly asked for that.
 
 REGIONES_APC was, at the time this test module was first written, a dead
-symbol referenced but never defined in chiledist.data — used as a silent
+symbol referenced but never defined in chiledist.domain.data (then
+chiledist.data, before the layer refactor) — used as a silent
 fallback source for n_distritos
 (`REGIONES_APC.get(region_code, {}).get("n_distritos", 8)`) in run_chains.py
 and smc_pipeline.py, always landing on the hardcoded 8 fallback via a
 broad `except Exception`. That n_distritos dependency is removed here in
 favor of scenario.n_districts and stays removed.
 
-chiledist.data.REGIONES_APC now exists (added separately, for region
+chiledist.domain.data.REGIONES_APC now exists (added separately, for region
 display names — {region_code: {"nombre", "nombre_carpeta"}}), and
 run_chains.py/smc_pipeline.py use it for output directory naming
 (_chain_output_dir/_smc_output_dir). That dict has no "n_distritos" key,
@@ -343,7 +344,7 @@ class TestRunChainsNDistritos:
     def test_chain_output_dir_uses_regiones_apc_nombre_carpeta(self, mod):
         """
         _chain_output_dir() now resolves the real region folder name from
-        chiledist.data.REGIONES_APC (which exists — see
+        chiledist.domain.data.REGIONES_APC (which exists — see
         tests/test_regiones_apc.py), not a bare "R{code}" placeholder.
         """
         path = mod._chain_output_dir("/tmp/base", 13, "legal_comunas")

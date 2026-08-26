@@ -7,7 +7,7 @@ comparison as INCOMPLETE.
 
 Where the scenario used to disappear
 -------------------------------------
-chiledist.scenario_comparison.compare.load_ensembles_from_disk() only ever
+chiledist.domain.ensemble_store.load_ensembles_from_disk() only ever
 returns scenarios that have a real ensemble_stats.csv on disk. A scenario
 whose analizar_region() call returned early (infeasible_population,
 sin_particion, ...) never writes that file, so it was silently absent from
@@ -28,7 +28,7 @@ missing scenario's status, and nothing flagged the comparison as partial.
 This change adds:
     - scripts/compare_scenarios.py: persists scenario_status.json for any
       analizar_region() result with status != "ok".
-    - chiledist.scenario_comparison.compare: load_scenario_statuses_from_disk,
+    - chiledist.domain.ensemble_store: load_scenario_statuses_from_disk,
       build_scenario_overview, assess_comparison_completeness.
     - compare_and_export() returns {"ranking", "overview", "completeness"}
       instead of a bare DataFrame; `ranking` is untouched/identical to the

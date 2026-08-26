@@ -4,7 +4,7 @@ tests/test_cut_normalization.py
 Regression tests for the CUT format-mismatch bug: some sources represent a
 Chilean commune code (CUT) as an unpadded 4-digit value (region 1-9
 communes, e.g. 1101) while others use a zero-padded 5-digit string
-("01101"). `chiledist.data.census2024.load_census2024()` always returns
+("01101"). `chiledist.domain.data.census2024.load_census2024()` always returns
 CUT as int, so `str(1101) == "1101"` — which never matches the 5-digit
 string keys used by `datos/asignacion_vigente.json`
 (README.md § Datos externos documents the 5-digit convention there).

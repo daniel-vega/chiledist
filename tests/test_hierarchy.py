@@ -1,7 +1,7 @@
 """
 tests/test_hierarchy.py
 ========================
-Unit tests for chiledist.hierarchy: validate_hierarchy() y
+Unit tests for chiledist.domain.hierarchy: validate_hierarchy() y
 contract_to_decision_units(), contra GDFs sintéticos en memoria.
 No shapefiles reales, no gerrychain.
 

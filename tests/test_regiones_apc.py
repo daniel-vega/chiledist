@@ -1,7 +1,7 @@
 """
 tests/test_regiones_apc.py
 ============================
-chiledist.data.REGIONES_APC — {region_code: {"nombre", "nombre_carpeta"}}
+chiledist.domain.data.REGIONES_APC — {region_code: {"nombre", "nombre_carpeta"}}
 for Chile's 16 regions.
 
 This closes the gap tracked by tests/test_entrypoints_n_distritos.py and
@@ -34,7 +34,7 @@ class TestRegionesApc:
         """
         nombre_carpeta must match the REGION_NOMBRES pattern already used
         by scripts/redistritaje.py, scripts/compare_scenarios.py,
-        scripts/pareto_sweep.py and chiledist.scenario_comparison.compare.
+        scripts/pareto_sweep.py and chiledist.domain.ensemble_store.
         """
         expected = {
             1: "R01_TARAPACA", 2: "R02_ANTOFAGASTA", 3: "R03_ATACAMA",

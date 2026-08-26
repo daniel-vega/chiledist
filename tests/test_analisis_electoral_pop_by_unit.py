@@ -6,7 +6,7 @@ scripts/malapportionment.py::analisis_electoral() (A4), found while fixing
 the unrelated CUT-padding bug (see tests/test_cut_normalization.py) but
 not caused by it.
 
-`chiledist.electoral.plan_metrics.plan_electoral_metrics()` expects
+`chiledist.engines.allocation.plan_metrics.plan_electoral_metrics()` expects
 `pop_by_unit` indexed by the SAME keys as `assignment` (unit_id — CUT in
 real mode), because it does its own internal aggregation to district
 level via `assignment.items()`:

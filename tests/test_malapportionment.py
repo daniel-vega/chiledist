@@ -1,5 +1,5 @@
 """
-Tests de consistencia matemática para chiledist.malapportionment.
+Tests de consistencia matemática para chiledist.evaluation.malapportionment.
 
 Verifica:
 - Casos límite (proporcionalidad perfecta, un solo distrito, vacío)
