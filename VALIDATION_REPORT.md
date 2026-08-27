@@ -1,40 +1,45 @@
 # Reporte de validación: D'Hondt binivel vs proclamaciones oficiales TRICEL 2025
 
 Estado de `scripts/validar_tricel.py` — compara los escaños que
-`chiledist.engines.allocation.dhondt.dhondt_binivel()` calcula a partir
-de los votos SERVEL contra los que el Tribunal Calificador de
+`chiledist.engines.allocation.dhondt.dhondt_binivel_cl()` calcula a
+partir de los votos SERVEL contra los que el Tribunal Calificador de
 Elecciones proclamó oficialmente para Diputados 2025 (16 nov. 2025),
 sobre los 28 distritos reales.
 
-**Estado actual: `PARTIAL`, no `EXACT_REPRODUCTION`.** Este documento
-explica por qué, qué se corrigió para llegar hasta acá, y qué falta.
+**Estado actual: `EXACT_REPRODUCTION` — con `dhondt_binivel_cl()`, la
+variante chilena con tope de candidatos disponibles por partido, NO
+con `dhondt_binivel()` genérica (preservada sin cambios, sigue dando
+`PARTIAL`, 25/28).** Este documento explica el camino completo hasta
+acá, por qué existen dos funciones separadas, y la verificación de que
+esto no altera H4 (96/96 vs SERVEL).
 
 ## 0. Estado canónico (fuente de verdad)
 
-**96/96 y 25/28 son dos validaciones distintas contra fuentes distintas — nunca combinar en una sola cifra.**
+**96/96, 25/28 y 28/28 son tres cifras de tres validaciones distintas — nunca combinar en una sola, y siempre indicar con cuál función D'Hondt se obtuvo cada una.**
 
 ```json
 {
-  "SERVEL_INTERNAL_CONSISTENCY": {"result": "96/96", "status": "PASS", "source": "validar_dhondt.py vs SERVEL 2025"},
-  "TRICEL_OFFICIAL_REPRODUCTION": {"result": "25/28 distritos", "status": "PARTIAL", "detail": "149/155 escaños, 185/185 asignaciones de lista, 149/155 candidatos", "source": "validar_tricel.py vs TRICEL 2025 (--votes-source servel_final, default desde agosto 2026)", "unresolved": ["D3", "D5", "D19"], "unresolved_root_cause": "dhondt_binivel() no aplica tope de candidatos por partido en el reparto intra-pacto — ver §3"},
-  "EXACT_REPRODUCTION": false
+  "SERVEL_INTERNAL_CONSISTENCY": {"result": "96/96", "status": "PASS", "source": "validar_dhondt.py vs SERVEL 2025", "dhondt_function": "run_electoral_plan_binivel() / dhondt_binivel() a nivel pacto — sin cambios"},
+  "TRICEL_OFFICIAL_REPRODUCTION": {"result": "28/28 distritos", "status": "EXACT_REPRODUCTION", "detail": "155/155 escaños, 185/185 asignaciones de lista, 155/155 candidatos", "source": "validar_tricel.py vs TRICEL 2025 (--votes-source servel_final, --dhondt-variant cl, ambos default desde agosto 2026)", "dhondt_function": "dhondt_binivel_cl() — variante con tope de candidatos disponibles, NO dhondt_binivel() genérica", "generic_variant_result": {"result": "25/28 distritos", "status": "PARTIAL", "dhondt_function": "dhondt_binivel() sin tope, vía --dhondt-variant generic — preservada tal cual para comparación"}},
+  "EXACT_REPRODUCTION": true
 }
 ```
 
-| Validación | Resultado | Estado | Contra qué | Script |
-|---|---|---|---|---|
-| `SERVEL_INTERNAL_CONSISTENCY` | 96/96 combinaciones (distrito, pacto) | PASS | Resultado oficial **SERVEL** 2025 (no TRICEL) | `scripts/validar_dhondt.py` |
-| `TRICEL_OFFICIAL_REPRODUCTION` | 25/28 distritos (149/155 escaños, 185/185 asignaciones de lista, 149/155 candidatos) | PARTIAL | Proclamaciones oficiales **TRICEL** 2025 | `scripts/validar_tricel.py` |
+| Validación | Resultado | Estado | Función D'Hondt | Contra qué | Script |
+|---|---|---|---|---|---|
+| `SERVEL_INTERNAL_CONSISTENCY` | 96/96 combinaciones (distrito, pacto) | PASS | `dhondt_binivel()` (Nivel 1, sin cambios) | Resultado oficial **SERVEL** 2025 (no TRICEL) | `scripts/validar_dhondt.py` |
+| `TRICEL_OFFICIAL_REPRODUCTION` | **28/28 distritos** | **EXACT_REPRODUCTION** | `dhondt_binivel_cl()` (tope de candidatos) | Proclamaciones oficiales **TRICEL** 2025 | `scripts/validar_tricel.py` (default) |
+| `TRICEL_OFFICIAL_REPRODUCTION` (comparación) | 25/28 distritos | PARTIAL | `dhondt_binivel()` (sin tope, genérica) | Proclamaciones oficiales **TRICEL** 2025 | `scripts/validar_tricel.py --dhondt-variant generic` |
 
-Cualquier documento que cite "validado 96/96" debe decir explícitamente **vs SERVEL 2025**, no vs TRICEL — ver §2-3 más abajo para el detalle de por qué estas dos cifras no son intercambiables.
+Cualquier documento que cite "validado 96/96" debe decir explícitamente **vs SERVEL 2025**, no vs TRICEL — ver §2-3 más abajo. Cualquier documento que cite "28/28" o "`EXACT_REPRODUCTION`" debe decir explícitamente que aplica a **`dhondt_binivel_cl()`** (la variante chilena con tope de candidatos), no a `dhondt_binivel()` genérica (que sigue en 25/28, `PARTIAL`, sin cambios — ver §9 para por qué son dos funciones separadas).
 
-**Mientras el estado no sea `EXACT_REPRODUCTION`, ningún documento del repositorio debe describir esto como "reproducción independiente exacta de la elección 2025" ni equivalente** — es una reproducción parcial (25/28), con causa raíz identificada y verificada para los 3 distritos restantes (ver §3), pero no corregida todavía.
+**Verificado, no solo declarado: H4 (`SERVEL_INTERNAL_CONSISTENCY`, 96/96) no cambia con `dhondt_binivel_cl()`** — ver §10 para la comparación empírica completa.
 
 ---
 
 ## 1. Output completo de la última corrida
 
-Corrida con el nuevo default `--votes-source servel_final` (agosto 2026, ver §2 fila nueva y §4). El comando exacto está en §6.
+Corrida con los defaults actuales: `--votes-source servel_final --dhondt-variant cl` (agosto 2026). El comando exacto está en §6.
 
 ```
 ======================================================================
@@ -50,31 +55,35 @@ Corrida con el nuevo default `--votes-source servel_final` (agosto 2026, ver §2
   Importando escrutinio final SERVEL (v2) desde /home/dvega/Distritaje/DATA/SERVEL_2025 ...
     workbook: /home/dvega/Distritaje/DATA/SERVEL_2025/2025_11_Diputados_Datos_Eleccion/2025_11_Diputados_Datos_Eleccion_v2.xlsx
   1096 registros (distrito, candidato) de votación TRICEL.
+  Importando conteo de candidatos por partido desde /home/dvega/Distritaje/DATA/TRICEL_2025 ...
+  488 filas (distrito, partido, n_candidatos).
 
 Election: Diputados 2025
-Districts validated: 25/28
-Seats validated: 149/155
+Districts validated: 28/28
+Seats validated: 155/155
 List allocations: 185/185
-Candidate proclamations: 149/155
+Candidate proclamations: 155/155
 Ties requiring legal resolution: 0
 Votes with SERVEL fallback: 296/1096
 Source hashes:
   SERVEL: 1c3fd5dab12d8716c6854ba3da14a7d3bcc13038c18b388fae2c33239226d2f0
   TRICEL: 359c13cee96490b5ed6dba559694d7f27d7ed6083395af24bf8ced555ffffc91
-Status: PARTIAL
-
-Distritos no validados (3):
-  D3: 2 discrepancias (candidate_mismatch)
-    Proclamados pero no calculados: JAIME ARAYA GUERRERO, MARCELA HERNANDO PEREZ
-  D5: 3 discrepancias (candidate_mismatch)
-    Proclamados pero no calculados: CAROLINA TELLO ROJAS, NATHALIE CASTILLO ROJAS, BERNARDO SALINAS MAYA
-  D19: 1 discrepancias (candidate_mismatch)
-    Proclamados pero no calculados: FRANCISCO CRISOSTOMO LLANOS
-
-Para investigar discrepancias: usar --verbose para ver detalle completo
+Status: EXACT_REPRODUCTION
 ```
 
-`Votes with SERVEL fallback` subió levemente (283→296 de 1096) respecto a la corrida con `--votes-source tricel` — el cruce por nombre normalizado contra el archivo SERVEL v2 no matchea el 100% de `candidates_servel` (78.5%, ver §3), así que más candidatos quedan con su voto preliminar original. Pese a eso, el resultado a nivel distrito mejoró (24→25) porque el candidato con match SÍ tiene ahora el voto exacto de TRICEL, incluidos los que antes fallaban en Distrito 8 por el bug documentado en §3/§4.
+**28/28. Cero discrepancias.** `Votes with SERVEL fallback` (296/1096) es el mismo que con `--votes-source servel_final` solo (§ historial previo) — el tope de candidatos no cambia qué candidatos matchean por nombre contra `votes_tricel`, solo cambia cómo se reparten los escaños intra-pacto entre partidos una vez calculados los votos.
+
+### 1.1 Comparación: `--dhondt-variant generic` (para contraste, no el default)
+
+```
+Districts validated: 25/28
+Seats validated: 149/155
+Candidate proclamations: 149/155
+Status: PARTIAL
+Distritos no validados (3): D3 (2 discrepancias), D5 (3 discrepancias), D19 (1 discrepancia)
+```
+
+Idéntico al resultado documentado en la revisión anterior de este reporte (antes de que existiera `dhondt_binivel_cl()`) — confirma que `dhondt_binivel()` genérica no fue tocada.
 
 ---
 
@@ -88,6 +97,7 @@ Para investigar discrepancias: usar --verbose para ver detalle completo
 | `_cargar_candidates_servel()` agrega por candidato | **20/28** | **0** | Causa real de los "empates": `servel_2025_candidatos.csv` trae una fila por (candidato × CUT) — hasta 26 filas por candidato — y se pasaban sin sumar; el ranking intra-partido comparaba fragmentos de votos por comuna, no el total real |
 | `candidate_id % 100` → `% 1000` en `import_proclamations()` | **24/28** | 0 | 12 candidatos electos con `num_tricel` de 3 dígitos (≥100, distritos con 100+ candidatos registrados) nunca cruzaban con SERVEL — `candidates_matched` 143→155, `candidates_unmatched` 12→0 |
 | `import_final_scrutiny()` (SERVEL "v2"/escrutinio final) como `--votes-source` default, en vez de `import_votes()` (TRICEL mesa a mesa) | **25/28** | 0 | Resuelve Distrito 8 por completo (12→0 discrepancias). La causa NO era cobertura SERVEL insuficiente como se documentaba antes (ver §3) — era un bug de `import_votes()` que tomaba una fila de totales fantasma para Distrito 8, dejando `votes_final=0` para sus 52 candidatos |
+| `dhondt_binivel_cl()` (tope de candidatos disponibles por partido, Nivel 2) como `--dhondt-variant` default, en vez de `dhondt_binivel()` sin tope | **28/28 — `EXACT_REPRODUCTION`** | 0 | Resuelve Distrito 3, 5 y 19 por completo (6→0 discrepancias). Causa raíz: un partido con un solo candidato inscrito "ganaba" escaños que no tenía a quién asignar. Ver §3, §9 |
 
 La lección estructural: **la mejora de 0/28 a 20/28 no vino de tocar
 la lógica de votos TRICEL ni el fallback** (ambos ya estaban correctos
@@ -109,7 +119,7 @@ Con el total correcto, se recalculó la cobertura de `servel_2025_candidatos.csv
 
 Causa real: el bug de fila-de-totales-fantasma de `import_votes()` (arriba) dejaba `votes_final=0` para los 52 candidatos de Distrito 8 cuando se usaba TRICEL mesa a mesa como `votes_tricel`. Al cambiar a `import_final_scrutiny()` (SERVEL "v2"/escrutinio final, ver §4) — que no depende de esa detección de fila y da 100.0% de cobertura verificada — Distrito 8 pasa de 12 discrepancias a 0.
 
-### Distrito 3, 5, 19 — causa raíz real: `dhondt_binivel()` no tiene tope de candidatos por partido
+### Distrito 3, 5, 19 — resuelto: causa raíz era la falta de tope de candidatos en `dhondt_binivel()`
 
 **No es un problema de datos.** Se verificó que los 6 candidatos con discrepancia tienen, con la fuente SERVEL v2, el voto **exacto** que certifica TRICEL (`votes_tricel` de la hoja CANDIDATOS) — coincidencia perfecta en los 6 casos (ej. Jaime Araya Guerrero: 13.687 en ambas fuentes). El problema está en el algoritmo de reparto intra-pacto (Nivel 2 de `dhondt_binivel()`).
 
@@ -128,7 +138,7 @@ Causa real: el bug de fila-de-totales-fantasma de `import_votes()` (arriba) deja
 | 19 | Chile Grande y Unido | 2 | UDI=1, RN=1 | idéntico | ✅ |
 | 19 | Cambio por Chile | 1 | Social Cristiano=1 | idéntico | ✅ |
 
-Esta es la causa raíz completa y verificada — no una hipótesis. El fix (candidate-count cap en el Nivel 2 de `dhondt_binivel()`) no está implementado en esta sesión: es un cambio a la función D'Hondt central usada en todo el pipeline (H4, `electoral_analysis.py`, `run_electoral_ensemble`, etc.), no específico de esta validación, y requiere pasar el número de candidatos disponibles por partido — un dato que hoy no todos los llamadores de `dhondt_binivel()` tienen disponible. Ver §5.
+Esta era la causa raíz completa y verificada — confirmada, no solo una hipótesis: implementada como `dhondt_binivel_cl()` (función separada, `dhondt_binivel()` preservada sin cambios — ver §9), corriendo `scripts/validar_tricel.py` con el tope de candidatos por partido, **los 3 distritos pasan a 0 discrepancias — 28/28, `EXACT_REPRODUCTION`** (ver §1).
 
 ### Otros hallazgos sin resolver, documentados honestamente
 
@@ -149,7 +159,7 @@ Esta es la causa raíz completa y verificada — no una hipótesis. El fix (cand
 
 **Hallazgo — no es un bug de código, pero causaba diagnósticos erróneos**: la cifra "38.8% de cobertura SERVEL" para Distrito 8 documentada en versiones anteriores de este reporte estaba calculada contra el total fantasma del bug #6 (2.002.540), no contra el total real (1.001.270). Con el total correcto, la cobertura real de `servel_2025_candidatos.csv` en Distrito 8 era 99.83%, no 38.8% — ver §3 para el detalle completo y por qué esto invalida el diagnóstico de "cobertura SERVEL insuficiente" para los 4 distritos que documentaban versiones anteriores de este archivo.
 
-**Hallazgo — causa raíz real de Distrito 3/5/19, no corregido**: `chiledist.engines.allocation.dhondt.dhondt_binivel()` no aplica un tope de candidatos disponibles por partido en el reparto intra-pacto (Nivel 2) — ver §3 para la verificación completa (7/7 pactos reproducidos exactamente con el modelo corregido) y §5 para la vía de cierre.
+**Hallazgo — causa raíz real de Distrito 3/5/19, resuelto vía función separada**: `chiledist.engines.allocation.dhondt.dhondt_binivel()` no aplica un tope de candidatos disponibles por partido en el reparto intra-pacto (Nivel 2) — ver §3 para la verificación completa (7/7 pactos reproducidos exactamente) y §9 para `dhondt_binivel_cl()`, la función nueva que lo corrige sin modificar `dhondt_binivel()`.
 
 Además, `_apply_votes_source()` (`chiledist/validation/__init__.py`,
 commit `939ef9e`) agregó un fallback a votos SERVEL para candidatos sin
@@ -159,19 +169,13 @@ sección: el salto real vino del bug #4).
 
 ---
 
-## 5. Camino hacia `EXACT_REPRODUCTION`
+## 5. Camino hacia `EXACT_REPRODUCTION` — completado
 
-**Distrito 8 ya se cerró** (§2, §3) usando una fuente SERVEL de escrutinio final ("v2", `import_final_scrutiny()`) en vez de TRICEL mesa a mesa — evita el bug #6 y da cobertura ~100% verificada en los 28 distritos.
+**Distrito 8** se cerró usando una fuente SERVEL de escrutinio final ("v2", `import_final_scrutiny()`) en vez de TRICEL mesa a mesa — evita el bug #6 y da cobertura ~100% verificada en los 28 distritos (§2, §3).
 
-**Para Distrito 3, 5 y 19, la única vía identificada es corregir `dhondt_binivel()`** (§3) — no es un problema de fuente de datos, así que ninguna mejora de cobertura adicional lo resolvería:
+**Distrito 3, 5 y 19** se cerraron implementando `dhondt_binivel_cl()` (§9): D'Hondt con tope de candidatos disponibles por partido en el Nivel 2, en vez de D'Hondt directo entre partidos — un partido no puede acumular más escaños que candidatos tiene disponibles; el excedente se redistribuye a los siguientes cocientes más altos entre partidos con candidato disponible. Verificado exacto contra los 7 pactos en disputa de D3/D5/D19 (§3) y contra la corrida completa (§1): **28/28**.
 
-1. **Agregar un tope de candidatos por partido al Nivel 2 de `dhondt_binivel()`**: en vez de D'Hondt directo entre partidos, aplicar D'Hondt donde cada partido no puede acumular más escaños que candidatos tiene disponibles, redistribuyendo el excedente a los siguientes cocientes más altos entre partidos con candidato disponible (algoritmo verificado exacto contra los 7 pactos en disputa de D3/D5/D19, ver §3). Requiere:
-   - Cambiar la firma de `dhondt_binivel()` (o agregar un parámetro opcional) para recibir `candidatos_por_partido: dict[str, int]`.
-   - Que todos los llamadores (`validate_election()`, `run_electoral_plan_binivel()`, `run_electoral_ensemble()`, scripts H4) puedan proveer ese conteo — hoy no todos tienen esa información fácilmente disponible (los ensembles de redistritaje, en particular, no modelan candidatos individuales, solo partidos).
-   - Decidir el comportamiento por defecto cuando no se provee el conteo (¿sin tope, como hoy — cambio no disruptivo — o error explícito?).
-2. **Alternativa parcial, ya explorada y descartada como insuficiente**: usar TRICEL mesa a mesa (`import_votes()`) como fuente primaria en vez de SERVEL — no aplica aquí, porque el problema de D3/D5/D19 nunca fue de datos (los votos ya coinciden exactamente con TRICEL vía SERVEL v2); esta vía solo habría sido relevante si la Fase 1 no hubiera cerrado Distrito 8, o si quedaran discrepancias de vote-source en otros distritos (no es el caso).
-
-No implementado en esta sesión — ver justificación de alcance en §3.
+Con `--votes-source servel_final --dhondt-variant cl` (ambos default): **`EXACT_REPRODUCTION`**. Con cualquiera de los dos en su valor anterior (`tricel` o `generic`): `PARTIAL` — ver §1 para ambas corridas de comparación.
 
 ---
 
@@ -187,8 +191,12 @@ python scripts/validar_tricel.py \
     --assignment datos/asignacion_vigente.json
     # --base-dir por defecto: ./SHP_APC2023 (correr desde la raíz de chiledist/)
     # --votes-source por defecto: servel_final (agosto 2026) — pasar
-    #   --votes-source tricel para reproducir el comportamiento anterior
-    #   (24/28, ver bug #6 arriba)
+    #   --votes-source tricel para reproducir el comportamiento previo a
+    #   ese cambio (24/28, ver bug #6 arriba)
+    # --dhondt-variant por defecto: cl (agosto 2026) — pasar
+    #   --dhondt-variant generic para reproducir dhondt_binivel() sin tope
+    #   (25/28, ver §1.1 y §9)
+    # Con ambos defaults: 28/28, EXACT_REPRODUCTION.
 ```
 
 Requiere (no distribuido en el repo, ver `.env.example`):
@@ -221,3 +229,61 @@ el `.xlsx` (agregado por comuna, ~14.000 filas) por ser 27× más liviano
 sin perder información a nivel de candidato/distrito; el `.txt` solo
 aportaría granularidad de mesa, que ningún loader actual de chiledist
 consume a ese nivel.
+
+---
+
+## 9. `dhondt_binivel()` vs `dhondt_binivel_cl()` — por qué son dos funciones separadas
+
+`chiledist.engines.allocation.dhondt.dhondt_binivel()` **no fue modificada**. La corrección de §3/§5 vive en una función nueva, `dhondt_binivel_cl()`, más el primitivo genérico `dhondt_con_tope()` (D'Hondt con tope de escaños por partido, reutilizable fuera del caso binivel). Motivos:
+
+1. **`dhondt_binivel()` opera solo sobre votos agregados por partido, sin candidatos** — es la abstracción correcta para escenarios de redistritaje sintético (ensembles de este proyecto) donde no existe una lista de candidatos real que consultar, y para comparación metodológica internacional. `dhondt_binivel_cl()` requiere y usa `candidatos_por_partido` — solo tiene sentido cuando ese dato existe, típicamente al validar contra una elección real ya corrida.
+2. **Ningún test ni resultado publicado que dependa de `dhondt_binivel()` cambia** — verificado, no asumido: la suite completa (631 tests, antes 603 + 28 nuevos de `tests/test_dhondt_binivel_cl.py`) pasa sin modificar ningún test existente, y H4/`SERVEL_INTERNAL_CONSISTENCY` (96/96) da el mismo resultado con ambas funciones (ver §10).
+
+### ¿Es esto una particularidad de la Ley 18.700, o del D'Hondt binivel en general?
+
+Investigado con evidencia, no asumido. Se intentó obtener el texto literal del art. 121 de la Ley 18.700 (DFL 2, 2017, texto refundido) vía búsqueda web — **sin éxito concluyente**: la Biblioteca del Congreso Nacional (bcn.cl) no renderiza contenido para fetch automatizado en este entorno (páginas dinámicas basadas en JavaScript), y las copias de la ley disponibles por otras vías (Georgetown PDBA, Tribunal Electoral, te.gob.mx) resultaron ser versiones **anteriores a la reforma de 2015** que introdujo D'Hondt (el sistema binominal previo no lo usaba), o PDFs truncados antes de llegar al artículo 121.
+
+La evidencia disponible más fuerte no es un texto legal citado, sino el **cálculo D'Hondt oficial de TRICEL** (hoja DETERMINACION de cada `TRICEL_2025/Distrito-XX.xlsx`, el cálculo del organismo mismo aplicado a la elección real, no una interpretación de terceros) — reproducido exactamente (7/7 pactos, §3). Servel.cl (`servel.cl/metodo-dhondt/`) confirma que "resultan electas las candidaturas con mayores votaciones personales dentro de esa lista, hasta completar los escaños obtenidos", consistente con que los escaños se agotan cuando se agotan los candidatos.
+
+**Conclusión honesta**: no se encontró evidencia de que esto sea una regla exclusiva de Chile. El razonamiento general la respalda: un partido no puede elegir más personas que las que postuló — esto es una necesidad lógica de cualquier sistema D'Hondt binivel aplicado sobre listas de candidatos reales (Países Bajos, Bélgica, España, etc. tienen el mismo problema de "lista agotada" en sus propios sistemas proporcionales), no una peculiaridad chilena. Simplemente se manifiesta pocas veces porque la mayoría de los partidos postulan más candidatos que los escaños que razonablemente podrían ganar — en Chile, con pactos de 5-6 partidos y distritos de 2-8 escaños, es más frecuente que un partido registre un único candidato. `dhondt_binivel()` nunca estuvo "mal" como método abstracto de votos-por-partido; está incompleto solo cuando se le pide reproducir una elección real con listas de candidatos conocidas y limitadas.
+
+### Nuevas funciones y su ubicación
+
+| Función | Ubicación | Qué hace |
+|---|---|---|
+| `dhondt_con_tope()` | `chiledist.engines.allocation.dhondt` | D'Hondt genérico con tope de escaños por partido — primitivo reutilizable |
+| `dhondt_binivel_cl()` | `chiledist.engines.allocation.dhondt` | D'Hondt binivel con tope de candidatos por partido en Nivel 2 |
+| `chiledist.domain.data.tricel.import_candidate_counts()` | `chiledist.domain.data.tricel` | Fuente de `candidatos_por_partido` — cuenta candidatos por partido y distrito desde la hoja CANDIDATOS de TRICEL. **No** derivar este conteo de `servel_2025_candidatos.csv`/`import_candidates()` (SERVEL): esa fuente sobrecuenta candidatos (1.378 filas vs 1.096 reales, §3) y puede anular el tope en silencio para un partido específico. |
+
+`run_electoral_plan_binivel()` y `validate_election()` ganaron un parámetro opcional (`candidatos_por_partido`) para elegir la variante — explícito, default `None` preserva el comportamiento anterior exactamente (ver diff de código). `scripts/validar_tricel.py` expone `--dhondt-variant {cl,generic}` (default `cl`, agosto 2026).
+
+---
+
+## 10. Verificación de regresión: ¿H4 cambia con `dhondt_binivel_cl()`?
+
+**No.** Verificado empíricamente sobre los mismos datos SERVEL 2025 reales que usa H4 (`servel_2025_candidatos.csv`, `--modo candidatos`), comparando `run_electoral_plan_binivel()` con y sin `candidatos_por_partido` (conteo real desde `import_candidate_counts()`):
+
+**Nivel pacto** (lo que mide `scripts/validar_dhondt.py`, `SERVEL_INTERNAL_CONSISTENCY`, 96/96): **96/96 filas (distrito, pacto), 0 diferencias** entre `dhondt_binivel()` y `dhondt_binivel_cl()`.
+
+**Nivel partido** (más granular, dentro de cada pacto — lo que `validar_dhondt.py` no mide): **8 de 438 filas (distrito, partido) difieren**, y caen exactamente en Distrito 3, 5 y 19 — los mismos 3 distritos identificados en §3, ninguno en los otros 25:
+
+| Distrito | Partido | Δ escaños (generic − cl) |
+|---|---|---|
+| 3 | Partido Liberal de Chile | +2 |
+| 3 | Partido por la Democracia | −1 |
+| 3 | Partido Radical de Chile | −1 |
+| 5 | Frente Amplio | −1 |
+| 5 | Partido Comunista de Chile | −2 |
+| 5 | Partido Socialista de Chile | +3 |
+| 19 | Partido Democrata Cristiano | +1 |
+| 19 | Partido Socialista de Chile | −1 |
+
+Total de escaños nacional: 155 en ambos casos.
+
+**Por qué esto es matemáticamente esperado, no una coincidencia**: el Nivel 1 (D'Hondt entre pactos, que determina cuántos escaños gana cada pacto — lo único que `validar_dhondt.py`/H4 compara) es **idéntico** entre `dhondt_binivel()` y `dhondt_binivel_cl()`; el tope de candidatos solo actúa en el Nivel 2 (reparto entre partidos dentro de un pacto ya ganador), que `validar_dhondt.py` nunca desagrega. Consistente con que el problema afectó exactamente 3 de 28 distritos: son los únicos donde, dentro de un pacto con escaños en disputa, el partido con más votos tenía menos candidatos inscritos que escaños le habría dado el D'Hondt sin tope.
+
+**Conclusión**: `SERVEL_INTERNAL_CONSISTENCY` (96/96, H4) no necesita re-evaluarse — el resultado agregado por pacto que reporta es idéntico con ambas funciones. Ningún resultado de H4 documentado en `SCIENTIFIC_HYPOTHESES.md` cambia.
+
+### `run_electoral_ensemble()` — no se migró, y no debería por defecto
+
+`chiledist.inference.electoral_ensemble.core.run_electoral_ensemble()` aplica D'Hondt sobre **planes de redistritaje sintéticos** (asignaciones unidad→distrito generadas por ReCom) — distritos hipotéticos que nunca existieron en una boleta real. No hay "candidatos inscritos" que consultar para un distrito que el ensemble inventó, así que `candidatos_por_partido` no es aplicable conceptualmente ahí, no solo por falta de dato disponible. **No se propone migrar el default de `run_electoral_ensemble()` a `dhondt_binivel_cl()`** — seguiría requiriendo `dhondt_binivel()` (votos-only) para tener sentido. Si en el futuro se necesitara modelar candidatos dentro de un ensemble, sería un diseño nuevo (ej. muestrear cuántos candidatos por partido postularían bajo cada plan hipotético), no una migración directa de parámetro.

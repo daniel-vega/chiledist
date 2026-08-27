@@ -1333,11 +1333,17 @@ a partidos medianos que compiten en pactos con otros fuertes.
 
 El pipeline reproduce exactamente el resultado oficial **SERVEL** 2025:
 96/96 combinaciones (distrito, pacto) — PASS completo (`validar_dhondt.py`,
-SERVEL_INTERNAL_CONSISTENCY). Ver subsección "Validación empírica —
-D'Hondt binivel vs SERVEL 2025", arriba. Distinta de la validación
-contra proclamaciones oficiales **TRICEL** (`validar_tricel.py`,
-TRICEL_OFFICIAL_REPRODUCTION): 25/28 distritos, `PARTIAL`, no
-`EXACT_REPRODUCTION` — ver `chiledist/VALIDATION_REPORT.md`.
+SERVEL_INTERNAL_CONSISTENCY, sin cambios, usa `dhondt_binivel()`).
+Ver subsección "Validación empírica — D'Hondt binivel vs SERVEL 2025", arriba.
+Distinta de la validación contra proclamaciones oficiales **TRICEL**
+(`validar_tricel.py`, TRICEL_OFFICIAL_REPRODUCTION): **28/28 distritos,
+`EXACT_REPRODUCTION`** (agosto 2026) usando `dhondt_binivel_cl()` — variante
+con tope de candidatos disponibles por partido en el reparto intra-pacto,
+función separada de `dhondt_binivel()` (que se preserva sin cambios y
+sigue dando 25/28, `PARTIAL`, si se usa directamente). Verificado que el
+96/96 de este párrafo no se ve afectado por `dhondt_binivel_cl()` — el
+Nivel 1 (pactos), que es lo que `validar_dhondt.py` mide, es idéntico
+entre ambas funciones — ver `chiledist/VALIDATION_REPORT.md` §9-10.
 
 #### Estado
 

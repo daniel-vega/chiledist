@@ -989,4 +989,4 @@ Estos tests son necesarios antes de entregar resultados a una institución o pub
 
 ---
 
-**Última actualización: agosto 2026 — modelo A implementado, tests Nivel 1-3 completados, validación TRICEL 2025 (25/28, `PARTIAL`; causa raíz de los 3 distritos restantes identificada y verificada en `dhondt_binivel()`, no corregida — ver `VALIDATION_REPORT.md` § 3, 5).**
+**Última actualización: agosto 2026 — modelo A implementado, tests Nivel 1-3 completados, validación TRICEL 2025 (28/28, `EXACT_REPRODUCTION`, con `dhondt_binivel_cl()` — variante chilena con tope de candidatos disponibles por partido, función separada de `dhondt_binivel()` genérica que se preservó sin cambios y sigue dando 25/28 `PARTIAL` — ver `VALIDATION_REPORT.md` §3, 5, 9-10).**

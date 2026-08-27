@@ -175,7 +175,7 @@ chiledist/
 │   ├── autocorrelacion.py          # Autocorrelación espacial
 │   ├── export_imc_bundle.py        # Exportación bundle IMC Plan Lab
 │   ├── validar_dhondt.py           # Validación D'Hondt binivel vs SERVEL 2025 (96/96)
-│   ├── validar_tricel.py           # Validación electoral completa vs TRICEL 2025 (25/28)
+│   ├── validar_tricel.py           # Validación electoral completa vs TRICEL 2025 (28/28, EXACT_REPRODUCTION)
 │   ├── validar_datos_externos.py   # Validación de datos externos antes de análisis
 │   └── recalcular_reock.py         # Recalcula métrica Reock tras corrección shapely 2.x
 │
@@ -451,7 +451,7 @@ A diferencia de los archivos anteriores, este no es un único archivo curado sin
   proclamaciones = import_proclamations(data_dir)  # hoja ELECTOS: candidato → escaño proclamado
   votos          = import_votes(data_dir)          # hoja MESA A MESA: votación por candidato/mesa
   ```
-- **Estado de la validación**: 25/28 distritos coinciden exactamente contra el D'Hondt binivel calculado por chiledist (`PARTIAL`, no `EXACT_REPRODUCTION` — los 3 distritos restantes tienen causa raíz identificada y verificada: `dhondt_binivel()` no aplica tope de candidatos disponibles por partido en el reparto intra-pacto, no un problema de datos). Ver "Validación electoral" más abajo y `VALIDATION_REPORT.md` para el detalle completo, incluida la verificación exhaustiva de la causa.
+- **Estado de la validación**: **28/28 distritos, `EXACT_REPRODUCTION`** — con `dhondt_binivel_cl()` (variante chilena, con tope de candidatos disponibles por partido en el reparto intra-pacto; agosto 2026). `dhondt_binivel()` genérica (sin ese tope, preservada sin cambios) da 25/28, `PARTIAL`. Ver "Validación electoral" más abajo y `VALIDATION_REPORT.md` para el detalle completo, incluida la verificación de que esto no afecta H4 (96/96 vs SERVEL).
 
 ---
 
@@ -543,10 +543,11 @@ Los Excel de SERVEL (`PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx`) y el CSV de micro
 
 ```python
 from chiledist.validation import validate_election, ValidationReport
-from chiledist.domain.data.tricel import import_proclamations, import_votes
+from chiledist.domain.data.tricel import import_proclamations, import_votes, import_candidate_counts
 
-proclamaciones = import_proclamations(data_dir)
-votos_tricel   = import_votes(data_dir)
+proclamaciones      = import_proclamations(data_dir)
+votos_tricel        = import_votes(data_dir)
+candidatos_por_partido = import_candidate_counts(data_dir)  # ver nota abajo
 
 report: ValidationReport = validate_election(
     candidates_servel=candidates_servel,      # datos/servel_2025_candidatos.csv
@@ -555,13 +556,14 @@ report: ValidationReport = validate_election(
     magnitudes=MAGNITUDES_LEGALES_LEY20840,
     pacto_map=pacto_map,                      # datos/pacto_map_2025.json
     votes_tricel=votos_tricel,
+    candidatos_por_partido=candidatos_por_partido,  # activa dhondt_binivel_cl()
 )
-print(report)  # Districts validated: 25/28, Status: PARTIAL
+print(report)  # Districts validated: 28/28, Status: EXACT_REPRODUCTION
 ```
 
-**Pipeline** (ver docstring de `validate_election()` para el detalle completo): corre `dhondt_binivel()` sobre los votos SERVEL agregados por partido y distrito, determina los candidatos ganadores dentro de cada partido por mayor votación individual (regla real, Ley 18.700 — no un segundo D'Hondt intra-partido), compara escaños calculados vs. proclamados TRICEL por (distrito, pacto) y por candidato, y reporta discrepancias y empates que requieren resolución legal.
+**Pipeline** (ver docstring de `validate_election()` para el detalle completo): corre `dhondt_binivel_cl()` — o `dhondt_binivel()` si se omite `candidatos_por_partido` — sobre los votos SERVEL agregados por partido y distrito, determina los candidatos ganadores dentro de cada partido por mayor votación individual (regla real, Ley 18.700 — no un segundo D'Hondt intra-partido), compara escaños calculados vs. proclamados TRICEL por (distrito, pacto) y por candidato, y reporta discrepancias y empates que requieren resolución legal.
 
-**Estado actual: `PARTIAL` — 25/28 distritos validados** exactamente contra las proclamaciones oficiales TRICEL 2025 (149/155 escaños, 185/185 asignaciones de lista). Los 3 distritos restantes (D3, D5, D19) tienen causa raíz identificada y verificada exhaustivamente (7/7 pactos en disputa reproducidos exactamente con el modelo corregido): `chiledist.engines.allocation.dhondt.dhondt_binivel()` no aplica un tope de candidatos disponibles por partido en el reparto intra-pacto — un partido con un solo candidato inscrito puede "ganar" más de un escaño en el cálculo aproximado, cuando en la realidad ese escaño pasa al siguiente partido con candidato disponible. No es un problema de cobertura de datos (los votos por candidato ya coinciden exactamente con TRICEL). El fix no está implementado — es un cambio a la función D'Hondt central usada en todo el pipeline, no específico de esta validación. Ver `VALIDATION_REPORT.md` para la verificación completa y el camino hacia `EXACT_REPRODUCTION`.
+**Estado actual: `EXACT_REPRODUCTION` — 28/28 distritos validados** exactamente contra las proclamaciones oficiales TRICEL 2025 (155/155 escaños, 185/185 asignaciones de lista), usando `dhondt_binivel_cl()` — la variante chilena del D'Hondt binivel con tope de candidatos disponibles por partido en el reparto intra-pacto (`chiledist.engines.allocation.dhondt`, agosto 2026). **`dhondt_binivel()` genérica no fue modificada** y sigue disponible tal cual (25/28, `PARTIAL`, sin el parámetro `candidatos_por_partido`) — es la abstracción correcta para escenarios sin lista de candidatos real (ensembles de redistritaje sintético) y para comparación metodológica internacional; `dhondt_binivel_cl()` requiere y usa el conteo real de candidatos por partido, solo tiene sentido al validar contra una elección ya corrida. Verificado que este cambio no afecta H4 (`SERVEL_INTERNAL_CONSISTENCY`, 96/96 vs SERVEL — el Nivel 1 pacto-a-pacto es idéntico entre ambas funciones). Ver `VALIDATION_REPORT.md` §9-10 para la verificación completa, incluida la investigación de si esto es una particularidad de la Ley 18.700 o una necesidad general de cualquier D'Hondt binivel sobre listas de candidatos reales (conclusión: lo segundo, no verificado como exclusivo de Chile).
 
 ```bash
 python scripts/validar_tricel.py \
@@ -569,6 +571,8 @@ python scripts/validar_tricel.py \
     --servel-candidates datos/servel_2025_candidatos.csv \
     --pacto-map datos/pacto_map_2025.json \
     --assignment datos/asignacion_vigente.json
+    # --dhondt-variant por defecto: cl (agosto 2026) — pasar --dhondt-variant
+    #   generic para dhondt_binivel() sin tope (25/28, comparación/depuración)
 ```
 
 ---
@@ -1203,7 +1207,7 @@ python scripts/validar_dhondt.py --modo candidatos \
 
 ### 12. validar_tricel.py — Validación electoral completa vs TRICEL
 
-Validación candidato a candidato: D'Hondt binivel chiledist vs proclamaciones oficiales TRICEL 2025, sobre los 28 distritos reales. Ver "Validación electoral" más arriba y `VALIDATION_REPORT.md` para el detalle completo. Estado actual: **25/28 distritos validados (`PARTIAL`)**.
+Validación candidato a candidato: D'Hondt binivel chiledist vs proclamaciones oficiales TRICEL 2025, sobre los 28 distritos reales. Ver "Validación electoral" más arriba y `VALIDATION_REPORT.md` para el detalle completo. Estado actual: **28/28 distritos validados (`EXACT_REPRODUCTION`)** con `dhondt_binivel_cl()` (default); 25/28 `PARTIAL` con `--dhondt-variant generic` (`dhondt_binivel()` sin tope de candidatos).
 
 ```bash
 python scripts/validar_tricel.py \
@@ -2379,7 +2383,7 @@ Los siguientes problemas fueron detectados y corregidos durante la validación p
 | `reock()` incompatible con shapely 2.x | **RESUELTO** | `scripts/recalcular_reock.py` permite recalcular Reock en `ensemble_stats.csv` de corridas antiguas sin re-correr ReCom completo. Ver `tests/test_metrics.py` (`test_reock_circulo_perfecto`, `test_reock_cuadrado_unitario`, `test_reock_l_shape_en_rango`). |
 | `normalize_party_name()` no toleraba mayúsculas/acentos en el cruce D'Hondt binivel | **RESUELTO** | Necesario para cruzar nombres de partido entre SERVEL (mayúsculas sin tildes) y `pacto_map_2025.json` (formato título con tildes). Ver `chiledist/domain/utils.py` y `tests/test_electoral_binivel.py`. |
 | `Puntos_Edificacion_Rural` sin `COD_DISTRITO` (solo CUT a nivel comuna) rompía el pipeline en regiones sin cobertura urbana completa | **RESUELTO** | Manejado como proxy rural especial en `chiledist/domain/loader.py`. Ver `tests/test_integration_r11.py`. |
-| `datos/asignacion_vigente.json`: 8 CUT de la Región Metropolitana mal asignados a distrito | **RESUELTO** | Corrección validada indirectamente: la asignación corregida reproduce 96/96 combinaciones (distrito, pacto) contra SERVEL 2025 (ver `scripts/validar_dhondt.py`) y 25/28 distritos contra TRICEL 2025 (ver "Validación electoral" más arriba, `VALIDATION_REPORT.md`). |
+| `datos/asignacion_vigente.json`: 8 CUT de la Región Metropolitana mal asignados a distrito | **RESUELTO** | Corrección validada indirectamente: la asignación corregida reproduce 96/96 combinaciones (distrito, pacto) contra SERVEL 2025 (ver `scripts/validar_dhondt.py`) y 28/28 distritos, `EXACT_REPRODUCTION`, contra TRICEL 2025 con `dhondt_binivel_cl()` (ver "Validación electoral" más arriba, `VALIDATION_REPORT.md`). |
 
 ---
 
@@ -2432,6 +2436,7 @@ Los siguientes problemas fueron detectados y corregidos durante la validación p
 |--------|---------|-------|--------|
 | `electoral` | `dhondt` | 8 | ✓ validado |
 | `electoral` | `dhondt_binivel` | 5 | ✓ validado |
+| `electoral` | `dhondt_con_tope` / `dhondt_binivel_cl` | 28 | ✓ validado (incluye los 7 pactos reales de D3/D5/D19, `tests/test_dhondt_binivel_cl.py`) |
 | `electoral` | `personas_por_escano` | 7 | ✓ validado |
 | `electoral` | `peso_relativo_del_voto` | 7 | ✓ validado |
 | `electoral` | `comparar_magnitudes` | 9 | ✓ validado |
