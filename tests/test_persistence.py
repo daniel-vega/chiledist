@@ -11,20 +11,15 @@ Ejecutar:
 
 import dataclasses
 import json
-import sys
 import tempfile
 import unittest
-import unittest.mock as mock
 from pathlib import Path
-
-if "gerrychain" not in sys.modules:
-    sys.modules["gerrychain"] = mock.MagicMock()
 
 import numpy as np
 import pandas as pd
 
 import chiledist as cd
-from chiledist.persistence import (
+from chiledist.domain.persistence import (
     PlanEnsemble,
     build_run_manifest,
     get_package_versions,

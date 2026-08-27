@@ -1,0 +1,98 @@
+{
+  "run_id": "77e02180-5c9b-41c0-8530-dc2100089cf1",
+  "chiledist_version": "0.2.0",
+  "timestamp_start": "2026-08-19T22:20:09",
+  "timestamp_end": "2026-08-19T22:22:51",
+  "scenario": {
+    "name": "apc_soft_p10_00",
+    "description": "Barrido Pareto: apc_soft con split_penalty=10.00",
+    "tipo_reforma": "contrafactual_intermedio",
+    "observation_unit": "ID_DIST",
+    "decision_unit": "ID_DIST",
+    "preserve_units": [
+      "CUT"
+    ],
+    "preserve_mode": "soft",
+    "split_penalty": 10.0,
+    "min_fragment_pop_share": 0.0,
+    "pop_col": "personas",
+    "pop_tolerance": 0.1,
+    "pop_source": "censo2024",
+    "sampler": "recom",
+    "n_districts": 8,
+    "n_steps": 10000,
+    "n_steps_warmup": 500,
+    "seed": 42,
+    "contiguity": "queen",
+    "island_policy": "nearest",
+    "island_threshold_km": 50.0,
+    "crs_metric": null,
+    "pop_col_effective": "personas",
+    "pop_tolerance_requested": 0.1,
+    "pop_tolerance_effective": 0.1,
+    "pop_tolerance_fallback_used": false
+  },
+  "data": {
+    "region_code": 13,
+    "region_name": "R13_METROPOLITANA",
+    "n_units": 451,
+    "n_islands_found": 0,
+    "n_islands_connected": 0,
+    "input_files": {}
+  },
+  "algorithm": {
+    "sampler": "recom",
+    "n_steps_requested": 10000,
+    "n_steps_executed": 10000,
+    "n_steps_warmup": 144,
+    "n_plans_generated": 10000,
+    "n_plans_valid": 10000
+  },
+  "environment": {
+    "python_version": "3.11.13",
+    "platform": "Linux-5.15.0-139-generic-x86_64-with-glibc2.31",
+    "packages": {
+      "geopandas": "1.1.3",
+      "gerrychain": "0.3.2",
+      "numpy": "2.4.6",
+      "pandas": "3.0.3",
+      "scipy": "1.17.1",
+      "networkx": "3.6.1",
+      "shapely": "2.1.2",
+      "pyproj": "3.7.2",
+      "libpysal": "4.14.1",
+      "scikit_learn": "not_installed",
+      "pyarrow": "24.0.0"
+    }
+  },
+  "outputs": {
+    "assignments_parquet": "assignments.parquet",
+    "ensemble_stats_csv": "ensemble_stats.csv",
+    "chain_metrics_csv": "metricas_cadena.csv"
+  },
+  "sampler_diagnostics": {
+    "epsilon_recom": 0.1,
+    "warmup_converged": true,
+    "warmup_final_dev": 8.557144285571443,
+    "total_draws": 10000,
+    "valid_draws": 10000,
+    "valid_fraction": 1.0,
+    "pop_tol_used": 0.1,
+    "warmup_steps": 144,
+    "bipartition_warnings": null
+  },
+  "population_source": "censo2024",
+  "population_measure": "personas",
+  "ensemble": {
+    "assignments_scope": "all_draws",
+    "assignments_n_draws": 10000,
+    "analysis_scope": "valid_draws_only",
+    "analysis_n_draws": 10000,
+    "validity_filter": {
+      "metric": "max_dev_pob_pct",
+      "operator": "<=",
+      "threshold": 10.0
+    },
+    "canonical_analysis_file": "ensemble_stats.csv"
+  }
+}

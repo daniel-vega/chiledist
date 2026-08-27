@@ -1,0 +1,4 @@
+escenario,status,reason,included_in_scoring,n_planes
+legal_comunas,ok,,True,50000
+contrafactual_apc_libre,ok,,True,50000
+contrafactual_apc_soft,ok,,True,50000

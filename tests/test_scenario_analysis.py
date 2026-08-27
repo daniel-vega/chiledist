@@ -15,11 +15,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from chiledist.scenario_comparison import (
-    compare_sensitivity,
-    pareto_frontier_nd,
-    ranking_concordance,
-)
+from chiledist.inference.sensitivity import compare_sensitivity, ranking_concordance
+from chiledist.inference.comparison import pareto_frontier_nd
 
 
 # ─── pareto_frontier_nd ───────────────────────────────────────────────────────

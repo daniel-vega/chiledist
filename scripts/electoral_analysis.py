@@ -74,9 +74,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.data import servel as sv
-from chiledist.data import census2024 as c24
-from chiledist.persistence import PlanEnsemble
+from chiledist.domain.data import servel as sv
+from chiledist.domain.data import census2024 as c24
+from chiledist.domain.persistence import PlanEnsemble
 
 BG          = "#F8F7F4"
 C_UNI       = "#1A5C8A"   # uninivel
@@ -169,7 +169,9 @@ def _load_assignment(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
-        return {str(k): int(v) for k, v in raw.items()}
+        # Normalizar claves a CUT canónico (5 dígitos): tolera que el JSON
+        # de origen tenga claves de 4 o 5 dígitos.
+        return {cd.normalize_cut(k): int(v) for k, v in raw.items()}
     except Exception as e:
         print(f"  ⚠ asignación no cargada: {e}")
         return None
@@ -178,11 +180,15 @@ def _load_assignment(path: str) -> dict | None:
 def _load_population(census_path: str, assignment: dict) -> pd.Series | None:
     try:
         census = c24.load_census2024(census_path)
-        census["CUT"] = census["CUT"].astype(str)
+        # load_census2024 devuelve CUT como int (sin cero a la izquierda),
+        # mientras que `assignment` (desde asignacion_vigente.json) usa
+        # strings de 5 dígitos. normalize_cut() los hace comparables sin
+        # importar cuál de las dos fuentes use 4 o 5 dígitos.
+        census["CUT"] = census["CUT"].map(cd.normalize_cut)
         pop_map = census.set_index("CUT")["personas"].to_dict()
         pop_dist: dict[int, int] = {}
         for cut, d in assignment.items():
-            pop_dist[int(d)] = pop_dist.get(int(d), 0) + int(pop_map.get(str(cut), 0))
+            pop_dist[int(d)] = pop_dist.get(int(d), 0) + int(pop_map.get(cd.normalize_cut(cut), 0))
         return pd.Series(pop_dist).sort_index()
     except Exception as e:
         print(f"  ⚠ población no cargada: {e}")
@@ -192,7 +198,7 @@ def _load_population(census_path: str, assignment: dict) -> pd.Series | None:
 def _load_votes(servel_path: str) -> pd.DataFrame | None:
     try:
         df = sv.load_resultados_electorales(servel_path)
-        return sv.votos_por_comuna(df)
+        df = sv.votos_por_comuna(df)
     except Exception:
         try:
             df = pd.read_csv(servel_path)
@@ -200,10 +206,16 @@ def _load_votes(servel_path: str) -> pd.DataFrame | None:
             if not required.issubset(df.columns):
                 print(f"  ⚠ {servel_path}: faltan columnas {required - set(df.columns)}")
                 return None
-            return df[["CUT", "partido", "votos"]]
+            df = df[["CUT", "partido", "votos"]]
         except Exception as e:
             print(f"  ⚠ SERVEL no cargado: {e}")
             return None
+    # Normalizar CUT a 5 dígitos para que calce con `assignment` (desde
+    # asignacion_vigente.json) en aggregate_votes()/dhondt — sin esto, un
+    # CUT int sin cero a la izquierda nunca matchea las claves del mapa
+    # vigente y aggregate_votes() descarta esas filas en silencio.
+    df["CUT"] = df["CUT"].map(cd.normalize_cut)
+    return df
 
 
 def _load_pacto_map(pacto_path: str | None) -> dict | None:
@@ -238,6 +250,12 @@ def bloque_b1(votes_df, assignment, pop_por_distrito, pacto_map) -> pd.DataFrame
         print("  [B1] Sin pacto_map — se omite binivel (solo uninivel)")
         pacto_map = {p: p for p in votes_df["partido"].unique()}
 
+    # Normalizar claves (minúsculas, sin tildes) para que el label "pacto"
+    # no dependa de si pacto_map usa formato título/tildes y los votos
+    # vienen en MAYÚSCULAS SIN TILDES (típico de SERVEL) — mismo patrón
+    # que dhondt_binivel() (chiledist/electoral/dhondt.py).
+    pacto_map_norm = {cd.normalize_party_name(k): v for k, v in pacto_map.items()}
+
     # Seleccionar el distrito más grande (mayor magnitud o más votos)
     by_votos = (votos_dist.groupby("district")["votos"].sum()
                 .reindex(magnitudes.index, fill_value=0))
@@ -254,7 +272,7 @@ def bloque_b1(votes_df, assignment, pop_por_distrito, pacto_map) -> pd.DataFrame
     for p in partidos:
         rows.append({
             "partido":   p,
-            "pacto":     pacto_map.get(p, p),
+            "pacto":     pacto_map_norm.get(cd.normalize_party_name(p), p),
             "votos":     votos_ej[p],
             "votos_pct": round(votos_ej[p] / sum(votos_ej.values()) * 100, 2),
             "escanos_uninivel": uni_ej.get(p, 0),
@@ -409,8 +427,17 @@ def bloque_b3(
                     r["plan_id"] = int(draw_id)
                     r["source"]  = "ensemble"
                     rows.append(r)
-                except Exception:
-                    pass
+                except Exception as e:
+                    if not hasattr(_metrics_for_plan, '_errores_vistos'):
+                        _metrics_for_plan._errores_vistos = set()
+                    clave = type(e).__name__ + str(e)[:80]
+                    if clave not in _metrics_for_plan._errores_vistos:
+                        print(f"  ⚠ [B3] Error al procesar planes reales "
+                              f"({type(e).__name__}): {e}")
+                        print(f"      Causa probable: --run-dir apunta a ensemble "
+                              f"regional, pero B3 requiere ensemble nacional "
+                              f"(28 circunscripciones). Usando datos sintéticos.")
+                        _metrics_for_plan._errores_vistos.add(clave)
         except Exception as e:
             print(f"  ⚠ No se pudo cargar ensemble: {e}")
 
@@ -490,8 +517,16 @@ def bloque_b4(votes_df, assignment, pacto_map) -> pd.DataFrame:
     })
 
     if pacto_map is not None:
-        votos_dist["pacto"] = (votos_dist["partido"].map(pacto_map)
-                               .fillna(votos_dist["partido"]))
+        # Normalizar claves (minúsculas, sin tildes) — mismo patrón que
+        # dhondt_binivel() (chiledist/electoral/dhondt.py) — antes de
+        # cualquier lookup, para que la columna "pacto" no dependa de si
+        # pacto_map usa formato título/tildes y los votos vienen en
+        # MAYÚSCULAS SIN TILDES (típico de SERVEL).
+        pacto_map_norm = {cd.normalize_party_name(k): v for k, v in pacto_map.items()}
+        votos_dist["pacto"] = (
+            votos_dist["partido"].map(cd.normalize_party_name).map(pacto_map_norm)
+            .fillna(votos_dist["partido"])
+        )
         res_bi   = cd.run_electoral_plan_binivel(votos_dist, magnitudes)
         v_bi, s_bi = cd.national_shares(res_bi)
         bonus_bi = cd.seat_bonus(v_bi, s_bi)
@@ -504,8 +539,14 @@ def bloque_b4(votes_df, assignment, pacto_map) -> pd.DataFrame:
             "modo":        "binivel",
         })
         # Pacto para cada partido
-        rows_bi["pacto"] = rows_bi["partido"].map(pacto_map).fillna(rows_bi["partido"])
-        rows_uni["pacto"] = rows_uni["partido"].map(pacto_map).fillna(rows_uni["partido"])
+        rows_bi["pacto"] = (
+            rows_bi["partido"].map(cd.normalize_party_name).map(pacto_map_norm)
+            .fillna(rows_bi["partido"])
+        )
+        rows_uni["pacto"] = (
+            rows_uni["partido"].map(cd.normalize_party_name).map(pacto_map_norm)
+            .fillna(rows_uni["partido"])
+        )
         df = pd.concat([rows_uni, rows_bi], ignore_index=True)
     else:
         rows_uni["pacto"] = rows_uni["partido"]

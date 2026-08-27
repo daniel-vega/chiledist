@@ -3,11 +3,21 @@
 **/venv/
 **/.venv/
 
+# Metadata de instalación editable (pip install -e .)
+*.egg-info/
+
 # Datos geoespaciales
 **/SHP_APC2023
 
 # Bundles
 **/bundles/
-
-*.pyc
 __pycache__/
+*.pyc
+
+# Fuentes de datos electorales crudas (SERVEL/TRICEL) — no se distribuyen
+datos/fuentes/
+*.xlsx
+!tests/fixtures/*.xlsx
+
+# Variables de entorno locales
+.env

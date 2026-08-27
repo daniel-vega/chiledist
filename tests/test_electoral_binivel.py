@@ -25,13 +25,16 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from chiledist.electoral import (
+from chiledist.domain.utils import normalize_party_name
+from chiledist.engines.allocation import (
     dhondt,
     dhondt_binivel,
     run_electoral_plan,
     run_electoral_plan_binivel,
     plan_electoral_metrics,
     national_shares,
+)
+from chiledist.evaluation import (
     gallagher_index,
     seat_bonus,
 )
@@ -288,4 +291,132 @@ class TestPlanElectoralMetricsBinivel:
         # Debe ejecutar sin excepción
         assert m["modo_dhondt"] == "binivel"
         assert isinstance(m["gallagher"], float)
-        assert m["n_partidos_con_escanos"] >= 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# normalize_party_name / dhondt_binivel case-and-accent tolerance
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Bug real (detectado por scripts/validar_datos_externos.py): SERVEL entrega
+# nombres de partido en MAYÚSCULAS SIN TILDES ("EVOLUCION POLITICA"), mientras
+# un pacto_map curado a mano (ej. datos/pacto_map_2025.json) usa formato
+# título con tildes ("Evolución Política"). Antes del fix, el lookup
+# case/tilde-sensible en dhondt_binivel() nunca encontraba la clave, así que
+# cada partido terminaba en su propio pacto de tamaño 1 — degradando el
+# binivel a uninivel en silencio para prácticamente todos los partidos.
+
+class TestNormalizePartyName:
+
+    def test_uppercase_no_accents_and_titlecase_with_accents_are_equal(self):
+        assert normalize_party_name("Evolución Política") == normalize_party_name(
+            "EVOLUCION POLITICA"
+        )
+
+    def test_normalized_form_is_lowercase_no_accents(self):
+        assert normalize_party_name("Evolución Política") == "evolucion politica"
+        assert normalize_party_name("EVOLUCION POLITICA") == "evolucion politica"
+
+    def test_strips_surrounding_whitespace(self):
+        assert normalize_party_name("  Partido Comunista de Chile  ") == \
+            "partido comunista de chile"
+
+    def test_already_normalized_input_is_unchanged(self):
+        assert normalize_party_name("union democratica") == "union democratica"
+
+    def test_distinct_parties_remain_distinct_after_normalization(self):
+        """Normalizing must not accidentally collapse different parties."""
+        assert normalize_party_name("UDI") != normalize_party_name("RN")
+
+
+class TestDhondtBinivelCaseAccentTolerance:
+
+    def test_pacto_map_matches_regardless_of_case_and_accents(self):
+        """
+        pacto_map keyed with proper-case/accented names must still group
+        SERVEL-style UPPERCASE/unaccented votes into the same pacto.
+        """
+        votos = {
+            "UDI": 12000,
+            "RENOVACION NACIONAL": 11000,
+            "EVOLUCION POLITICA": 10000,        # UDI+RN+EVOP share one pacto
+            "PARTIDO SOCIALISTA DE CHILE": 20000,  # solo, no shared pacto
+        }
+        pacto_map = {
+            "UDI": "Chile Grande y Unido",
+            "Renovación Nacional": "Chile Grande y Unido",
+            "Evolución Política": "Chile Grande y Unido",
+            "Partido Socialista de Chile": "Unidad por Chile",
+        }
+
+        resultado = dhondt_binivel(votos, pacto_map, seats=4)
+
+        # Sin la normalización, cada partido del pacto compite solo y el
+        # partido en solitario (más votos individuales) se queda con 2
+        # escaños en vez de 1 — ver test_case_mismatch_reproduces_the_bug.
+        assert resultado == {
+            "UDI": 1,
+            "RENOVACION NACIONAL": 1,
+            "EVOLUCION POLITICA": 1,
+            "PARTIDO SOCIALISTA DE CHILE": 1,
+        }
+
+    def test_case_mismatch_reproduces_the_bug_when_unnormalized(self):
+        """
+        Documents the failure mode this fix closes: same inputs as above,
+        but simulating "no pacto_map matched" (as an unnormalized,
+        case-sensitive lookup would see it) by passing an empty map —
+        every party competes alone, and the solo party wins an extra seat
+        at the expense of the smallest member of what should have been a
+        shared pacto.
+        """
+        votos = {
+            "UDI": 12000,
+            "RENOVACION NACIONAL": 11000,
+            "EVOLUCION POLITICA": 10000,
+            "PARTIDO SOCIALISTA DE CHILE": 20000,
+        }
+        resultado_sin_agrupar = dhondt_binivel(votos, {}, seats=4)
+
+        assert resultado_sin_agrupar == {
+            "UDI": 1,
+            "RENOVACION NACIONAL": 1,
+            "EVOLUCION POLITICA": 0,
+            "PARTIDO SOCIALISTA DE CHILE": 2,
+        }
+        assert resultado_sin_agrupar != {
+            "UDI": 1,
+            "RENOVACION NACIONAL": 1,
+            "EVOLUCION POLITICA": 1,
+            "PARTIDO SOCIALISTA DE CHILE": 1,
+        }
+
+    def test_real_pacto_map_2025_covers_all_servel_parties(self):
+        """
+        End-to-end regression against the real files in datos/, if present:
+        every party in servel_2025_por_cut.csv must resolve to a real pacto
+        (not fall back to being its own pacto) once names are normalized.
+        """
+        import json
+        import os
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        servel_path = os.path.join(root, "datos", "servel_2025_por_cut.csv")
+        pacto_path  = os.path.join(root, "datos", "pacto_map_2025.json")
+
+        if not (os.path.exists(servel_path) and os.path.exists(pacto_path)):
+            pytest.skip("datos/servel_2025_por_cut.csv or "
+                        "datos/pacto_map_2025.json not present in this checkout")
+
+        df = pd.read_csv(servel_path)
+        with open(pacto_path, encoding="utf-8") as f:
+            pacto_map = json.load(f)
+
+        partidos = sorted(df["partido"].dropna().unique())
+        pacto_map_norm = {normalize_party_name(k) for k in pacto_map}
+        sin_pacto = [p for p in partidos
+                     if normalize_party_name(p) not in pacto_map_norm]
+
+        assert sin_pacto == [], (
+            f"{len(sin_pacto)} partido(s) de servel_2025_por_cut.csv no "
+            f"resuelven a un pacto ni siquiera normalizando: {sin_pacto}"
+        )

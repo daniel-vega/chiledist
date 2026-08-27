@@ -1,0 +1,2 @@
+region,region_name,scenario,decision_unit,preserve_mode,status,n_unidades,n_planes,ref_plan_id,ref_desv,comunas_partidas_ref,out_dir,run_dir,run_id
+13,R13_METROPOLITANA,contrafactual_apc_soft,ID_DIST,soft,ok,451,50000,7181,2.38,28,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_soft,./datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_soft/run_20260819_194308_97cf1309,97cf1309-8b9c-45b2-aa68-9059eb8ae89e

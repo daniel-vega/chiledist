@@ -47,6 +47,8 @@ Uso:
         --assignment-path datos/asignacion_vigente.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -63,21 +65,21 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.data import servel as sv
-from chiledist.data import census2024 as c24
+from chiledist.domain.data import servel as sv
+from chiledist.domain.data import census2024 as c24
 
 # ── Nombres cortos para los 28 distritos electorales vigentes ─────────────────
 NOMBRES_DIST = {
-    1: "Arica-Parinacota",  2: "Tarapacá",         3: "Antofagasta",
-    4: "Atacama",           5: "Coquimbo Norte",    6: "Coquimbo Sur",
-    7: "Aconcagua",         8: "Valparaíso Costa",  9: "Valparaíso Interior",
-    10: "Santiago Nor",     11: "Santiago Cen",     12: "Santiago Nor-Or",
-    13: "Santiago Or",      14: "Santiago Sur-Or",  15: "Santiago Sur",
-    16: "Santiago Pon-Nor", 17: "Santiago Pon-Sur", 18: "Santiago Sur2",
-    19: "O'Higgins Nor",    20: "O'Higgins Sur",    21: "Maule Norte",
-    22: "Maule Sur",        23: "Biobío Nor",        24: "Biobío Sur",
-    25: "Araucanía Nor",    26: "Araucanía Sur",    27: "Los Ríos-Los Lagos",
-    28: "Magallanes-Aysén",
+    1: "Arica y Parinacota", 2: "Tarapacá",           3: "Antofagasta",
+    4: "Atacama",            5: "Coquimbo",           6: "Valparaíso Costa",
+    7: "Valparaíso Interior", 8: "Santiago Nor-Oriente", 9: "Santiago Oriente",
+    10: "Santiago Norte",    11: "Santiago Centro",   12: "Santiago Nor-Poniente",
+    13: "Santiago Sur-Oriente", 14: "Santiago Sur",   15: "O'Higgins Norte",
+    16: "O'Higgins Sur",     17: "Maule Norte",       18: "Maule Sur",
+    19: "Ñuble",             20: "Biobío Norte",      21: "Biobío Sur",
+    22: "Araucanía Norte",   23: "Araucanía Sur",     24: "Los Ríos",
+    25: "Los Lagos Norte",   26: "Los Lagos Sur",     27: "Aysén",
+    28: "Magallanes",
 }
 
 # ── Paleta del proyecto ───────────────────────────────────────────────────────
@@ -111,6 +113,15 @@ def parse_args():
     p.add_argument("--demo",           action="store_true",
                    help="Datos sintéticos para todos los análisis (no requiere archivos externos)")
     p.add_argument("--skip-viz",       action="store_true")
+    p.add_argument("--magnitudes",     default="ley20840",
+                   choices=["ley20840", "censo2026", "2015", "2026"],
+                   help="Régimen de magnitudes vigente: 'ley20840' (alias: '2015') usa "
+                        "MAGNITUDES_LEGALES_LEY20840 + método Hamilton para A2 — "
+                        "reproduce el régimen histórico 2017/2021/2025; "
+                        "'censo2026' (alias: '2026') usa MAGNITUDES_CENSO2024_2026 + "
+                        "método D'Hondt para A2 (art. 121 Ley 18.700) — régimen vigente "
+                        "desde la Resolución O 129/2026 de SERVEL (18-ABR-2026). "
+                        "Default: ley20840.")
     return p.parse_args()
 
 
@@ -170,16 +181,42 @@ def _load_population(census_path: str, assignment: dict) -> pd.Series | None:
     """
     try:
         census = c24.load_census2024(census_path)
-        census["CUT"] = census["CUT"].astype(str)
+        # Normalizar CUT a 5 dígitos: load_census2024 devuelve CUT como int
+        # (sin cero a la izquierda), mientras que `assignment` (desde
+        # asignacion_vigente.json) usa strings de 5 dígitos. No importa cuál
+        # de las dos fuentes use 4 o 5 dígitos — normalize_cut() las hace
+        # comparables en ambos casos.
+        census["CUT"] = census["CUT"].map(cd.normalize_cut)
         pop_map = census.set_index("CUT")["personas"].to_dict()
 
         pop_por_dist: dict[int, int] = {}
         for cut_str, dist_num in assignment.items():
-            pop = pop_map.get(str(cut_str), pop_map.get(cut_str, 0))
+            pop = pop_map.get(cd.normalize_cut(cut_str), 0)
             pop_por_dist[int(dist_num)] = pop_por_dist.get(int(dist_num), 0) + int(pop)
         return pd.Series(pop_por_dist).sort_index()
     except Exception as e:
         print(f"  ⚠ No se pudo cargar población: {e}")
+        return None
+
+
+def _load_population_by_unit(census_path: str) -> pd.Series | None:
+    """
+    Carga población comunal SIN agregar a nivel de circunscripción.
+
+    A diferencia de _load_population() (que agrega a nivel de distrito,
+    usada por A1-A3), analisis_electoral() (A4) necesita población
+    indexada por unidad — la misma clave que `assignment` — porque
+    plan_electoral_metrics() hace su propia agregación a distrito
+    internamente a partir de `assignment`. CUT se normaliza a 5 dígitos
+    (chiledist.normalize_cut) para que calce con esas claves sin importar
+    si la fuente de origen usa CUT de 4 o 5 dígitos.
+    """
+    try:
+        census = c24.load_census2024(census_path)
+        census["CUT"] = census["CUT"].map(cd.normalize_cut)
+        return census.set_index("CUT")["personas"]
+    except Exception as e:
+        print(f"  ⚠ No se pudo cargar población por unidad: {e}")
         return None
 
 
@@ -191,8 +228,9 @@ def _load_assignment(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
-        # Normalizar: claves a str, valores a int
-        return {str(k): int(v) for k, v in raw.items()}
+        # Normalizar: claves a CUT canónico (5 dígitos), valores a int.
+        # Tolera que el JSON de origen tenga claves de 4 o 5 dígitos.
+        return {cd.normalize_cut(k): int(v) for k, v in raw.items()}
     except Exception as e:
         print(f"  ⚠ No se pudo cargar asignación: {e}")
         return None
@@ -281,11 +319,22 @@ def analisis_pxe(
 # Análisis A2 — Comparación magnitudes vigentes vs proporcionales
 # ──────────────────────────────────────────────────────────────────────────────
 
-def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
+def analisis_comparacion(
+    pop_por_distrito: pd.Series,
+    magnitudes_legales: dict | None = None,
+    method: str = "dhondt",
+) -> pd.DataFrame:
     """
     Tabla: magnitudes vigentes vs proporcionales al Censo 2024.
+
+    `method` selecciona el método de asignación proporcional usado para
+    calcular "magnitud_nueva" (D'Hondt art. 121 Ley 18.700 por defecto;
+    "hamilton" reproduce el cálculo histórico usado antes de validar
+    contra la Resolución O 129/2026).
     """
-    mag_dict = {k: v for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
+    mag_dict = {k: v for k, v in magnitudes_legales.items()
                 if k in pop_por_distrito.index}
     df = cd.comparar_magnitudes(
         pop_por_distrito,
@@ -293,6 +342,7 @@ def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
         total_seats=155,
         min_seats=3,
         max_seats=8,
+        method=method,
     )
     df["nombre"] = df["distrito"].map(NOMBRES_DIST).fillna(df["distrito"].apply(lambda d: f"D{d:02d}"))
 
@@ -316,12 +366,14 @@ def analisis_comparacion(pop_por_distrito: pd.Series) -> pd.DataFrame:
 # Análisis A3 — Umbral efectivo por circunscripción
 # ──────────────────────────────────────────────────────────────────────────────
 
-def analisis_umbrales() -> pd.DataFrame:
+def analisis_umbrales(magnitudes_legales: dict | None = None) -> pd.DataFrame:
     """
     Tabla de umbral efectivo para cada circunscripción según Ley 20840.
     """
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
     rows = []
-    for dist, mag in sorted(cd.MAGNITUDES_LEGALES_LEY20840.items()):
+    for dist, mag in sorted(magnitudes_legales.items()):
         mag_int = int(mag)
         T_U     = cd.umbral_efectivo(mag_int)
         T_L     = 1 / (2 * mag_int) if mag_int > 0 else 1.0
@@ -361,21 +413,44 @@ def analisis_umbrales() -> pd.DataFrame:
 def analisis_electoral(
     assignment: dict,
     votes_df: pd.DataFrame,
-    pop_por_distrito: pd.Series,
+    pop_by_unit: pd.Series,
     pacto_map: dict | None,
+    magnitudes_legales: dict | None = None,
 ) -> pd.DataFrame:
     """
     Ejecuta plan_electoral_metrics en modo 'fijas' y 'calculadas' y compara.
+
+    pop_by_unit debe estar indexada por la misma clave que `assignment`
+    (unit_id — CUT de 5 dígitos en modo real, número de distrito en
+    --demo), NO por distrito: plan_electoral_metrics() hace su propia
+    agregación a nivel de circunscripción internamente a partir de
+    `assignment`. Pasar población ya agregada por distrito (ej. la salida
+    de _load_population(), usada por A1-A3) hace que esa agregación
+    interna nunca encuentre las claves y las métricas de malapportionment
+    (pxe_max, pxe_min, ratio_max_min_pxe, peso_relativo_*) salgan en 0/NaN
+    sin ningún error — usa _load_population_by_unit() en su lugar.
     """
-    # Normalizar CUT en votes_df para que coincida con el assignment
+    # Normalizar CUT en votes_df para que coincida con las claves de
+    # `assignment`, sin tocar `assignment` (pop_by_unit más abajo depende
+    # de que sus claves no cambien). En modo real, `assignment` ya viene
+    # normalizado a CUT de 5 dígitos por _load_assignment() (desde
+    # asignacion_vigente.json), pero votes_df["CUT"] llega como int desde
+    # SERVEL — igualar solo el tipo (str(int) -> "1101") no basta si falta
+    # el cero a la izquierda ("01101"); normalize_cut() sí los hace
+    # comparables sin importar si la fuente usa CUT de 4 o 5 dígitos. En
+    # modo --demo, `assignment` usa enteros (unidad == número de distrito)
+    # y el comportamiento previo de igualar el tipo se mantiene intacto.
     votes_df = votes_df.copy()
-    votes_df["CUT"] = votes_df["CUT"].astype(type(list(assignment.keys())[0]))
+    sample_key = next(iter(assignment.keys()))
+    if isinstance(sample_key, str):
+        votes_df["CUT"] = votes_df["CUT"].map(cd.normalize_cut)
+    else:
+        votes_df["CUT"] = votes_df["CUT"].astype(type(sample_key))
 
-    # pop_by_unit: indexed por la misma clave que el assignment
-    pop_by_unit = pop_por_distrito.rename(index=lambda k: k)
-
+    if magnitudes_legales is None:
+        magnitudes_legales = cd.MAGNITUDES_LEGALES_LEY20840
     mag_series = pd.Series(
-        {k: int(v) for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+        {k: int(v) for k, v in magnitudes_legales.items()
          if k in set(assignment.values())}
     )
 
@@ -616,10 +691,21 @@ def main():
     print(f"\nchiledist — Malapportionment (H3)")
     print(f"  output: {out_dir}")
 
+    es_ley20840 = args.magnitudes in ("ley20840", "2015")
+    magnitudes_legales   = cd.MAGNITUDES_LEGALES_LEY20840 if es_ley20840 else cd.MAGNITUDES_CENSO2024_2026
+    metodo_comparacion   = "hamilton" if es_ley20840 else "dhondt"
+    print(f"  magnitudes: "
+          + ("MAGNITUDES_LEGALES_LEY20840, Ley 20.840 (método A2: hamilton — reproduce cálculo histórico)"
+             if es_ley20840 else
+             "MAGNITUDES_CENSO2024_2026, Resolución O 129/2026 SERVEL (método A2: dhondt — art. 121 Ley 18.700)"))
+
     # ── Cargar datos ──────────────────────────────────────────────────────────
     if args.demo:
         pop_por_distrito, assignment, votes_df = _demo_data()
         pacto_map = None
+        # En --demo, unidad == distrito (asignación trivial), así que la
+        # misma serie sirve como población por unidad para A4.
+        pop_by_unit = pop_por_distrito
     else:
         # Intentar rutas por defecto si no se especifican
         def _default(provided, *candidates):
@@ -654,10 +740,14 @@ def main():
             )
             sys.exit(1)
 
-        # Cargar población
+        # Cargar población: agregada por distrito (A1-A3) y por unidad (A4 —
+        # plan_electoral_metrics hace su propia agregación vía `assignment`
+        # y necesita la población indexada por CUT, no por distrito).
         pop_por_distrito = None
+        pop_by_unit = None
         if census_path:
             pop_por_distrito = _load_population(census_path, assignment)
+            pop_by_unit = _load_population_by_unit(census_path)
         if pop_por_distrito is None:
             print(
                 "\n  ⚠ Sin población comunal (--census-path).\n"
@@ -675,12 +765,12 @@ def main():
     # ── Magnitudes vigentes ───────────────────────────────────────────────────
     districts_en_assignment = set(assignment.values())
     magnitudes = pd.Series(
-        {k: int(v) for k, v in cd.MAGNITUDES_LEGALES_LEY20840.items()
+        {k: int(v) for k, v in magnitudes_legales.items()
          if k in districts_en_assignment}
     )
 
     # Si la asignación no cubre todos los 28 distritos, avisamos
-    faltantes = set(cd.MAGNITUDES_LEGALES_LEY20840.keys()) - districts_en_assignment
+    faltantes = set(magnitudes_legales.keys()) - districts_en_assignment
     if faltantes:
         print(f"  ⚠ {len(faltantes)} distritos sin cobertura en la asignación: "
               f"{sorted(faltantes)[:5]}{'...' if len(faltantes) > 5 else ''}")
@@ -692,17 +782,18 @@ def main():
     df_pxe = analisis_pxe(pop_por_distrito, magnitudes)
 
     # ── Análisis A2 ───────────────────────────────────────────────────────────
-    df_comp = analisis_comparacion(pop_por_distrito)
+    df_comp = analisis_comparacion(pop_por_distrito, magnitudes_legales, metodo_comparacion)
 
     # ── Análisis A3 ───────────────────────────────────────────────────────────
-    df_umb = analisis_umbrales()
+    df_umb = analisis_umbrales(magnitudes_legales)
 
     # ── Análisis A4 (opcional) ────────────────────────────────────────────────
     df_elec = None
     if votes_df is not None:
         try:
             df_elec = analisis_electoral(assignment, votes_df,
-                                         pop_por_distrito, pacto_map)
+                                         pop_by_unit, pacto_map,
+                                         magnitudes_legales)
         except Exception as e:
             import traceback
             print(f"  ⚠ A4 falló: {e}")

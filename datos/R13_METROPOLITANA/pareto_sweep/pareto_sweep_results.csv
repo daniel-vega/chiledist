@@ -1,0 +1,12 @@
+escenario,tipo_reforma,penalty,n_planes,point_type,max_dev_pob_pct_median,n_comunas_partidas_median,split_severity_median,pp_promedio_median,pop_afectada_pct_median,cut_edges_median,is_pareto
+legal_comunas,vigente,0.0,10000,ensemble_median,9.004,0.0,0.0,0.2896,0.0,69.0,True
+apc_comunas_preservadas,control_metodologico,0.0,10000,ensemble_median,9.132,0.0,0.0,0.3259,0.0,201.0,False
+contrafactual_apc_libre,contrafactual_fuerte,0.0,10000,ensemble_median,9.132,28.0,0.9058,0.2233,0.6822,272.0,False
+apc_soft_p0_00,contrafactual_intermedio,0.0,10000,reference_plan,5.039,24.0,1.0018,,0.6665,298.0,True
+apc_soft_p0_25,contrafactual_intermedio,0.25,10000,reference_plan,6.778,32.0,0.9705,,0.7593,261.0,False
+apc_soft_p0_50,contrafactual_intermedio,0.5,10000,reference_plan,6.385,30.0,0.6802,,0.6364,261.0,False
+apc_soft_p1_00,contrafactual_intermedio,1.0,10000,reference_plan,7.781,22.0,0.7438,,0.6165,232.0,True
+apc_soft_p2_50,contrafactual_intermedio,2.5,10000,reference_plan,4.125,26.0,0.8054,,0.6273,265.0,True
+apc_soft_p5_00,contrafactual_intermedio,5.0,10000,reference_plan,5.714,25.0,0.647,,0.5212,226.0,False
+apc_soft_p10_00,contrafactual_intermedio,10.0,10000,reference_plan,9.998,25.0,0.5757,,0.543,226.0,False
+apc_soft_p25_00,contrafactual_intermedio,25.0,10000,reference_plan,9.72,18.0,0.4265,,0.3829,222.0,False

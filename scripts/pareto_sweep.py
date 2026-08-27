@@ -28,11 +28,14 @@ Salidas en datos/<REGION>/pareto_sweep/:
     pareto_pop_afectada.png     — si pop_afectada_pct está disponible
 
 Uso:
-    python scripts/pareto_sweep.py --base-dir . --region 13
-    python scripts/pareto_sweep.py --base-dir . --region 13 \\
+    python scripts/pareto_sweep.py --base-dir . --regiones 13
+    python scripts/pareto_sweep.py --base-dir . --regiones 13 \\
         --penalties 0.0,0.1,0.25,0.5,1.0,2.0 \\
         --n-steps 5000 --n-distritos 8
-    python scripts/pareto_sweep.py --base-dir . --region 13 \\
+    python scripts/pareto_sweep.py --base-dir . --regiones 13 \\
+        --pop-source censo2024 \\
+        --census-path datos/poblacion_comunal_censo2024.csv
+    python scripts/pareto_sweep.py --base-dir . --regiones 13 \\
         --skip-run    # solo leer resultados existentes y graficar
 """
 
@@ -53,7 +56,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 import chiledist as cd
-from chiledist.config import ScenarioConfig, SCENARIOS
+from chiledist.domain.scenario import ScenarioConfig
+from chiledist.rules.scenario_rules import SCENARIOS
 
 REGION_NOMBRES = {
     1:  "R01_TARAPACA",    2:  "R02_ANTOFAGASTA",
@@ -95,12 +99,21 @@ def parse_args():
                    help="Directorio raíz con SHP_APC2023_R*")
     p.add_argument("--output-dir",  default=None,
                    help="Directorio base de salida (default: <base-dir>/datos)")
-    p.add_argument("--region",      type=int, default=13,
-                   help="Código de región (default: 13)")
+    p.add_argument("--regiones",    default="13",
+                   help="Código(s) de región separados por coma, o 'todas' "
+                        "(default: 13)")
+    p.add_argument("--region",      type=int, default=None,
+                   help="[Obsoleto] usar --regiones. Alias de compatibilidad "
+                        "para un único código de región.")
     p.add_argument("--penalties",   default=None,
                    help="Lista de split_penalty para apc_soft, "
                         "separados por coma (default: 0.0,0.1,0.25,0.5,1.0,2.0)")
-    p.add_argument("--n-distritos", type=int, default=8)
+    p.add_argument("--n-distritos", type=int, default=None,
+                   help="Número de particiones territoriales a generar (NO "
+                        "la magnitud electoral 3-8 de Ley 20.840). Default: "
+                        "n_districts de cada escenario/anclaje del barrido — "
+                        "no se homogeneiza entre configuraciones salvo que "
+                        "se pase este flag explícitamente.")
     p.add_argument("--pop-tol",     type=float, default=0.15)
     p.add_argument("--n-steps",     type=int, default=5000)
     p.add_argument("--seed",        type=int, default=42)
@@ -109,6 +122,14 @@ def parse_args():
     p.add_argument("--skip-viz",    action="store_true")
     p.add_argument("--no-anchors",  action="store_true",
                    help="Omitir escenarios anclaje (legal, apc_strict, apc_free)")
+
+    pg = p.add_argument_group("Fuente de población")
+    pg.add_argument("--pop-source", default="viviendas",
+                    choices=["viviendas", "censo2024", "padron", "manzana"],
+                    help="Fuente de población (default: viviendas)")
+    pg.add_argument("--census-path", default=None,
+                    help="Ruta a poblacion_comunal_censo2024.csv")
+
     return p.parse_args()
 
 
@@ -116,6 +137,12 @@ def parse_penalties(s: str | None) -> list[float]:
     if s is None:
         return PENALTIES_DEFAULT
     return [float(x.strip()) for x in s.split(",")]
+
+
+def parse_regiones(regiones_str: str) -> list[int]:
+    if regiones_str.strip().lower() == "todas":
+        return sorted(REGION_NOMBRES.keys())
+    return [int(r.strip()) for r in regiones_str.split(",")]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -172,18 +199,24 @@ def run_or_load(
     region_code: int,
     base_dir: str,
     output_base: str,
-    n_distritos: int,
+    n_distritos: int | None,
     pop_tol: float,
     n_steps: int,
     seed: int,
     skip_run: bool,
     skip_viz: bool,
     analizar_region,
+    pop_source: str = "viviendas",
+    census_path: str | None = None,
 ) -> pd.DataFrame | None:
     """
     Ejecuta redistritaje para el escenario (o carga el CSV existente si
     skip_run=True o el archivo ya existe).
     Devuelve el DataFrame de ensemble_stats, o None si falló.
+
+    n_distritos: si es None, se usa scenario.n_districts (cada punto del
+    barrido — anclajes y variantes apc_soft_pX — conserva el suyo); si se
+    pasa explícito, se aplica a este escenario también.
     """
     region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
     ens_path = os.path.join(
@@ -196,9 +229,12 @@ def run_or_load(
         return None
 
     if not skip_run:
+        n_distritos_efectivo = (
+            n_distritos if n_distritos is not None else scenario.n_districts
+        )
         sc = dataclasses.replace(
             scenario,
-            n_districts=n_distritos,
+            n_districts=n_distritos_efectivo,
             pop_tolerance=pop_tol,
             n_steps=n_steps,
             seed=seed,
@@ -208,12 +244,14 @@ def run_or_load(
                 region_code=region_code,
                 base_dir=base_dir,
                 output_base=output_base,
-                n_distritos=n_distritos,
+                n_distritos=n_distritos_efectivo,
                 pop_tol=pop_tol,
                 n_steps=n_steps,
                 seed=seed,
                 skip_viz=skip_viz,
                 scenario=sc,
+                pop_source=pop_source,
+                census_path=census_path,
             )
         except Exception as e:
             import traceback
@@ -261,7 +299,18 @@ def ensemble_medians(df: pd.DataFrame, scenario: ScenarioConfig) -> dict:
     )
 
     if use_ref:
-        ref = df.loc[df["score"].idxmax()]
+        # Restringido a filas con n_comunas_partidas medido (submuestra de 50
+        # planes en redistritaje.py) para que el reference_plan nunca tenga
+        # NaN en las métricas de partición. Limitación conocida: pp_promedio
+        # (submuestra aparte, de 30 planes) puede seguir en NaN aquí — no se
+        # exige también su intersección porque angostaría demasiado el pool
+        # de planes candidatos y sesgaría más al reference_plan elegido.
+        df_con_splits = df[df["n_comunas_partidas"].notna()]
+        if len(df_con_splits) == 0:
+            # fallback: usar todas las filas (comportamiento actual)
+            ref = df.loc[df["score"].idxmax()]
+        else:
+            ref = df_con_splits.loc[df_con_splits["score"].idxmax()]
         row["point_type"] = "reference_plan"
         for col in SWEEP_METRICS:
             if col in df.columns and pd.notna(ref[col]):
@@ -442,18 +491,25 @@ def main():
     args        = parse_args()
     base_dir    = args.base_dir
     output_base = args.output_dir or os.path.join(base_dir, "datos")
-    region_code = args.region
-    region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
+
+    regiones_arg = args.regiones
+    if args.region is not None:
+        print(f"  ⚠ --region está obsoleto, use --regiones (usando región {args.region})")
+        regiones_arg = str(args.region)
+    regiones = parse_regiones(regiones_arg)
+
     penalties   = parse_penalties(args.penalties)
-    out_dir     = os.path.join(output_base, region_name, "pareto_sweep")
-    os.makedirs(out_dir, exist_ok=True)
 
     print(f"\nchiledist — Barrido Pareto (H2)")
-    print(f"  región      : {region_code} ({region_name})")
+    print(f"  regiones    : {regiones}")
     print(f"  penalties   : {penalties}")
-    print(f"  n_distritos : {args.n_distritos}")
+    if args.n_distritos is not None:
+        print(f"  n_distritos : {args.n_distritos}  "
+              f"(--n-distritos explícito, aplica a todas las configuraciones)")
+    else:
+        print(f"  n_distritos : según cada escenario/anclaje (scenario.n_districts)")
     print(f"  n_steps     : {args.n_steps}")
-    print(f"  output      : {out_dir}")
+    print(f"  pop_source  : {args.pop_source}")
 
     scenarios = build_sweep_scenarios(penalties, include_anchors=not args.no_anchors)
     print(f"  escenarios  : {[s.name for s in scenarios]}")
@@ -462,76 +518,88 @@ def main():
     if not args.skip_run:
         analizar_region = _load_analizar_region()
 
-    # ── Ejecutar o cargar cada configuración ─────────────────────────────────
-    rows = []
-    for sc in scenarios:
-        print(f"\n{'─'*50}")
-        print(f"  Configuración: {sc.name}  (penalty={sc.split_penalty})")
+    for region_code in regiones:
+        region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
+        out_dir     = os.path.join(output_base, region_name, "pareto_sweep")
+        os.makedirs(out_dir, exist_ok=True)
 
-        df_ens = run_or_load(
-            scenario=sc,
-            region_code=region_code,
-            base_dir=base_dir,
-            output_base=output_base,
-            n_distritos=args.n_distritos,
-            pop_tol=args.pop_tol,
-            n_steps=args.n_steps,
-            seed=args.seed,
-            skip_run=args.skip_run,
-            skip_viz=args.skip_viz,
-            analizar_region=analizar_region,
-        )
+        print(f"\n{'='*60}")
+        print(f"  Región {region_code} ({region_name})")
+        print(f"  output      : {out_dir}")
+        print(f"{'='*60}")
 
-        if df_ens is None:
-            print(f"  ⚠ Omitido: {sc.name}")
+        # ── Ejecutar o cargar cada configuración ─────────────────────────────
+        rows = []
+        for sc in scenarios:
+            print(f"\n{'─'*50}")
+            print(f"  Configuración: {sc.name}  (penalty={sc.split_penalty})")
+
+            df_ens = run_or_load(
+                scenario=sc,
+                region_code=region_code,
+                base_dir=base_dir,
+                output_base=output_base,
+                n_distritos=args.n_distritos,
+                pop_tol=args.pop_tol,
+                n_steps=args.n_steps,
+                seed=args.seed,
+                skip_run=args.skip_run,
+                skip_viz=args.skip_viz,
+                analizar_region=analizar_region,
+                pop_source=args.pop_source,
+                census_path=args.census_path,
+            )
+
+            if df_ens is None:
+                print(f"  ⚠ Omitido: {sc.name}")
+                continue
+
+            row = ensemble_medians(df_ens, sc)
+            rows.append(row)
+            print(f"  n_planes={row['n_planes']}  "
+                  f"dev={row['max_dev_pob_pct_median']}%  "
+                  f"splits={row['n_comunas_partidas_median']}  "
+                  f"pop_afect={row['pop_afectada_pct_median']}")
+
+        if not rows:
+            print(f"\n⚠ Sin datos para {region_name}. Omitiendo región.")
             continue
 
-        row = ensemble_medians(df_ens, sc)
-        rows.append(row)
-        print(f"  n_planes={row['n_planes']}  "
-              f"dev={row['max_dev_pob_pct_median']}%  "
-              f"splits={row['n_comunas_partidas_median']}  "
-              f"pop_afect={row['pop_afectada_pct_median']}")
+        # ── Tabla resumen + frontera Pareto ───────────────────────────────────
+        df_pts = pd.DataFrame(rows)
+        df_pts = compute_pareto(df_pts)
 
-    if not rows:
-        print("\n⚠ Sin datos para analizar. Abortando.")
-        return
+        # Guardar tabla completa
+        full_path = os.path.join(out_dir, "pareto_sweep_results.csv")
+        df_pts.to_csv(full_path, index=False)
+        print(f"\nTabla completa guardada: {full_path}")
 
-    # ── Tabla resumen + frontera Pareto ───────────────────────────────────────
-    df_pts = pd.DataFrame(rows)
-    df_pts = compute_pareto(df_pts)
+        # Guardar solo frontera
+        pareto_path = os.path.join(out_dir, "pareto_frontier.csv")
+        df_pts[df_pts["is_pareto"]].to_csv(pareto_path, index=False)
 
-    # Guardar tabla completa
-    full_path = os.path.join(out_dir, "pareto_sweep_results.csv")
-    df_pts.to_csv(full_path, index=False)
-    print(f"\nTabla completa guardada: {full_path}")
+        # ── Imprimir resumen ────────────────────────────────────────────────
+        print(f"\n{'='*60}")
+        print(f"  RESULTADOS DEL BARRIDO — {region_name}")
+        print(f"{'='*60}")
+        cols_show = ["escenario", "penalty", "point_type",
+                     "max_dev_pob_pct_median", "n_comunas_partidas_median",
+                     "pop_afectada_pct_median", "is_pareto"]
+        print(df_pts[[c for c in cols_show if c in df_pts.columns]]
+              .sort_values("max_dev_pob_pct_median")
+              .to_string(index=False))
 
-    # Guardar solo frontera
-    pareto_path = os.path.join(out_dir, "pareto_frontier.csv")
-    df_pts[df_pts["is_pareto"]].to_csv(pareto_path, index=False)
+        n_pareto = df_pts["is_pareto"].sum()
+        print(f"\nConfiguraciones Pareto-óptimas: {n_pareto}/{len(df_pts)}")
+        print(f"Tabla guardada: {full_path}")
+        print(f"Frontera Pareto guardada: {pareto_path}")
 
-    # ── Imprimir resumen ──────────────────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print(f"  RESULTADOS DEL BARRIDO — {region_name}")
-    print(f"{'='*60}")
-    cols_show = ["escenario", "penalty", "point_type",
-                 "max_dev_pob_pct_median", "n_comunas_partidas_median",
-                 "pop_afectada_pct_median", "is_pareto"]
-    print(df_pts[[c for c in cols_show if c in df_pts.columns]]
-          .sort_values("max_dev_pob_pct_median")
-          .to_string(index=False))
+        # ── Visualizaciones ─────────────────────────────────────────────────
+        if not args.skip_viz:
+            plot_pareto(df_pts, out_dir, region_name)
 
-    n_pareto = df_pts["is_pareto"].sum()
-    print(f"\nConfiguraciones Pareto-óptimas: {n_pareto}/{len(df_pts)}")
-    print(f"Tabla guardada: {full_path}")
-    print(f"Frontera Pareto guardada: {pareto_path}")
-
-    # ── Visualizaciones ───────────────────────────────────────────────────────
-    if not args.skip_viz:
-        plot_pareto(df_pts, out_dir, region_name)
-
-        if df_pts["pop_afectada_pct_median"].notna().sum() >= 2:
-            plot_pop_afectada(df_pts, out_dir, region_name)
+            if df_pts["pop_afectada_pct_median"].notna().sum() >= 2:
+                plot_pop_afectada(df_pts, out_dir, region_name)
 
 
 if __name__ == "__main__":

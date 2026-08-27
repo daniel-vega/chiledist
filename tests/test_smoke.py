@@ -10,16 +10,11 @@ Ejecutar:
 """
 
 import dataclasses
-import sys
 import unittest
-import unittest.mock as mock
-
-# ── Mock de gerrychain para que los imports no fallen ─────────────────────────
-if "gerrychain" not in sys.modules:
-    sys.modules["gerrychain"] = mock.MagicMock()
 
 import chiledist as cd
-from chiledist.config import ScenarioConfig, SCENARIO_LEGAL, SCENARIO_APC_FREE
+from chiledist.domain.scenario import ScenarioConfig
+from chiledist.rules.scenario_rules import SCENARIO_LEGAL, SCENARIO_APC_FREE
 
 
 class TestScenarioLegalValidates(unittest.TestCase):
@@ -162,14 +157,14 @@ class TestImportWithoutGerrychain(unittest.TestCase):
         self.assertIsNotNone(cd.SCENARIO_APC_SOFT)
 
     def test_plan_ensemble_importable(self):
-        from chiledist.persistence import PlanEnsemble
+        from chiledist.domain.persistence import PlanEnsemble
         self.assertTrue(hasattr(PlanEnsemble, "load"))
         self.assertTrue(hasattr(PlanEnsemble, "save"))
         self.assertTrue(hasattr(PlanEnsemble, "filter"))
         self.assertTrue(hasattr(PlanEnsemble, "sample"))
 
     def test_chiledist_map_importable(self):
-        from chiledist.map import ChileDistMap
+        from chiledist.domain.map import ChileDistMap
         self.assertTrue(hasattr(ChileDistMap, "from_apc"))
         self.assertTrue(hasattr(ChileDistMap, "to_dict"))
 

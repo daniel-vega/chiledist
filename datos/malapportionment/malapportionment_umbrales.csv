@@ -3,27 +3,27 @@ distrito,nombre,magnitud,T_U,T_L,T_e,categoria
 2,Tarapacá,3,0.25,0.1667,0.2041,Alto
 27,Los Ríos-Los Lagos,3,0.25,0.1667,0.2041,Alto
 28,Magallanes-Aysén,3,0.25,0.1667,0.2041,Alto
-18,Santiago Sur2,4,0.2,0.125,0.1581,Alto
+25,Araucanía Nor,4,0.2,0.125,0.1581,Alto
 16,Santiago Pon-Nor,4,0.2,0.125,0.1581,Alto
 22,Maule Sur,4,0.2,0.125,0.1581,Alto
-25,Araucanía Nor,4,0.2,0.125,0.1581,Alto
-13,Santiago Or,5,0.1667,0.1,0.1291,Medio
+18,Santiago Sur2,4,0.2,0.125,0.1581,Alto
 15,Santiago Sur,5,0.1667,0.1,0.1291,Medio
-3,Antofagasta,5,0.1667,0.1,0.1291,Medio
-4,Atacama,5,0.1667,0.1,0.1291,Medio
 21,Maule Norte,5,0.1667,0.1,0.1291,Medio
-24,Biobío Sur,5,0.1667,0.1,0.1291,Medio
+3,Antofagasta,5,0.1667,0.1,0.1291,Medio
 26,Araucanía Sur,5,0.1667,0.1,0.1291,Medio
+24,Biobío Sur,5,0.1667,0.1,0.1291,Medio
+13,Santiago Or,5,0.1667,0.1,0.1291,Medio
+4,Atacama,5,0.1667,0.1,0.1291,Medio
 19,O'Higgins Nor,5,0.1667,0.1,0.1291,Medio
-14,Santiago Sur-Or,6,0.1429,0.0833,0.1091,Medio
 11,Santiago Cen,6,0.1429,0.0833,0.1091,Medio
-5,Coquimbo Norte,7,0.125,0.0714,0.0945,Bajo
-9,Valparaíso Interior,7,0.125,0.0714,0.0945,Bajo
-12,Santiago Nor-Or,7,0.125,0.0714,0.0945,Bajo
-17,Santiago Pon-Sur,7,0.125,0.0714,0.0945,Bajo
+14,Santiago Sur-Or,6,0.1429,0.0833,0.1091,Medio
 23,Biobío Nor,7,0.125,0.0714,0.0945,Bajo
-8,Valparaíso Costa,8,0.1111,0.0625,0.0833,Bajo
-10,Santiago Nor,8,0.1111,0.0625,0.0833,Bajo
-6,Coquimbo Sur,8,0.1111,0.0625,0.0833,Bajo
-7,Aconcagua,8,0.1111,0.0625,0.0833,Bajo
+5,Coquimbo Norte,7,0.125,0.0714,0.0945,Bajo
+12,Santiago Nor-Or,7,0.125,0.0714,0.0945,Bajo
+9,Valparaíso Interior,7,0.125,0.0714,0.0945,Bajo
+17,Santiago Pon-Sur,7,0.125,0.0714,0.0945,Bajo
 20,O'Higgins Sur,8,0.1111,0.0625,0.0833,Bajo
+6,Coquimbo Sur,8,0.1111,0.0625,0.0833,Bajo
+10,Santiago Nor,8,0.1111,0.0625,0.0833,Bajo
+8,Valparaíso Costa,8,0.1111,0.0625,0.0833,Bajo
+7,Aconcagua,8,0.1111,0.0625,0.0833,Bajo

@@ -13,10 +13,15 @@ Covered scenarios:
 None of these tests require SHP_APC2023, Censo 2024, or SERVEL data.
 
 Note on run_chains.py subprocess:
-    The full CLI of run_chains.py calls _chain_output_dir(), which imports
-    `REGIONES_APC` from `chiledist.data`. That symbol does not exist in the
-    current release, making --skip-run via subprocess non-functional.
-    The internal functions are tested directly instead.
+    _chain_output_dir() used to import `REGIONES_APC` from `chiledist.data`,
+    a symbol that didn't exist at the time, making the full CLI
+    non-functional even via --skip-run (see tests/test_entrypoints_n_distritos.py
+    for the n_distritos audit this was found alongside). `chiledist.domain.data`
+    (formerly `chiledist.data`) now exports REGIONES_APC (see
+    tests/test_regiones_apc.py), and
+    run_chains.py/smc_pipeline.py use it for region directory names. The
+    internal functions are still tested directly here rather than via
+    subprocess, since a full run requires real SHP_APC2023 data.
 """
 
 import importlib.util

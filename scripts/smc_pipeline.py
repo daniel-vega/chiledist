@@ -43,7 +43,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 import chiledist as cd
-from chiledist.config import load_scenario, SCENARIOS
+from chiledist.domain.scenario import load_scenario
+from chiledist.rules.scenario_rules import SCENARIOS
+from chiledist.domain.data import REGIONES_APC
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -51,17 +53,33 @@ from chiledist.config import load_scenario, SCENARIOS
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _smc_output_dir(base_dir: str, region_code: int, scenario_name: str) -> str:
-    from chiledist.data import REGIONES_APC
-    region_nombre = REGIONES_APC.get(region_code, {}).get("nombre", f"R{region_code}")
+    region_nombre = _region_nombre(region_code)
     return os.path.join(base_dir, "datos", region_nombre, "smc", scenario_name)
 
 
 def _region_nombre(region_code: int) -> str:
-    try:
-        from chiledist.data import REGIONES_APC
-        return REGIONES_APC.get(region_code, {}).get("nombre", f"R{region_code}")
-    except Exception:
-        return f"R{region_code}"
+    return REGIONES_APC.get(region_code, {}).get(
+        "nombre_carpeta", f"R{region_code:02d}"
+    )
+
+
+def _resolve_scenario_n_districts(scenario_name: str, base_dir: str):
+    """
+    Resuelve scenario.n_districts para `scenario_name` reutilizando
+    exclusivamente la infraestructura de escenarios ya existente (SCENARIOS,
+    load_scenario + scenarios/<name>.yml) — el mismo mecanismo de resolución
+    que ya usa run_chains.py. No introduce ninguna regla ni mapping nuevo.
+
+    Devuelve None si `scenario_name` no puede resolverse inequívocamente a
+    un ScenarioConfig con la arquitectura actual (caso que el caller debe
+    tratar como configuración pendiente, no rellenar con un fallback).
+    """
+    if scenario_name in SCENARIOS:
+        return SCENARIOS[scenario_name].n_districts
+    yml_path = os.path.join(base_dir, "scenarios", f"{scenario_name}.yml")
+    if os.path.exists(yml_path):
+        return load_scenario(yml_path).n_districts
+    return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -330,7 +348,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pop-col", default="personas",
                    help="Columna de población")
     p.add_argument("--n-districts", type=int, default=None,
-                   help="Número de distritos (None = inferido de la región)")
+                   help="Número de particiones territoriales a generar (NO "
+                        "la magnitud electoral 3-8 de Ley 20.840). Default: "
+                        "n_districts del escenario, si --scenario resuelve a "
+                        "uno conocido en SCENARIOS o scenarios/<nombre>.yml.")
     p.add_argument("--n-sims", type=int, default=1_000,
                    help="Número de simulaciones SMC en el script R")
     p.add_argument("--extra-cols", nargs="*", default=None,
@@ -370,15 +391,19 @@ def main():
             pop_col=args.pop_col,
         )
 
-        # ── Inferir n_districts si no se da ───────────────────────────────────
+        # ── Resolver n_districts: --n-districts explícito > scenario.n_districts ──
         n_districts = args.n_districts
         if n_districts is None:
-            try:
-                from chiledist.data import REGIONES_APC
-                n_districts = REGIONES_APC.get(region_code, {}).get("n_distritos", 8)
-            except Exception:
-                n_districts = 8
-            print(f"  n_districts inferido: {n_districts}")
+            n_districts = _resolve_scenario_n_districts(scenario_name, base)
+            if n_districts is None:
+                raise ValueError(
+                    f"No se pudo resolver n_districts: --n-districts no fue "
+                    f"pasado y '{scenario_name}' no es un escenario conocido "
+                    f"(SCENARIOS={list(SCENARIOS.keys())}) ni existe "
+                    f"scenarios/{scenario_name}.yml. Pasa --n-districts "
+                    f"explícitamente o usa un --scenario resoluble."
+                )
+            print(f"  n_districts desde escenario '{scenario_name}': {n_districts}")
 
         # ── Paso 3: exportar y generar script R ───────────────────────────────
         r_path = export_and_generate_script(

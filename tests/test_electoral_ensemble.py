@@ -14,7 +14,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from chiledist.electoral_ensemble import (
+from chiledist.inference.electoral_ensemble import (
     _dist_stats,
     _normalize_assignments,
     run_electoral_ensemble,

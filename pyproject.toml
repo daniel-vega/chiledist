@@ -1,0 +1,94 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chiledist"
+description = "Redistritaje electoral y analisis distrital de Chile (APC 2023, Censo 2024, D'Hondt binivel)."
+readme = "README.md"
+requires-python = ">=3.11"
+dynamic = ["version"]
+
+# Auditoria de imports reales (agosto 2026) — verificado por grep de imports
+# en chiledist/, no por cobertura de tests (los tests pueden pasar sin que
+# una dependencia este declarada, si ya esta instalada por otra razon en el
+# entorno de desarrollo). Comando y resultado exactos:
+#
+#   grep -rhoE "^\s*(import|from) [a-zA-Z_][a-zA-Z0-9_.]*" chiledist/ \
+#     | awk '{print $2}' | cut -d. -f1 | sort -u
+#
+# No-stdlib encontrado: geopandas, gerrychain, libpysal, matplotlib,
+# networkx, numpy, pandas, pyarrow, scipy, shapely, yaml — los 11 ya
+# estaban cubiertos abajo (yaml -> pyyaml). Nada nuevo que agregar.
+#
+# Limitacion conocida de este metodo: no detecta dependencias invocadas por
+# nombre de string en vez de `import` (ej. `pd.read_excel(engine="openpyxl")`
+# en domain/data/servel|tricel) — openpyxl se agrego por lectura directa del
+# codigo, no porque este grep lo hubiera encontrado. Cualquier futura
+# dependencia de ese tipo (motores/backends invocados por string) necesita
+# revision manual, este grep solo no basta.
+dependencies = [
+    # ── Datos y algebra ──────────────────────────────────────────────────
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "pandas==3.0.3",
+    # ── Geoespacial (orden: fiona antes de geopandas, como en setup_env.sh) ─
+    "shapely==2.1.2",
+    "pyproj==3.7.2",
+    "fiona==1.10.1",
+    "pyogrio==0.12.1",
+    "geopandas==1.1.3",
+    # ── Grafos y visualizacion ───────────────────────────────────────────
+    "networkx==3.6.1",
+    "matplotlib==3.11.0",
+    # ── Analisis espacial (autocorrelacion.py: Moran, LISA, G*) ─────────
+    "libpysal==4.14.1",
+    "esda==2.6.0",
+    # ── Persistencia de planes (assignments.parquet) ────────────────────
+    "pyarrow>=14.0.0",
+    # ── Machine learning (dependencia de gerrychain) ────────────────────
+    "scikit-learn==1.9.0",
+    # ── Redistritaje (ReCom) ─────────────────────────────────────────────
+    "gerrychain==0.3.2",
+    # ── Verificadas contra el codigo real, no en la lista original de
+    #    setup_env.sh pero requeridas para que `import chiledist` y los
+    #    flujos documentados funcionen de punta a punta:
+    "pyyaml>=6.0",   # chiledist/domain/scenario.py: load_scenario/save_scenario
+                      # (--scenario-file en redistritaje.py). Import lazy con
+                      # mensaje de error propio si falta, pero es parte del
+                      # flujo de escenarios documentado en el README.
+    "openpyxl==3.1.5",  # chiledist/domain/data/servel/__init__.py,
+                         # chiledist/domain/data/tricel/__init__.py:
+                         # pd.read_excel(..., engine="openpyxl") — requerido
+                         # por import_candidates()/import_proclamations()/
+                         # import_votes(), parte de la API publica (capa
+                         # domain.data, ver README § Datos externos).
+]
+
+[project.optional-dependencies]
+# No hay extra "viz": verificado contra chiledist/viz.py y los plots.py de
+# cada capa (inference/, evaluation/malapportionment/) — ninguno importa
+# nada mas alla de matplotlib/numpy/pandas/scipy, ya en dependencies. No
+# existe una separacion real de dependencias solo-de-visualizacion.
+
+# Bridge Python -> R/redist (scripts/smc_pipeline.py, chiledist.engines.samplers.smc).
+# No hay paquetes Python adicionales — el puente es generacion de script R +
+# subprocess, no rpy2 ni equivalente (verificado: sin imports de terceros en
+# engines/samplers/smc.py mas alla de pandas/scipy, ya en dependencies).
+# Requiere Rscript + el paquete R 'redist' instalados fuera de pip — ver el
+# chequeo opcional de Rscript en setup_env.sh y https://alarm-redist.org.
+smc = []
+
+dev = [
+    "pytest",
+    "pytest-randomly>=3.12",
+]
+
+[project.urls]
+Repository = "."
+
+[tool.setuptools.dynamic]
+version = { attr = "chiledist._version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["chiledist", "chiledist.*"]

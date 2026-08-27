@@ -29,10 +29,8 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from chiledist.electoral import (
-    plan_electoral_metrics,
-    MAGNITUDES_LEGALES_LEY20840,
-)
+from chiledist.rules.electoral_rules import MAGNITUDES_LEGALES_LEY20840
+from chiledist.engines.allocation import plan_electoral_metrics
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixtures del caso de referencia

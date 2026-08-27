@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from chiledist.fairshare import (
+from chiledist.engines.fairshare import (
     fair_share_matrix,
     fair_share_summary,
     l1_distance_fair_share,
@@ -508,7 +508,7 @@ class TestPublicAPIIntegration:
     def test_run_electoral_plan_to_fair_share_workflow(self):
         """Flujo completo: aggregate_votes → run_electoral_plan → fair_share_summary."""
         import chiledist as cd
-        import chiledist.fairshare as fs
+        import chiledist.engines.fairshare as fs
 
         # Datos sintéticos
         votes_long = pd.DataFrame({
