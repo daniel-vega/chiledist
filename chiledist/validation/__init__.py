@@ -21,6 +21,7 @@ from typing import Optional
 
 import pandas as pd
 
+from ..domain.data.servel import normalize_commune_name
 from ..engines.allocation.dhondt import dhondt_binivel
 
 #: Etiqueta humana para el encabezado de ValidationReport.__str__ — no es
@@ -87,6 +88,46 @@ def _has_boundary_tie(district_party_df: pd.DataFrame, k: int) -> bool:
     return votes_sorted[k - 1] == votes_sorted[k]
 
 
+def _apply_votes_source(
+    candidates_servel: pd.DataFrame, votes_tricel: Optional[pd.DataFrame]
+) -> pd.DataFrame:
+    """
+    Reemplaza la columna `votes` de candidates_servel por los totales de
+    votes_tricel (import_votes(), hoja MESA A MESA) cuando se provee.
+
+    Las 59 discrepancias candidato-a-candidato observadas al validar con
+    votos SERVEL preliminares vienen de comparar fuentes distintas: el
+    D'Hondt se calculaba con votación *preliminar* (noche de elección)
+    mientras TRICEL proclamó con el escrutinio *final*. votes_tricel trae
+    esos mismos totales finales por (distrito, candidato) — usarlos aquí
+    hace que el cálculo y la proclamación vengan de la misma fuente.
+
+    votes_tricel no trae candidate_id/party_id/list_id (solo
+    candidate_name + totales), así que el cruce con candidates_servel se
+    hace por (district_id, candidate_name normalizado) — ambas fuentes
+    usan el nombre en mayúsculas sin tilde de SERVEL/TRICEL, normalizado
+    aquí con normalize_commune_name() por consistencia con el cruce que
+    ya hace domain.data.tricel.import_proclamations().
+    """
+    if votes_tricel is None:
+        return candidates_servel.copy()
+
+    servel = candidates_servel.copy()
+    servel["_name_norm"] = servel["candidate_name"].apply(normalize_commune_name)
+
+    votes = votes_tricel.copy()
+    votes["_name_norm"] = votes["candidate_name"].apply(normalize_commune_name)
+    votes_by_key = dict(zip(
+        zip(votes["district_id"], votes["_name_norm"]), votes["votes_final"]
+    ))
+
+    servel["votes"] = [
+        votes_by_key.get((d, n), 0)
+        for d, n in zip(servel["district_id"], servel["_name_norm"])
+    ]
+    return servel.drop(columns=["_name_norm"])
+
+
 def validate_election(
     candidates_servel: pd.DataFrame,
     proclamations_tricel: pd.DataFrame,
@@ -95,6 +136,7 @@ def validate_election(
     pacto_map: dict,
     election_id: str = "CL-2025-DIP",
     source_hashes: Optional[dict] = None,
+    votes_tricel: Optional[pd.DataFrame] = None,
 ) -> ValidationReport:
     """
     Valida el motor D'Hondt del paquete reproduciendo la elección oficial.
@@ -141,6 +183,16 @@ def validate_election(
         original; se agregó porque ValidationReport.source_hashes no es
         derivable solo de los DataFrames de entrada (ver "Deuda técnica"
         en el reporte de esta etapa). Default: {}.
+    votes_tricel : pd.DataFrame, opcional
+        Schema de chiledist.domain.data.tricel.import_votes(): district_id,
+        candidate_name, votes_final (+ votes_null/votes_blank/total_votes,
+        no usados aquí). Si se provee, el D'Hondt se calcula con estos
+        votos (escrutinio final TRICEL, mesa a mesa) en vez de los de
+        candidates_servel (votación preliminar SERVEL) — evita comparar
+        un cálculo hecho con una fuente contra una proclamación hecha con
+        otra. El cruce con candidates_servel es por (district_id,
+        candidate_name normalizado); ver _apply_votes_source(). Default:
+        None (comportamiento anterior, usa candidates_servel.votes).
 
     Returns
     -------
@@ -149,7 +201,7 @@ def validate_election(
     districts_total = len(set(assignment.values()))
     seats_total = sum(magnitudes.values())
 
-    servel = candidates_servel.copy()
+    servel = _apply_votes_source(candidates_servel, votes_tricel)
     if "district_id" not in servel.columns:
         raise ValueError("candidates_servel requiere la columna district_id")
 

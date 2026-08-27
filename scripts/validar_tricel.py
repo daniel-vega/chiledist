@@ -133,6 +133,12 @@ def main() -> int:
     if proc_provenance["candidates_unmatched"]:
         print(f"    Sin cruce: {proc_provenance['candidates_unmatched']}")
 
+    print(f"  Importando votación mesa a mesa TRICEL desde {args.data_dir}/TRICEL_2025 ...")
+    votes_tricel, _votes_provenance = cd.import_votes(
+        source_dir=args.data_dir,
+    )
+    print(f"  {len(votes_tricel)} registros (distrito, candidato) de votación TRICEL.")
+
     magnitudes = {
         n: int(m) for n, m in cd.MAGNITUDES_LEGALES_LEY20840.items()
         if n in set(assignment.values())
@@ -142,7 +148,12 @@ def main() -> int:
         servel_hash = hashlib.sha256(f.read()).hexdigest()
 
     report = cd.validate_election(
-        candidates_servel, proclamations, assignment, magnitudes, pacto_map,
+        candidates_servel=candidates_servel,
+        proclamations_tricel=proclamations,
+        votes_tricel=votes_tricel,
+        assignment=assignment,
+        magnitudes=magnitudes,
+        pacto_map=pacto_map,
         source_hashes={
             "SERVEL": servel_hash,
             "TRICEL": _combined_hash(proc_provenance["sha256_by_district"]),
