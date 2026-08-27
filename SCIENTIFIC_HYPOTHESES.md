@@ -1331,9 +1331,13 @@ a partidos medianos que compiten en pactos con otros fuertes.
 
 #### Validación del pipeline D'Hondt
 
-El pipeline reproduce exactamente el resultado oficial TRICEL 2025:
-96/96 combinaciones (distrito, pacto) — PASS completo.
-Ver subsección "Validación empírica — D'Hondt binivel vs SERVEL 2025", arriba.
+El pipeline reproduce exactamente el resultado oficial **SERVEL** 2025:
+96/96 combinaciones (distrito, pacto) — PASS completo (`validar_dhondt.py`,
+SERVEL_INTERNAL_CONSISTENCY). Ver subsección "Validación empírica —
+D'Hondt binivel vs SERVEL 2025", arriba. Distinta de la validación
+contra proclamaciones oficiales **TRICEL** (`validar_tricel.py`,
+TRICEL_OFFICIAL_REPRODUCTION): 25/28 distritos, `PARTIAL`, no
+`EXACT_REPRODUCTION` — ver `chiledist/VALIDATION_REPORT.md`.
 
 #### Estado
 

@@ -989,4 +989,4 @@ Estos tests son necesarios antes de entregar resultados a una institución o pub
 
 ---
 
-**Última actualización: agosto 2026 — modelo A implementado, tests Nivel 1-3 completados, validación TRICEL 2025 (24/28).**
+**Última actualización: agosto 2026 — modelo A implementado, tests Nivel 1-3 completados, validación TRICEL 2025 (25/28, `PARTIAL`; causa raíz de los 3 distritos restantes identificada y verificada en `dhondt_binivel()`, no corregida — ver `VALIDATION_REPORT.md` § 3, 5).**
