@@ -232,6 +232,20 @@ def dhondt_binivel(
     datos agregados por partido, el D'Hondt interno entre partidos es la
     aproximación estándar en análisis electoral comparado.
 
+    Limitación verificada (agosto 2026, ver VALIDATION_REPORT.md §3):
+    a esta aproximación le falta un tope de candidatos disponibles por
+    partido — un partido no puede ganar más escaños dentro de su pacto
+    que candidatos registró, pero el Nivel 2 actual no lo aplica. Causa
+    raíz confirmada de 3 de los 28 distritos que no validan contra las
+    proclamaciones oficiales TRICEL 2025 (`scripts/validar_tricel.py`):
+    reproducido exactamente (7/7 pactos en disputa) con un D'Hondt de
+    partidos con tope `min(D'Hondt, n_candidatos_del_partido)`,
+    redistribuyendo el excedente a los siguientes cocientes más altos.
+    No implementado — requeriría un parámetro opcional
+    `candidatos_por_partido: dict[str, int]` y que todos los llamadores
+    (`run_electoral_plan_binivel()`, `run_electoral_ensemble()`,
+    `validate_election()`) puedan proveerlo.
+
     Parameters
     ----------
     votos_por_partido : dict {partido: n_votos}

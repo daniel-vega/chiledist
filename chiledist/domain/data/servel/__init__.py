@@ -736,6 +736,179 @@ def import_candidates(
     return df_canonical, provenance_info
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Escrutinio final SERVEL ("v2") — agregado 27-ago-2026, ver VALIDATION_REPORT.md
+# ──────────────────────────────────────────────────────────────────────────────
+
+_V2_PSEUDO_CANDIDATE_NAMES = {"VOTOS EN BLANCO", "VOTOS NULOS"}
+
+
+def _find_v2_workbook(source_path: "str | Path") -> Path:
+    """
+    Localiza el Excel de escrutinio final ("v2") dentro de source_path.
+
+    source_path puede ser el directorio SERVEL_2025/ mismo (se busca el
+    subdirectorio 2025_11_Diputados_Datos_Eleccion/) o ya ser ese
+    subdirectorio. El nombre real observado es
+    "2025_11_Diputados_Datos_Eleccion_v2.xlsx" — se busca por patrón
+    "*_v2.xlsx" para tolerar variaciones de nombre entre actualizaciones
+    de SERVEL, no un nombre exacto hardcodeado.
+    """
+    source_path = Path(source_path)
+    candidatos_dirs = [
+        source_path / "2025_11_Diputados_Datos_Eleccion",
+        source_path,
+    ]
+    for d in candidatos_dirs:
+        if not d.is_dir():
+            continue
+        matches = sorted(d.glob("*_v2.xlsx"))
+        if matches:
+            return matches[0]
+    raise FileNotFoundError(
+        f"No se encontró un Excel '*_v2.xlsx' de escrutinio final SERVEL "
+        f"bajo {source_path} (se probó también "
+        f"{source_path / '2025_11_Diputados_Datos_Eleccion'})."
+    )
+
+
+def import_final_scrutiny(
+    source_path: "str | Path | None" = None,
+    election_id: str = "CL-2025-DIP",
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Importa el escrutinio final republicado por SERVEL ("v2", post-TRICEL)
+    por candidato y distrito.
+
+    A diferencia de import_candidates() (Excel PRELIMINARES_*, conteo de
+    la noche de la elección), esta función lee el Excel
+    "*_v2.xlsx" (hoja "Votación por comuna") que SERVEL republicó
+    después de la calificación TRICEL. Verificado empíricamente (agosto
+    2026, ver VALIDATION_REPORT.md): el total de votos válidos por
+    distrito de este archivo coincide ~100.0% (28/28 distritos) con los
+    totales certificados por TRICEL (chiledist.domain.data.tricel, hoja
+    CANDIDATOS de cada DISTRITO-XX.xlsx) — incluido Distrito 8, cuyo
+    "38.8% de cobertura" documentado en una versión anterior de
+    VALIDATION_REPORT.md resultó estar comparado contra un total TRICEL
+    erróneo (bug de fila-de-totales duplicada en import_votes(), ver
+    VALIDATION_REPORT.md §3-4); la cobertura real de la fuente SERVEL
+    preliminar en Distrito 8 ya era ~99.8%. Usar esta función resuelve
+    Distrito 8 en validate_election() (12→0 discrepancias); Distrito 3,
+    5 y 19 quedan sin resolver por una causa no relacionada con datos
+    (falta de tope de candidatos en dhondt_binivel(), ver
+    VALIDATION_REPORT.md §3). Además, la columna
+    "Nro.voto" de este archivo es el mismo identificador que num_tricel
+    de TRICEL — verificado 1:1 sin ambigüedad para todos los candidatos
+    de Distrito 8 (52/52) contra TRICEL_2025/Distrito-08.xlsx, hoja
+    CANDIDATOS.
+
+    No usada todavía como reemplazo de import_candidates() en el
+    pipeline de cálculo D'Hondt (candidates_servel de
+    scripts/validar_tricel.py sigue viniendo de
+    datos/servel_2025_candidatos.csv) — se expone aquí en el mismo
+    schema que chiledist.domain.data.tricel.import_votes() para que
+    chiledist.validation.validate_election() pueda recibirla vía su
+    parámetro votes_tricel (ver _apply_votes_source(), que ya cruza por
+    (district_id, candidate_name normalizado) sin importar la fuente).
+
+    RAW: lee la hoja "Votación por comuna" del Excel v2 (encabezado real
+        en la fila 7, índice 6 — las primeras 6 filas son un bloque de
+        título, ver estructura determinada por inspección directa).
+    NORMALIZED: excluye las filas "VOTOS EN BLANCO"/"VOTOS NULOS" (no son
+        candidatos reales — vienen como filas normales de la columna
+        "Nombres" en este archivo, a diferencia de MESA A MESA de TRICEL
+        donde son columnas administrativas separadas); concatena
+        Nombres + Primer apellido + Segundo apellido en el mismo orden
+        que candidate_name en datos/servel_2025_candidatos.csv/TRICEL.
+    CANONICAL: agrega Σ Votos por (district_id, candidate_name) sobre
+        todas las comunas del distrito — un registro por candidato real,
+        1096 a nivel nacional (mismo total que el roster completo de
+        TRICEL, ver import_proclamations()).
+
+    Parameters
+    ----------
+    source_path : str | Path, opcional
+        Directorio SERVEL_2025/ (o el subdirectorio
+        2025_11_Diputados_Datos_Eleccion/ directamente). Si es None, usa
+        chiledist.domain.data.get_servel_dir().
+    election_id : str
+
+    Returns
+    -------
+    (df_canonical, provenance) donde df_canonical tiene columnas:
+        election_id, district_id, candidate_name, votes_final
+        (mismo shape que chiledist.domain.data.tricel.import_votes(),
+        sin votes_null/votes_blank/total_votes — ver provenance para
+        esos totales, agregados a nivel distrito, no por candidato)
+    y provenance es un dict con:
+        source                 : "SERVEL_FINAL_V2"
+        workbook                : ruta del Excel leído
+        sha256                  : hash del Excel leído
+        n_candidates            : candidatos reales (excluye blanco/nulo)
+        n_districts             : distritos cubiertos
+        votes_blank_by_district : {distrito: votos en blanco}
+        votes_null_by_district  : {distrito: votos nulos}
+    """
+    if source_path is None:
+        from .._paths import get_servel_dir
+        source_path = get_servel_dir()
+
+    workbook = _find_v2_workbook(source_path)
+    prov_record = provenance.compute_provenance(workbook, election_id, authority="SERVEL")
+
+    raw = pd.read_excel(workbook, sheet_name="Votación por comuna", header=6)
+    raw.columns = [str(c).strip() for c in raw.columns]
+
+    raw["district_id"] = raw["Distrito"].apply(_parse_district_id)
+
+    is_pseudo = raw["Nombres"].astype(str).str.strip().str.upper().isin(
+        _V2_PSEUDO_CANDIDATE_NAMES
+    )
+    pseudo = raw[is_pseudo].copy()
+    real = raw[~is_pseudo].copy()
+
+    real["candidate_name"] = (
+        real["Nombres"].astype(str).str.strip() + " " +
+        real["Primer apellido"].astype(str).str.strip() + " " +
+        real["Segundo apellido"].fillna("").astype(str).str.strip()
+    ).str.replace(r"\s+", " ", regex=True).str.strip()
+    real["Votos"] = pd.to_numeric(real["Votos"], errors="coerce").fillna(0).astype(int)
+
+    agrupado = (
+        real.groupby(["district_id", "candidate_name"], as_index=False)["Votos"]
+        .sum()
+        .rename(columns={"Votos": "votes_final"})
+    )
+
+    df_canonical = pd.DataFrame({
+        "election_id":     election_id,
+        "district_id":     agrupado["district_id"].astype(int),
+        "candidate_name":  agrupado["candidate_name"],
+        "votes_final":     agrupado["votes_final"].astype(int),
+    })
+
+    pseudo["Votos"] = pd.to_numeric(pseudo["Votos"], errors="coerce").fillna(0).astype(int)
+    blank_by_dist = (
+        pseudo[pseudo["Nombres"].astype(str).str.strip().str.upper() == "VOTOS EN BLANCO"]
+        .groupby("district_id")["Votos"].sum().astype(int).to_dict()
+    )
+    null_by_dist = (
+        pseudo[pseudo["Nombres"].astype(str).str.strip().str.upper() == "VOTOS NULOS"]
+        .groupby("district_id")["Votos"].sum().astype(int).to_dict()
+    )
+
+    provenance_info = {
+        "source": "SERVEL_FINAL_V2",
+        "workbook": str(workbook),
+        "sha256": prov_record.sha256,
+        "n_candidates": len(df_canonical),
+        "n_districts": int(df_canonical["district_id"].nunique()),
+        "votes_blank_by_district": blank_by_dist,
+        "votes_null_by_district": null_by_dist,
+    }
+    return df_canonical, provenance_info
+
+
 def import_results(
     source_path: "str | Path",
     election_id: str = "CL-2025-DIP",

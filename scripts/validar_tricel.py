@@ -29,6 +29,19 @@ candidates_servel se construye aparte, desde --servel-candidates (el CSV
 ya procesado, no el Excel crudo) + --assignment, con el mismo patrón que
 scripts/validar_dhondt.py --modo candidatos: district_id se deriva de
 CUT vía assignment, y list_id/party_id ya vienen con cada candidato.
+
+Estado (agosto 2026): 25/28 distritos (default --votes-source
+servel_final, ver VALIDATION_REPORT.md). Los 3 distritos restantes
+(D3, D5, D19) NO son un problema de cobertura de datos — la causa raíz
+verificada es que chiledist.engines.allocation.dhondt.dhondt_binivel()
+no aplica un tope de candidatos disponibles por partido en el reparto
+intra-pacto (Nivel 2): un partido con un solo candidato inscrito puede
+"ganar" más de un escaño en el cálculo aproximado, cuando en la
+realidad ese escaño pasa al siguiente partido con un candidato
+disponible. Ver VALIDATION_REPORT.md para la evidencia (7/7 pactos
+reproducidos exactamente con un D'Hondt con tope de candidatos) — el
+fix no está implementado aquí, es un cambio a la función D'Hondt
+central usada en todo el pipeline, no específico de este script.
 """
 
 import argparse
@@ -152,6 +165,19 @@ def main() -> int:
                          help="Mostrar el detalle completo de cada discrepancia "
                               "(por default solo se muestra el resumen agrupado "
                               "por distrito).")
+    parser.add_argument(
+        "--votes-source", choices=["tricel", "servel_final"], default="servel_final",
+        help="Fuente de votos para el parámetro votes_tricel de validate_election(). "
+             "'servel_final' (default, agosto 2026): "
+             "cd.domain.data.servel.import_final_scrutiny(), escrutinio final "
+             "SERVEL republicado (ver VALIDATION_REPORT.md) — coincide ~100%% "
+             "con los totales certificados por TRICEL en los 28 distritos "
+             "(incluidos los 4 antes diagnosticados con baja cobertura) y no "
+             "tiene el bug de fila-de-totales-duplicada de Distrito 8 que sí "
+             "afecta a 'tricel'. Resultado empírico: 25/28 vs 24/28 con "
+             "'tricel'. 'tricel': cd.import_votes(), mesa a mesa TRICEL — "
+             "mantenido para comparación/depuración.",
+    )
     args = parser.parse_args()
 
     os.environ["CHILEDIST_DATA_DIR"] = args.data_dir
@@ -183,10 +209,18 @@ def main() -> int:
     if proc_provenance["candidates_unmatched"]:
         print(f"    Sin cruce: {proc_provenance['candidates_unmatched']}")
 
-    print(f"  Importando votación mesa a mesa TRICEL desde {args.data_dir}/TRICEL_2025 ...")
-    votes_tricel, _votes_provenance = cd.import_votes(
-        source_dir=args.data_dir,
-    )
+    if args.votes_source == "tricel":
+        print(f"  Importando votación mesa a mesa TRICEL desde {args.data_dir}/TRICEL_2025 ...")
+        votes_tricel, _votes_provenance = cd.import_votes(
+            source_dir=args.data_dir,
+        )
+    else:
+        from chiledist.domain.data.servel import import_final_scrutiny
+        print(f"  Importando escrutinio final SERVEL (v2) desde {args.data_dir}/SERVEL_2025 ...")
+        votes_tricel, _votes_provenance = import_final_scrutiny(
+            source_path=f"{args.data_dir}/SERVEL_2025",
+        )
+        print(f"    workbook: {_votes_provenance['workbook']}")
     print(f"  {len(votes_tricel)} registros (distrito, candidato) de votación TRICEL.")
 
     magnitudes = {

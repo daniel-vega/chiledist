@@ -353,6 +353,20 @@ def import_votes(
     CANONICAL: un registro por (distrito, candidato) con los totales
         distritales.
 
+    ⚠️ Bug conocido, no corregido (agosto 2026, ver VALIDATION_REPORT.md
+    §3-4): en Distrito 8, la hoja MESA A MESA tiene DOS filas que
+    matchean el criterio de "fila de totales" (NaN en las columnas
+    geográficas) — la real y una fantasma con el doble de "Total votos"
+    y las columnas de candidato en cero. `.iloc[-1]` (última fila que
+    matchea) toma la fantasma, así que para Distrito 8 esta función
+    retorna `votes_final=0` para los 52 candidatos. Verificado que
+    ningún otro distrito de los 28 tiene esta anomalía. Para D'Hondt
+    binivel con datos reales, preferir
+    chiledist.domain.data.servel.import_final_scrutiny() (escrutinio
+    final SERVEL, no tiene este bug, cobertura ~100% verificada contra
+    esta misma función en los otros 27 distritos) — es el default de
+    scripts/validar_tricel.py desde agosto 2026.
+
     Parameters
     ----------
     source_dir : str | Path, opcional
