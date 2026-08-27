@@ -75,6 +75,75 @@ def dhondt(
     return result
 
 
+def dhondt_con_tope(
+    votes: dict[str, int | float],
+    seats: int,
+    max_seats: dict[str, int],
+    threshold: float = 0.0,
+) -> dict[str, int]:
+    """
+    D'Hondt con tope de escaños por partido/lista.
+
+    Igual que dhondt(), pero un partido nunca recibe más escaños que
+    los indicados en `max_seats` — el excedente que le correspondería
+    por cociente D'Hondt pasa al partido con el siguiente cociente más
+    alto que aún tenga cupo disponible. Uso típico: `max_seats` =
+    número de candidatos inscritos por partido en la lista, para que
+    un partido no "gane" un escaño que no tiene a quién asignarle (ver
+    dhondt_binivel_cl()).
+
+    Parameters
+    ----------
+    votes : dict {partido: n_votos}
+    seats : int
+    max_seats : dict {partido: tope_de_escaños}
+        Un partido de `votes` sin entrada aquí se trata como sin tope
+        (equivalente a dhondt() para ese partido).
+    threshold : float
+
+    Returns
+    -------
+    dict {partido: escaños_obtenidos}
+
+    Examples
+    --------
+    >>> dhondt_con_tope({"A": 100, "B": 20, "C": 15}, seats=3, max_seats={"A": 1})
+    {'A': 1, 'B': 1, 'C': 1}
+    >>> dhondt({"A": 100, "B": 20, "C": 15}, seats=3)  # sin tope, A se lleva todo
+    {'A': 3, 'B': 0, 'C': 0}
+    """
+    if seats <= 0:
+        return {p: 0 for p in votes}
+
+    votes = {p: max(0, v) for p, v in votes.items()}
+    total = sum(votes.values())
+
+    if total == 0:
+        return {p: 0 for p in votes}
+
+    eligible = {p: v for p, v in votes.items() if v / total >= threshold}
+    if not eligible:
+        return {p: 0 for p in votes}
+
+    seat_counts = {p: 0 for p in eligible}
+    caps = {p: max_seats.get(p, seats) for p in eligible}
+
+    for _ in range(seats):
+        # Solo compiten los partidos que todavía no llegaron a su tope.
+        candidates = {p: v for p, v in eligible.items() if seat_counts[p] < caps[p]}
+        if not candidates:
+            break
+        best = max(
+            candidates,
+            key=lambda p: (candidates[p] / (seat_counts[p] + 1), candidates[p], p),
+        )
+        seat_counts[best] += 1
+
+    result = {p: 0 for p in votes}
+    result.update(seat_counts)
+    return result
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Agregación de votos al nivel de circunscripción
 # ──────────────────────────────────────────────────────────────────────────────
@@ -313,6 +382,139 @@ def dhondt_binivel(
     return result
 
 
+def dhondt_binivel_cl(
+    votos_por_partido: "dict[str, int | float]",
+    pacto_map: "dict[str, str]",
+    seats: int,
+    candidatos_por_partido: "dict[str, int]",
+    threshold: float = 0.0,
+) -> "dict[str, int]":
+    """
+    D'Hondt binivel chileno con tope de candidatos disponibles por partido.
+
+    Variante de dhondt_binivel() que corrige una limitación de esa
+    función: el Nivel 2 (reparto intra-pacto entre partidos) puede
+    asignarle a un partido más escaños que candidatos tiene inscritos
+    en esa lista — imposible en la realidad, porque no hay una persona
+    física para ocupar el escaño sobrante; ese escaño pasa al partido
+    con el siguiente cociente más alto que sí tenga candidato
+    disponible.
+
+    Por qué es una función separada y no un flag de dhondt_binivel()
+    ------------------------------------------------------------------
+    No se modificó dhondt_binivel() in-place — sigue disponible tal
+    cual para comparación metodológica y para escenarios sin lista de
+    candidatos real (dhondt_binivel() opera solo sobre votos agregados
+    por partido; esta función además requiere `candidatos_por_partido`,
+    dato que no existe para un plan de redistritaje sintético/ensemble
+    hipotético, solo tiene sentido al reproducir una elección real con
+    candidatos ya inscritos).
+
+    ¿Es esto una particularidad de la Ley 18.700, o del D'Hondt binivel
+    en general? Verificado, no asumido (agosto 2026): no se encontró un
+    texto del art. 121 de la Ley 18.700 que codifique esta regla como
+    exclusiva de Chile — la Biblioteca del Congreso Nacional no fue
+    accesible para verificación directa en el entorno de esta sesión, y
+    las copias de la ley disponibles por otras vías eran versiones
+    anteriores a la reforma de 2015 (sin D'Hondt). La evidencia más
+    fuerte disponible es el cálculo D'Hondt oficial de TRICEL (hoja
+    DETERMINACION de cada TRICEL_2025/Distrito-XX.xlsx — el cálculo del
+    organismo, no una interpretación de terceros): reproducido
+    exactamente (7/7 pactos en disputa de Distrito 3, 5 y 19, ver
+    VALIDATION_REPORT.md §3) aplicando este tope. Razonamiento general:
+    un partido no puede elegir más personas que las que postuló — esto
+    es una necesidad lógica de cualquier D'Hondt binivel aplicado sobre
+    listas de candidatos reales, no exclusiva de Chile; simplemente se
+    manifiesta pocas veces porque la mayoría de los partidos postulan
+    suficientes candidatos. dhondt_binivel() nunca estuvo "mal" como
+    método abstracto de votos-por-partido — está incompleto solo
+    cuando se le pide reproducir una elección real con listas de
+    candidatos conocidas y limitadas, que es exactamente el caso de
+    scripts/validar_tricel.py.
+
+    Nivel 1 (pactos → escaños): igual que dhondt_binivel(), sin tope —
+        un pacto no tiene "candidatos propios", son sus partidos
+        miembros los que los tienen.
+    Nivel 2 (partidos dentro de pacto): dhondt_con_tope() con
+        max_seats = candidatos_por_partido.
+
+    Parameters
+    ----------
+    votos_por_partido : dict {partido: n_votos}
+    pacto_map : dict {partido: pacto}
+    seats : int
+    candidatos_por_partido : dict {partido: n_candidatos_inscritos}
+        Requerido — sin este dato no hay tope que aplicar, y esta
+        función existe específicamente para aplicarlo (usar
+        dhondt_binivel() si no se tiene). Ver
+        chiledist.domain.data.tricel.import_candidate_counts() como
+        fuente verificada para datos reales de la elección 2025 — NO
+        derivar esto de chiledist.domain.data.servel.import_candidates()
+        ni de servel_2025_candidatos.csv, fuentes con conteo de
+        candidatos no confiable (deuda técnica documentada en
+        VALIDATION_REPORT.md §3: 1.378 filas agrupadas vs 1.096
+        candidatos reales). Un partido de `votos_por_partido` sin
+        entrada aquí se trata como sin tope (ver dhondt_con_tope()) —
+        no es un error, pero anula el propósito de esta función para
+        ese partido específico.
+    threshold : float
+
+    Returns
+    -------
+    dict {partido: escaños_obtenidos}
+
+    Ver también
+    -----------
+    dhondt_binivel() — método D'Hondt binivel genérico, sin tope de
+        candidatos, preservado sin cambios.
+    VALIDATION_REPORT.md §3, §5 — evidencia completa de la
+        verificación contra TRICEL_2025 y el camino a EXACT_REPRODUCTION.
+
+    Examples
+    --------
+    >>> votos = {"Liberal": 74910, "PPD": 13687, "PC": 10977, "Radical": 11973, "PDC": 1773, "FA": 8518}
+    >>> pactos = {p: "UNIDAD POR CHILE" for p in votos}
+    >>> candidatos = {p: 1 for p in votos}
+    >>> dhondt_binivel_cl(votos, pactos, seats=3, candidatos_por_partido=candidatos)
+    {'Liberal': 1, 'PPD': 1, 'PC': 0, 'Radical': 1, 'PDC': 0, 'FA': 0}
+    """
+    if seats <= 0:
+        return {p: 0 for p in votos_por_partido}
+
+    votos_por_partido = {p: max(0, v) for p, v in votos_por_partido.items()}
+
+    # Ver dhondt_binivel() para la explicación de esta normalización.
+    pacto_map_norm = {normalize_party_name(k): v for k, v in pacto_map.items()}
+
+    pacto_votes: dict[str, float] = {}
+    pacto_to_parties: dict[str, dict[str, float]] = {}
+    for partido, votos in votos_por_partido.items():
+        pacto = pacto_map_norm.get(normalize_party_name(partido), partido)
+        pacto_votes[pacto]                          = pacto_votes.get(pacto, 0) + votos
+        pacto_to_parties.setdefault(pacto, {})[partido] = votos
+
+    total = sum(pacto_votes.values())
+    if total == 0:
+        return {p: 0 for p in votos_por_partido}
+
+    # Nivel 1: D'Hondt entre pactos, sin tope (un pacto no tiene "candidatos propios")
+    pacto_seats = dhondt(pacto_votes, seats, threshold)
+
+    # Nivel 2: D'Hondt con tope de candidatos disponibles dentro de cada pacto
+    result = {p: 0 for p in votos_por_partido}
+    for pacto, n in pacto_seats.items():
+        if n == 0:
+            continue
+        parties = pacto_to_parties.get(pacto, {})
+        if not parties:
+            continue
+        max_seats_pacto = {p: candidatos_por_partido.get(p, n) for p in parties}
+        for partido, s in dhondt_con_tope(parties, n, max_seats_pacto).items():
+            result[partido] = s
+
+    return result
+
+
 def run_electoral_plan_binivel(
     votes_by_district: pd.DataFrame,
     seat_magnitudes: pd.Series,
@@ -320,6 +522,7 @@ def run_electoral_plan_binivel(
     partido_col: str = "partido",
     votos_col: str = "votos",
     threshold: float = 0.0,
+    candidatos_por_partido: "pd.DataFrame | None" = None,
 ) -> pd.DataFrame:
     """
     Ejecuta D'Hondt binivel para todas las circunscripciones de un plan.
@@ -341,6 +544,17 @@ def run_electoral_plan_binivel(
         Nombres de columnas de partido y votos.
     threshold : float
         Umbral mínimo de votos del pacto (0.0 = sin umbral).
+    candidatos_por_partido : pd.DataFrame, opcional
+        Columnas: district, partido_col, "n_candidatos". Si se provee,
+        usa dhondt_binivel_cl() (tope de candidatos disponibles por
+        partido dentro de cada pacto) en vez de dhondt_binivel() —
+        explícito, no es un cambio de comportamiento por defecto: si no
+        se pasa (default None), el resultado es idéntico al de antes de
+        que existiera este parámetro. Ver dhondt_binivel_cl() para por
+        qué existe como variante separada y VALIDATION_REPORT.md §3
+        para la evidencia de por qué es necesaria al reproducir un
+        resultado electoral real (no al simular un ensemble sin
+        candidatos reales).
 
     Returns
     -------
@@ -349,6 +563,11 @@ def run_electoral_plan_binivel(
         escanos_pacto, votos_pct, escanos_pct.
     """
     rows = []
+
+    candidatos_lookup: dict = {}
+    if candidatos_por_partido is not None:
+        for district, grp in candidatos_por_partido.groupby("district"):
+            candidatos_lookup[district] = dict(zip(grp[partido_col], grp["n_candidatos"]))
 
     for district, grp in votes_by_district.groupby("district"):
         seats = int(seat_magnitudes.get(district, 0))
@@ -361,7 +580,13 @@ def run_electoral_plan_binivel(
         votos_dict = votos_grp.to_dict()
         pacto_dict = grp.groupby(partido_col, sort=False)[pacto_col].first().to_dict()
 
-        escanos = dhondt_binivel(votos_dict, pacto_dict, seats, threshold)
+        if candidatos_por_partido is not None:
+            escanos = dhondt_binivel_cl(
+                votos_dict, pacto_dict, seats,
+                candidatos_lookup.get(district, {}), threshold,
+            )
+        else:
+            escanos = dhondt_binivel(votos_dict, pacto_dict, seats, threshold)
 
         # Escaños por pacto (para reportar)
         escanos_pacto: dict[str, int] = {}

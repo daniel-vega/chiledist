@@ -54,6 +54,7 @@ from .._paths import get_servel_dir, get_tricel_dir
 from ..servel import import_candidates as _import_servel_candidates
 from ..servel import normalize_commune_name
 from ..servel.provenance import compute_provenance
+from ...utils import normalize_party_name
 
 
 @dataclasses.dataclass
@@ -438,4 +439,110 @@ def import_votes(
     return df_canonical, provenance_info
 
 
-__all__ = ["import_proclamations", "import_votes", "ProclamationRecord"]
+def _independiente_a_partido(party_raw: str) -> str:
+    """
+    'INDEPENDIENTE X' (TRICEL, hoja CANDIDATOS) -> 'PARTIDO X' (SERVEL,
+    columna partido).
+
+    Verificado (agosto 2026): un candidato con cupo de independiente
+    afiliado a un partido lleva una etiqueta de partido distinta en
+    TRICEL ("INDEPENDIENTE LIBERAL DE CHILE") que en SERVEL ("PARTIDO
+    LIBERAL DE CHILE") para la misma persona/partido — confirmado
+    comparando servel_2025_candidatos.csv contra
+    TRICEL_2025/Distrito-03.xlsx para Sebastián Videla Castillo (mismo
+    candidate_id, "PARTIDO LIBERAL DE CHILE" en SERVEL vs
+    "INDEPENDIENTE LIBERAL DE CHILE" en TRICEL). Sin esta normalización,
+    import_candidate_counts() subcuenta esos partidos (0 candidatos en
+    vez de 1+), anulando silenciosamente el tope de
+    dhondt.dhondt_binivel_cl() para exactamente los partidos con cupos
+    de independiente — frecuentes en pactos chilenos.
+    """
+    p = party_raw.strip()
+    m = re.match(r"^INDEPENDIENTE\s+(.+)$", p, flags=re.IGNORECASE)
+    return f"PARTIDO {m.group(1)}" if m else p
+
+
+def import_candidate_counts(
+    source_dir: "str | Path | None" = None,
+    election_id: str = "CL-2025-DIP",
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Importa el número de candidatos inscritos por partido y distrito.
+
+    Fuente de verdad para
+    chiledist.engines.allocation.dhondt.dhondt_binivel_cl() (parámetro
+    `candidatos_por_partido`) — NO derivar este conteo de
+    chiledist.domain.data.servel.import_candidates() ni de
+    servel_2025_candidatos.csv: se verificó (agosto 2026) que esa
+    fuente sobrecuenta candidatos (1.378 filas agrupadas vs 1.096
+    candidatos reales nacionalmente — deuda técnica documentada en
+    VALIDATION_REPORT.md §3, no resuelta), lo que puede inflar el tope
+    de un partido específico y anularlo en silencio. Esta función usa
+    en cambio la hoja CANDIDATOS de TRICEL (roster oficial completo,
+    la misma que ya usa import_proclamations()), fuente autoritativa
+    de "cuántos candidatos registró cada partido en cada distrito".
+
+    RAW: lee la hoja CANDIDATOS de cada DISTRITO-XX.xlsx (vía
+        _read_candidatos_sheet(), la misma que usa
+        import_proclamations()).
+    NORMALIZED: normaliza `party_raw` con normalize_party_name() tras
+        mapear "INDEPENDIENTE X" -> "PARTIDO X" (ver
+        _independiente_a_partido()) — verificado necesario para que
+        las claves de partido calcen con las que usan
+        `votos_por_partido`/`candidates_servel`/`pacto_map` en el resto
+        del pipeline (que vienen de SERVEL, no de TRICEL).
+    CANONICAL: cuenta candidatos únicos (`num_tricel`) por
+        (district_id, party_id).
+
+    Parameters
+    ----------
+    source_dir : str | Path, opcional
+        Igual que import_proclamations()/import_votes(). Si es None,
+        usa chiledist.domain.data.get_tricel_dir().
+    election_id : str
+
+    Returns
+    -------
+    (df_canonical, provenance) donde df_canonical tiene columnas:
+        district_id, party_id, n_candidatos
+    y provenance: source, districts_loaded, sha256_by_district.
+    """
+    if source_dir is None:
+        source_dir = get_tricel_dir()
+    archivos = _list_tricel_files(source_dir)
+
+    filas = []
+    sha256_by_district: dict[int, str] = {}
+
+    for path in archivos:
+        district_id = _district_id_from_filename(path)
+        prov = compute_provenance(path, election_id, authority="TRICEL")
+        sha256_by_district[district_id] = prov.sha256
+
+        candidatos = _read_candidatos_sheet(path)
+        party_id = candidatos["party_raw"].apply(
+            lambda p: normalize_party_name(_independiente_a_partido(p))
+        )
+        counts = candidatos.groupby(party_id)["num_tricel"].nunique()
+        for party, n in counts.items():
+            filas.append({
+                "district_id": district_id,
+                "party_id": party,
+                "n_candidatos": int(n),
+            })
+
+    df_canonical = pd.DataFrame(
+        filas, columns=["district_id", "party_id", "n_candidatos"]
+    )
+    provenance_info = {
+        "source": "TRICEL",
+        "districts_loaded": len(archivos),
+        "sha256_by_district": sha256_by_district,
+    }
+    return df_canonical, provenance_info
+
+
+__all__ = [
+    "import_proclamations", "import_votes", "import_candidate_counts",
+    "ProclamationRecord",
+]

@@ -8,7 +8,9 @@ electorales de un plan completo.
 
 from .dhondt import (
     dhondt,
+    dhondt_con_tope,
     dhondt_binivel,
+    dhondt_binivel_cl,
     aggregate_votes,
     run_electoral_plan,
     run_electoral_plan_binivel,
@@ -23,7 +25,9 @@ from .plan_metrics import plan_electoral_metrics
 
 __all__ = [
     "dhondt",
+    "dhondt_con_tope",
     "dhondt_binivel",
+    "dhondt_binivel_cl",
     "aggregate_votes",
     "run_electoral_plan",
     "run_electoral_plan_binivel",

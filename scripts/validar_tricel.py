@@ -30,18 +30,18 @@ ya procesado, no el Excel crudo) + --assignment, con el mismo patrón que
 scripts/validar_dhondt.py --modo candidatos: district_id se deriva de
 CUT vía assignment, y list_id/party_id ya vienen con cada candidato.
 
-Estado (agosto 2026): 25/28 distritos (default --votes-source
-servel_final, ver VALIDATION_REPORT.md). Los 3 distritos restantes
-(D3, D5, D19) NO son un problema de cobertura de datos — la causa raíz
-verificada es que chiledist.engines.allocation.dhondt.dhondt_binivel()
-no aplica un tope de candidatos disponibles por partido en el reparto
-intra-pacto (Nivel 2): un partido con un solo candidato inscrito puede
-"ganar" más de un escaño en el cálculo aproximado, cuando en la
-realidad ese escaño pasa al siguiente partido con un candidato
-disponible. Ver VALIDATION_REPORT.md para la evidencia (7/7 pactos
-reproducidos exactamente con un D'Hondt con tope de candidatos) — el
-fix no está implementado aquí, es un cambio a la función D'Hondt
-central usada en todo el pipeline, no específico de este script.
+Estado (agosto 2026): 28/28 distritos, EXACT_REPRODUCTION (defaults
+--votes-source servel_final --dhondt-variant cl, ver VALIDATION_REPORT.md).
+El fix de los 3 distritos que antes quedaban sin validar (D3, D5, D19 —
+NO era un problema de cobertura de datos, sino que
+chiledist.engines.allocation.dhondt.dhondt_binivel() no aplicaba un tope
+de candidatos disponibles por partido en el reparto intra-pacto) vive en
+chiledist.engines.allocation.dhondt.dhondt_binivel_cl(), función separada
+de dhondt_binivel() (preservada sin cambios — sigue disponible vía
+--dhondt-variant generic, 25/28 PARTIAL, para comparación/regresión). Ver
+VALIDATION_REPORT.md §3, §9-10 para la evidencia completa (7/7 pactos
+reproducidos exactamente) y la verificación de que H4 (96/96 vs SERVEL)
+no se ve afectado.
 """
 
 import argparse
@@ -178,6 +178,18 @@ def main() -> int:
              "'tricel'. 'tricel': cd.import_votes(), mesa a mesa TRICEL — "
              "mantenido para comparación/depuración.",
     )
+    parser.add_argument(
+        "--dhondt-variant", choices=["generic", "cl"], default="cl",
+        help="Variante de D'Hondt binivel para el reparto intra-pacto. "
+             "'cl' (default, agosto 2026): dhondt_binivel_cl(), aplica tope de "
+             "candidatos disponibles por partido — sin esto, un partido con un "
+             "solo candidato inscrito puede \"ganar\" escaños que no tiene a "
+             "quién asignar (causa raíz verificada de Distrito 3/5/19, ver "
+             "VALIDATION_REPORT.md §3). 'generic': dhondt_binivel() sin tope, "
+             "mantenido para comparación/regresión — dhondt_binivel() en sí "
+             "NO fue modificado, ver docstring de dhondt_binivel_cl() para "
+             "por qué son funciones separadas.",
+    )
     args = parser.parse_args()
 
     os.environ["CHILEDIST_DATA_DIR"] = args.data_dir
@@ -223,6 +235,14 @@ def main() -> int:
         print(f"    workbook: {_votes_provenance['workbook']}")
     print(f"  {len(votes_tricel)} registros (distrito, candidato) de votación TRICEL.")
 
+    candidatos_por_partido = None
+    if args.dhondt_variant == "cl":
+        print(f"  Importando conteo de candidatos por partido desde {args.data_dir}/TRICEL_2025 ...")
+        candidatos_por_partido, _cand_count_provenance = cd.import_candidate_counts(
+            source_dir=args.data_dir,
+        )
+        print(f"  {len(candidatos_por_partido)} filas (distrito, partido, n_candidatos).")
+
     magnitudes = {
         n: int(m) for n, m in cd.MAGNITUDES_LEGALES_LEY20840.items()
         if n in set(assignment.values())
@@ -238,6 +258,7 @@ def main() -> int:
         assignment=assignment,
         magnitudes=magnitudes,
         pacto_map=pacto_map,
+        candidatos_por_partido=candidatos_por_partido,
         source_hashes={
             "SERVEL": servel_hash,
             "TRICEL": _combined_hash(proc_provenance["sha256_by_district"]),

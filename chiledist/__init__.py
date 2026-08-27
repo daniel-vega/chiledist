@@ -161,7 +161,7 @@ from .domain import data as data
 from .domain.data import normalize_commune_name
 
 # Proclamaciones y votación oficial TRICEL (capa 0 — domain)
-from .domain.data.tricel import import_proclamations, import_votes
+from .domain.data.tricel import import_proclamations, import_votes, import_candidate_counts
 
 # Validación del motor D'Hondt contra el resultado oficial TRICEL
 # (consumidor terminal — no es una de las 5 capas)
@@ -271,7 +271,9 @@ from .domain.utils import normalize_party_name
 # Asignación de escaños: D'Hondt, magnitudes, agregador de plan (capa 2 — engines)
 from .engines.allocation import (
     dhondt,
+    dhondt_con_tope,
     dhondt_binivel,
+    dhondt_binivel_cl,
     assign_seat_magnitudes,
     assign_seat_magnitudes_dhondt,
     aggregate_votes,
@@ -382,7 +384,7 @@ __all__ = [
     # data (subpaquete — acceder vía cd.data.census2024 / cd.data.servel)
     "data", "normalize_commune_name",
     # TRICEL (proclamaciones y votación oficial)
-    "import_proclamations", "import_votes",
+    "import_proclamations", "import_votes", "import_candidate_counts",
     # validation (consumidor terminal — valida el motor D'Hondt vs TRICEL)
     "validate_election", "ValidationReport",
     # scenario_comparison
@@ -417,7 +419,7 @@ __all__ = [
     "l1_distance_fair_share", "l2_distance_fair_share",
     "max_cell_deviation", "fair_share_summary",
     # electoral
-    "dhondt", "dhondt_binivel",
+    "dhondt", "dhondt_con_tope", "dhondt_binivel", "dhondt_binivel_cl",
     "assign_seat_magnitudes", "assign_seat_magnitudes_dhondt", "aggregate_votes",
     "run_electoral_plan", "run_electoral_plan_binivel", "national_shares",
     "gallagher_index", "loosemore_hanby", "rae_index",

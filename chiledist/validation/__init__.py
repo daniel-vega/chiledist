@@ -3,14 +3,17 @@ chiledist.validation
 ======================
 Validación del motor D'Hondt del paquete contra el resultado oficial
 TRICEL — compara escaños *calculados* (a partir de la votación SERVEL,
-vía chiledist.engines.allocation.dhondt.dhondt_binivel) contra escaños
+vía chiledist.engines.allocation.dhondt.dhondt_binivel o, con tope de
+candidatos disponibles por partido, dhondt_binivel_cl) contra escaños
 *proclamados* (chiledist.domain.data.tricel.import_proclamations()).
 
 No es una de las 5 capas del paquete (domain/rules/engines/inference/
 evaluation): es un consumidor terminal de todas ellas — no aporta datos
 ni comportamiento a ninguna, solo compara la salida de un motor (capa 2)
 contra una fuente externa de verdad (capa 0). Reutiliza dhondt_binivel()
-sin reimplementar ninguna regla de asignación de escaños.
+(o dhondt_binivel_cl(), ver el parámetro `candidatos_por_partido` de
+validate_election()) sin reimplementar ninguna regla de asignación de
+escaños.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from typing import Optional
 import pandas as pd
 
 from ..domain.data.servel import normalize_commune_name
-from ..engines.allocation.dhondt import dhondt_binivel
+from ..engines.allocation.dhondt import dhondt_binivel, dhondt_binivel_cl
 
 #: Etiqueta humana para el encabezado de ValidationReport.__str__ — no es
 #: mecánicamente derivable de election_id ("CL-2025-DIP" -> "Diputados
@@ -161,13 +164,15 @@ def validate_election(
     election_id: str = "CL-2025-DIP",
     source_hashes: Optional[dict] = None,
     votes_tricel: Optional[pd.DataFrame] = None,
+    candidatos_por_partido: Optional[pd.DataFrame] = None,
 ) -> ValidationReport:
     """
     Valida el motor D'Hondt del paquete reproduciendo la elección oficial.
 
     Pipeline
     --------
-    1. Para cada distrito con datos SERVEL, corre dhondt_binivel() sobre
+    1. Para cada distrito con datos SERVEL, corre dhondt_binivel() (o
+       dhondt_binivel_cl() si se provee `candidatos_por_partido`) sobre
        los votos agregados por partido para obtener escaños calculados
        por partido, y determina los candidatos ganadores dentro de cada
        partido por mayor votación individual (regla real, Ley 18.700 —
@@ -217,6 +222,17 @@ def validate_election(
         otra. El cruce con candidates_servel es por (district_id,
         candidate_name normalizado); ver _apply_votes_source(). Default:
         None (comportamiento anterior, usa candidates_servel.votes).
+    candidatos_por_partido : pd.DataFrame, opcional
+        Schema de chiledist.domain.data.tricel.import_candidate_counts():
+        district_id, party_id, n_candidatos. Si se provee, usa
+        dhondt_binivel_cl() en vez de dhondt_binivel() — tope de
+        candidatos disponibles por partido en el reparto intra-pacto.
+        Ver dhondt_binivel_cl() para justificación completa y
+        VALIDATION_REPORT.md §3 para la evidencia (7/7 pactos en disputa
+        de Distrito 3/5/19 reproducidos exactamente con este tope).
+        Explícito, no cambia el comportamiento por defecto: sin este
+        parámetro (default None) el resultado es idéntico al de antes
+        de que existiera.
 
     Returns
     -------
@@ -232,6 +248,13 @@ def validate_election(
     covered_districts = sorted(
         d for d in servel["district_id"].unique() if d in magnitudes
     )
+
+    candidatos_lookup: dict = {}
+    if candidatos_por_partido is not None:
+        for district_id_c, grp in candidatos_por_partido.groupby("district_id"):
+            candidatos_lookup[int(district_id_c)] = dict(
+                zip(grp["party_id"], grp["n_candidatos"])
+            )
 
     districts_validated = 0
     seats_validated = 0
@@ -251,7 +274,13 @@ def validate_election(
         votos_por_partido = district_df.groupby("party_id")["votes"].sum().to_dict()
         seats = magnitudes[district_id]
 
-        calculated_by_party = dhondt_binivel(votos_por_partido, pacto_map, seats)
+        if candidatos_por_partido is not None:
+            calculated_by_party = dhondt_binivel_cl(
+                votos_por_partido, pacto_map, seats,
+                candidatos_lookup.get(district_id, {}),
+            )
+        else:
+            calculated_by_party = dhondt_binivel(votos_por_partido, pacto_map, seats)
 
         party_to_list = (
             district_df.drop_duplicates("party_id")
