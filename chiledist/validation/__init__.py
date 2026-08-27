@@ -62,6 +62,7 @@ class ValidationReport:
             f"List allocations: {self.list_allocations_validated}/{self.list_allocations_total}",
             f"Candidate proclamations: {self.candidate_proclamations}/{self.candidate_proclamations_total}",
             f"Ties requiring legal resolution: {self.ties_requiring_legal_resolution}",
+            f"Votes with SERVEL fallback: {self.votes_tricel_fallback_count}/1096",
             "Source hashes:",
             f"  SERVEL: {self.source_hashes.get('SERVEL', '')}",
             f"  TRICEL: {self.source_hashes.get('TRICEL', '')}",

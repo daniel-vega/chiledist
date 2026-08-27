@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import sys
+from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -80,6 +81,38 @@ def _cargar_candidates_servel(servel_candidates_path: str, assignment: dict) -> 
     return candidatos
 
 
+def _print_district_summary(discrepancies: list) -> None:
+    """
+    Resumen agrupado por distrito de discrepancias no validadas: total,
+    tipos presentes, y candidatos en cada dirección del desacuerdo
+    (calculados-pero-no-proclamados / proclamados-pero-no-calculados).
+    """
+    by_district = defaultdict(list)
+    for d in discrepancies:
+        by_district[d["district_id"]].append(d)
+
+    print(f"Distritos no validados ({len(by_district)}):")
+    for district_id in sorted(by_district):
+        items = by_district[district_id]
+        types_present = sorted({item["type"] for item in items})
+        print(f"  D{district_id}: {len(items)} discrepancias ({' + '.join(types_present)})")
+
+        falsos_positivos = [
+            it for it in items
+            if it["type"] == "candidate_mismatch" and it["calculated"] == "elected (D'Hondt)"
+        ]
+        falsos_negativos = [
+            it for it in items
+            if it["type"] == "candidate_mismatch" and it["expected"] == "elected (TRICEL)"
+        ]
+        if falsos_positivos:
+            nombres = ", ".join(it["candidate_name"] for it in falsos_positivos)
+            print(f"    Calculados electos pero no proclamados: {nombres}")
+        if falsos_negativos:
+            nombres = ", ".join(it["candidate_name"] for it in falsos_negativos)
+            print(f"    Proclamados pero no calculados: {nombres}")
+
+
 def _combined_hash(sha256_by_district: dict) -> str:
     """
     ProvenanceRecord/sha256_by_district traen un hash *por archivo* (uno
@@ -115,6 +148,10 @@ def main() -> int:
                          help="JSON {partido: pacto}.")
     parser.add_argument("--assignment", required=True,
                          help="JSON {CUT: n_distrito}.")
+    parser.add_argument("--verbose", action="store_true",
+                         help="Mostrar el detalle completo de cada discrepancia "
+                              "(por default solo se muestra el resumen agrupado "
+                              "por distrito).")
     args = parser.parse_args()
 
     os.environ["CHILEDIST_DATA_DIR"] = args.data_dir
@@ -175,15 +212,22 @@ def main() -> int:
 
     print()
     print(str(report))
-    print(f"Votes TRICEL fallback count: {report.votes_tricel_fallback_count}")
     print()
 
-    if report.discrepancies:
-        print(f"  {len(report.discrepancies)} discrepancia(s):")
+    if report.status != "EXACT_REPRODUCTION" and report.discrepancies:
+        _print_district_summary(report.discrepancies)
+        print()
+
+    if args.verbose and report.discrepancies:
+        print(f"  {len(report.discrepancies)} discrepancia(s) (detalle completo):")
         for d in report.discrepancies[:50]:
             print(f"    {d}")
         if len(report.discrepancies) > 50:
             print(f"    ... y {len(report.discrepancies) - 50} más.")
+        print()
+
+    if report.status != "EXACT_REPRODUCTION":
+        print("Para investigar discrepancias: usar --verbose para ver detalle completo")
 
     return 0 if report.status == "EXACT_REPRODUCTION" else 1
 
