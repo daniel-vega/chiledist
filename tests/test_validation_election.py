@@ -226,6 +226,7 @@ class TestValidationReportStr:
             source_hashes={"SERVEL": "aaa", "TRICEL": "bbb"},
             status="EXACT_REPRODUCTION",
             discrepancies=[],
+            votes_tricel_fallback_count=0,
         )
         assert str(report) == (
             "Election: Diputados 2025\n"
@@ -234,6 +235,7 @@ class TestValidationReportStr:
             "List allocations: 96/96\n"
             "Candidate proclamations: 155/155\n"
             "Ties requiring legal resolution: 0\n"
+            "Votes with SERVEL fallback: 0/1096\n"
             "Source hashes:\n"
             "  SERVEL: aaa\n"
             "  TRICEL: bbb\n"
