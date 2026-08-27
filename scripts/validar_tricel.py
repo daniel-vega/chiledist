@@ -57,7 +57,7 @@ def _cargar_candidates_servel(servel_candidates_path: str, assignment: dict) -> 
     df = df.dropna(subset=["district_id"]).copy()
     df["district_id"] = df["district_id"].astype(int)
 
-    return pd.DataFrame({
+    candidatos = pd.DataFrame({
         "district_id":    df["district_id"],
         "candidate_id":   df["cod_candidato"].astype(int),
         "candidate_name": df["nombre_candidato"].astype(str),
@@ -65,6 +65,19 @@ def _cargar_candidates_servel(servel_candidates_path: str, assignment: dict) -> 
         "list_id":        df["pacto"].astype(str),
         "votes":          pd.to_numeric(df["votos"], errors="coerce").fillna(0).astype(int),
     })
+
+    # Agregar votos por candidato (una fila por candidato,
+    # no una por CUT) -- servel_2025_candidatos.csv tiene
+    # una fila por (candidate_id, CUT)
+    candidatos = (
+        candidatos.groupby(
+            ["district_id", "candidate_id", "candidate_name",
+             "party_id", "list_id"],
+            as_index=False,
+        )["votes"]
+        .sum()
+    )
+    return candidatos
 
 
 def _combined_hash(sha256_by_district: dict) -> str:
@@ -162,6 +175,7 @@ def main() -> int:
 
     print()
     print(str(report))
+    print(f"Votes TRICEL fallback count: {report.votes_tricel_fallback_count}")
     print()
 
     if report.discrepancies:
