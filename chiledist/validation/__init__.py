@@ -49,6 +49,9 @@ class ValidationReport:
     source_hashes: dict
     status: str  # "EXACT_REPRODUCTION" | "PARTIAL" | "FAIL"
     discrepancies: list
+    votes_tricel_fallback_count: int = 0
+    # candidatos donde se usó votos SERVEL como fallback
+    # (TRICEL no tenía esa columna en MESA A MESA)
 
     def __str__(self) -> str:
         label = _ELECTION_LABELS.get(self.election_id, self.election_id)
@@ -90,7 +93,7 @@ def _has_boundary_tie(district_party_df: pd.DataFrame, k: int) -> bool:
 
 def _apply_votes_source(
     candidates_servel: pd.DataFrame, votes_tricel: Optional[pd.DataFrame]
-) -> pd.DataFrame:
+) -> "tuple[pd.DataFrame, int]":
     """
     Reemplaza la columna `votes` de candidates_servel por los totales de
     votes_tricel (import_votes(), hoja MESA A MESA) cuando se provee.
@@ -108,24 +111,44 @@ def _apply_votes_source(
     usan el nombre en mayúsculas sin tilde de SERVEL/TRICEL, normalizado
     aquí con normalize_commune_name() por consistencia con el cruce que
     ya hace domain.data.tricel.import_proclamations().
+
+    Fallback: MESA A MESA no siempre trae una columna por cada candidato
+    del roster completo (~24% de los candidatos reales quedan sin match
+    — ver "Deuda técnica"). Antes, un candidato sin match quedaba en
+    votes=0, lo que producía empates espurios (0 == 0) entre candidatos
+    sin match del mismo partido y arruinaba el ranking intra-partido —
+    ahora conserva sus votos SERVEL originales en vez de perderlos.
+
+    Returns
+    -------
+    (df, n_fallback) — df con `votes` reemplazado donde hubo match
+    TRICEL (sin cambios donde no lo hubo), y n_fallback = cuántos
+    candidatos usaron el fallback a votos SERVEL.
     """
     if votes_tricel is None:
-        return candidates_servel.copy()
+        return candidates_servel.copy(), 0
 
     servel = candidates_servel.copy()
     servel["_name_norm"] = servel["candidate_name"].apply(normalize_commune_name)
 
-    votes = votes_tricel.copy()
+    votes = votes_tricel[["district_id", "candidate_name", "votes_final"]].copy()
     votes["_name_norm"] = votes["candidate_name"].apply(normalize_commune_name)
-    votes_by_key = dict(zip(
-        zip(votes["district_id"], votes["_name_norm"]), votes["votes_final"]
-    ))
+    votes = votes.drop(columns=["candidate_name"])
 
-    servel["votes"] = [
-        votes_by_key.get((d, n), 0)
-        for d, n in zip(servel["district_id"], servel["_name_norm"])
-    ]
-    return servel.drop(columns=["_name_norm"])
+    merged = servel.merge(
+        votes,
+        on=["district_id", "_name_norm"],
+        how="left",   # conserva todos los candidatos SERVEL
+    )
+    # Para candidatos sin match TRICEL, usar votos SERVEL
+    merged["votes"] = merged["votes_final"].where(
+        merged["votes_final"].notna(),
+        other=merged["votes"],  # fallback a votos SERVEL
+    ).astype(int)
+    # Registrar cuántos usaron fallback
+    n_fallback = int(merged["votes_final"].isna().sum())
+
+    return merged.drop(columns=["_name_norm", "votes_final"]), n_fallback
 
 
 def validate_election(
@@ -201,7 +224,7 @@ def validate_election(
     districts_total = len(set(assignment.values()))
     seats_total = sum(magnitudes.values())
 
-    servel = _apply_votes_source(candidates_servel, votes_tricel)
+    servel, votes_tricel_fallback_count = _apply_votes_source(candidates_servel, votes_tricel)
     if "district_id" not in servel.columns:
         raise ValueError("candidates_servel requiere la columna district_id")
 
@@ -342,6 +365,7 @@ def validate_election(
         source_hashes=dict(source_hashes) if source_hashes else {},
         status=status,
         discrepancies=discrepancies,
+        votes_tricel_fallback_count=votes_tricel_fallback_count,
     )
 
 
