@@ -800,7 +800,70 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 
 **Criterio de aceptación:** todos los tests pasan en cualquier entorno con solo `pip install chiledist`.
 
-**✅ RESUELTO (agosto 2026):** verificado con `pip install -e .` (`pyproject.toml` agregado — antes no existía, ver `CAPABILITY_AUDIT.md`/README.md § Instalación) en un venv nuevo, ejecutando pytest **desde fuera del repo** (`cd /tmp && python -m pytest /ruta/al/repo/tests/`) para descartar que el import funcionara solo por resolución accidental de `cwd`/`sys.path` — confirmado con `python -I` (modo aislado) que `chiledist` resuelve vía el finder de instalación editable registrado en `site-packages`, no por el directorio de trabajo. **595 passed, 8 skipped, 0 failed.** No se verificó contra una publicación real en PyPI (`pip install chiledist` sin `-e`), solo la instalación editable local — son equivalentes en mecanismo de resolución de imports, pero no es exactamente el mismo comando citado en el criterio original.
+**Estado real (agosto 2026) — dos verificaciones separadas, no una sola marca de "resuelto":**
+
+**✅ RESUELTO: resolución del paquete vía site-packages (no cwd/sys.path).**
+Confirmado con `python -I` (modo aislado: ignora cwd, `PYTHONPATH` y user
+site-packages) ejecutado desde `/tmp`, **reutilizando el venv existente del
+proyecto** (`env/`, no un venv nuevo) tras correr `pip install -e ".[dev]"`
+ahí. Verificado tanto el paquete raíz como un submódulo explícito, para no
+asumir que el segundo se resuelve igual que el primero:
+
+```
+$ cd /tmp && python -I -c "
+import chiledist
+import chiledist.engines.samplers as s
+print('chiledist:', chiledist.__file__)
+print('chiledist.engines.samplers:', s.__file__)
+"
+chiledist: /home/dvega/Distritaje/chiledist/chiledist/__init__.py
+chiledist.engines.samplers: /home/dvega/Distritaje/chiledist/chiledist/engines/samplers/__init__.py
+```
+
+Ambas rutas apuntan al árbol fuente del repo, no a una copia en
+`site-packages` — eso es el comportamiento **correcto y esperado** de una
+instalación editable (`pip install -e .`), no un indicio de que cwd esté
+contaminando la resolución. Lo que prueba que la resolución pasa por
+`site-packages` y no por `cwd`/`sys.path` accidental es que el import
+funciona bajo `python -I` (que excluye cwd de `sys.path`) y que
+`site-packages/__editable___chiledist_0_2_0_finder.py` (el finder PEP 660
+registrado por setuptools) es el mecanismo que lo resuelve — no que el
+`__file__` diga "site-packages" literalmente, cosa que un editable install
+nunca hace por diseño. Suite completa desde fuera del repo: 595 passed, 8
+skipped, 0 failed (`cd /tmp && python -m pytest /home/dvega/Distritaje/chiledist/tests/`).
+
+**❌ PENDIENTE: instalación desde cero contra índice PyPI real (fuera del sandbox).**
+No probado. El sandbox actual tiene el índice de pip topado en versiones de
+2023 (`numpy` disponible hasta 1.24.4, incluso pasando `--index-url
+https://pypi.org/simple/` explícito), por lo que los pines exactos de
+`pyproject.toml` (`numpy==2.4.6`, `scipy==1.17.1`, `geopandas==1.1.3`, etc.)
+no pudieron resolverse ni instalarse de forma independiente — el intento
+directo (`python -m venv /tmp/test_install && pip install -e
+/home/dvega/Distritaje/chiledist`) falló con `ERROR: Could not find a
+version that satisfies the requirement numpy==2.4.6`. La verificación de
+arriba evade este problema reutilizando un venv que ya tenía los pines
+exactos instalados de una sesión previa con acceso real a PyPI — no
+demuestra que esos pines sean *resolubles* hoy contra el índice real, solo
+que *ya instalados*, `pip install -e .` los deja consistentes. Antes de
+considerar este punto cerrado, ejecutar en un entorno con acceso a PyPI
+actual:
+
+```bash
+python3.11 -m venv /tmp/fresh && source /tmp/fresh/bin/activate
+pip install -e '<repo>[dev]'
+```
+
+y confirmar que resuelve sin conflictos de versión.
+
+**Auditoría de dependencias runtime no declaradas — sin hallazgos.**
+`grep -rhoE "^\s*(import|from) [a-zA-Z_][a-zA-Z0-9_.]*" chiledist/ | awk
+'{print $2}' | cut -d. -f1 | sort -u` sobre el código de la librería (no
+scripts/, no tests/) da: `geopandas, gerrychain, libpysal, matplotlib,
+networkx, numpy, pandas, pyarrow, scipy, shapely, yaml` como no-stdlib —
+los 11 ya estaban cubiertos en `pyproject.toml` (`yaml` → `pyyaml`). Ver el
+comentario correspondiente en `pyproject.toml` para el detalle completo,
+incluida la limitación de este método (no detecta dependencias invocadas
+por string, como `openpyxl` vía `engine="openpyxl"` de pandas).
 
 ---
 

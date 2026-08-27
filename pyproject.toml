@@ -9,6 +9,24 @@ readme = "README.md"
 requires-python = ">=3.11"
 dynamic = ["version"]
 
+# Auditoria de imports reales (agosto 2026) — verificado por grep de imports
+# en chiledist/, no por cobertura de tests (los tests pueden pasar sin que
+# una dependencia este declarada, si ya esta instalada por otra razon en el
+# entorno de desarrollo). Comando y resultado exactos:
+#
+#   grep -rhoE "^\s*(import|from) [a-zA-Z_][a-zA-Z0-9_.]*" chiledist/ \
+#     | awk '{print $2}' | cut -d. -f1 | sort -u
+#
+# No-stdlib encontrado: geopandas, gerrychain, libpysal, matplotlib,
+# networkx, numpy, pandas, pyarrow, scipy, shapely, yaml — los 11 ya
+# estaban cubiertos abajo (yaml -> pyyaml). Nada nuevo que agregar.
+#
+# Limitacion conocida de este metodo: no detecta dependencias invocadas por
+# nombre de string en vez de `import` (ej. `pd.read_excel(engine="openpyxl")`
+# en domain/data/servel|tricel) — openpyxl se agrego por lectura directa del
+# codigo, no porque este grep lo hubiera encontrado. Cualquier futura
+# dependencia de ese tipo (motores/backends invocados por string) necesita
+# revision manual, este grep solo no basta.
 dependencies = [
     # ── Datos y algebra ──────────────────────────────────────────────────
     "numpy==2.4.6",
