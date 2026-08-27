@@ -29,11 +29,16 @@ documentada por TRICEL):
 
 `num_tricel` (hoja CANDIDATOS) se relaciona con `candidate_id`
 (cod_candidato de SERVEL, ver domain.data.servel.CandidateRecord) por
-`num_tricel == candidate_id % 100` — verificado exhaustivamente sobre
-Distrito 1 (25/25 candidatos, sin excepciones) durante la inspección
-previa a esta implementación. Como la hoja ELECTOS no trae `num_tricel`
-directamente, el cruce se hace en dos pasos dentro del mismo archivo:
-ELECTOS → (nombre) → CANDIDATOS → num_tricel → SERVEL.
+`num_tricel == candidate_id % 1000` — el sufijo es de 3 dígitos, no 2:
+verificado inicialmente sobre Distrito 1 (25/25 candidatos) con
+`% 100`, que coincide con `% 1000` solo cuando num_tricel < 100: en
+distritos con 100+ candidatos (num_tricel de 3 dígitos, ej. cod=
+66005100 → num_tricel=100) `% 100` da 0 y el cruce fallaba en
+silencio — corregido tras encontrar 12 candidatos electos sin cruce en
+la corrida completa de los 28 distritos reales. Como la hoja ELECTOS
+no trae `num_tricel` directamente, el cruce se hace en dos pasos
+dentro del mismo archivo: ELECTOS → (nombre) → CANDIDATOS → num_tricel
+→ SERVEL.
 """
 
 from __future__ import annotations
@@ -217,7 +222,7 @@ def import_proclamations(
         del mismo archivo, empareja el nombre de ELECTOS con CANDIDATOS
         para obtener su num_tricel; (2) filtra domain.data.servel
         .import_candidates() al mismo district_id y busca
-        candidate_id % 100 == num_tricel — para obtener candidate_id,
+        candidate_id % 1000 == num_tricel — para obtener candidate_id,
         party_id y list_id ya normalizados.
     CANONICAL: un registro por electo con el schema exacto de
         ProclamationRecord.
@@ -266,7 +271,7 @@ def import_proclamations(
         commune_cut_map=commune_cut_map,
     )
     servel_df = servel_df.copy()
-    servel_df["_suffix"] = servel_df["candidate_id"] % 100
+    servel_df["_suffix"] = servel_df["candidate_id"] % 1000
 
     filas = []
     unmatched: list[str] = []
