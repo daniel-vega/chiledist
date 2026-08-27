@@ -386,10 +386,9 @@ antes (no se pudo confirmar el origen de ese número previo).
 
 ### Estado
 
-CLOSED para R13/Censo 2024/n=8.
+CLOSED para R13/Censo 2024/n=7 y n=8.
 Pendiente para cierre completo de H1:
 - Replicar en R5 y R8 (otras regiones)
-- Replicar con pop_source=viviendas (comparación H5)
 - apc_strict vía SMC (descomposición causal)
 
 ### Archivos canónicos
@@ -690,8 +689,10 @@ Pendiente: agregar parámetro magnitudes= a la función.
 
 ### Estado
 
-PARTIALLY COMPLETED — métricas del mapa vigente calculadas.
-Pendiente: frontera Pareto nacional para comparación válida.
+PARTIALLY COMPLETED — position_plan_vigente() ejecutada, métricas
+del mapa vigente calculadas.
+Pendiente: frontera Pareto nacional para comparación válida
+(requiere ensemble nacional).
 
 ---
 
@@ -912,8 +913,12 @@ una redistribución proporcional le quitaría escaños.
 
 #### Estado
 
-COMPLETED — corrida real con Censo 2024 y asignacion_vigente.json
-corregido. Pendiente: análisis electoral (--servel-path) para A4
+COMPLETED — ambos regímenes (MAGNITUDES_LEGALES_LEY20840 y
+MAGNITUDES_CENSO2024_2026) corridos con datos reales (Censo 2024,
+asignacion_vigente.json corregido). Ratio max/min pxe 5.74x
+invariante entre regímenes. assign_seat_magnitudes_dhondt()
+validado: 26/28 vs Resolución O 129/2026.
+Pendiente: análisis electoral (--servel-path) para A4
 cuando se integre con los resultados de H4.
 
 #### Archivos generados
@@ -1332,7 +1337,8 @@ Ver subsección "Validación empírica — D'Hondt binivel vs SERVEL 2025", arri
 
 #### Estado
 
-PARTIALLY COMPLETED:
+VALIDATED — 96/96 D'Hondt binivel vs SERVEL 2025 (ver
+"Validación empírica — D'Hondt binivel vs SERVEL 2025", arriba).
 
     B1 ✅ datos reales
     B2 ✅ datos reales
@@ -2643,3 +2649,19 @@ Re-auditoría contra el estado actual del repositorio. Conclusión principal, si
 - [ ] Agregar al menos un test de integración en `tests/` que corra el pipeline real (aunque sea en una región chica tipo R11/Aysén) en vez de solo `--demo`.
 - [ ] Reemplazar cada 🔴 de la *Tabla de brechas* (arriba) por ✅ a medida que cada dato/ejecución esté listo, y actualizar la fecha de auditoría.
 - [ ] Redactar la sección de métodos citando explícitamente semilla, N de ensemble, fuente de población y región — según lo congelado en Fase 0.
+
+---
+
+## Estado consolidado — agosto 2026
+
+| H | Nombre | Estado | Datos reales | Pendiente |
+|---|--------|--------|--------------|-----------|
+| H1 | Costo restricción comunal | CLOSED R13 | ✅ Censo 2024 | R5/R8, apc_strict SMC |
+| H2 | Frontera Pareto | COMPLETED R13 | ✅ | Ensemble nacional |
+| H3 | Malapportionment | COMPLETED | ✅ Censo 2024 | — |
+| H4 | D'Hondt binivel | VALIDATED | ✅ SERVEL+TRICEL 2025 | B3 ensemble nacional |
+| H5 | Robustez sampler | PENDING | ❌ | run_chains ≥4 semillas |
+| H6 | Gallagher ensemble | PARTIALLY COMPLETED | ✅ plan vigente | Ensemble nacional |
+| H7 | Seat bonus ensemble | PARTIALLY COMPLETED | ✅ plan vigente | fair_share_matrix |
+| H8 | Knee point Pareto | COMPLETED R13 | ✅ | Barrido más denso |
+| H9 | Comparación internacional | COMPLETED | ✅ Censo 2024 | — |
