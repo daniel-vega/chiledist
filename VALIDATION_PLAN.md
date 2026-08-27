@@ -800,6 +800,8 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 
 **Criterio de aceptación:** todos los tests pasan en cualquier entorno con solo `pip install chiledist`.
 
+**✅ RESUELTO (agosto 2026):** verificado con `pip install -e .` (`pyproject.toml` agregado — antes no existía, ver `CAPABILITY_AUDIT.md`/README.md § Instalación) en un venv nuevo, ejecutando pytest **desde fuera del repo** (`cd /tmp && python -m pytest /ruta/al/repo/tests/`) para descartar que el import funcionara solo por resolución accidental de `cwd`/`sys.path` — confirmado con `python -I` (modo aislado) que `chiledist` resuelve vía el finder de instalación editable registrado en `site-packages`, no por el directorio de trabajo. **595 passed, 8 skipped, 0 failed.** No se verificó contra una publicación real en PyPI (`pip install chiledist` sin `-e`), solo la instalación editable local — son equivalentes en mecanismo de resolución de imports, pero no es exactamente el mismo comando citado en el criterio original.
+
 ---
 
 ### Nivel 3 — Tests científicos / de integración

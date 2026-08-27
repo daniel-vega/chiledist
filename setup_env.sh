@@ -82,44 +82,13 @@ info "Entorno activado: $VIRTUAL_ENV"
 info "Actualizando pip..."
 pip install --upgrade pip --quiet
 
-# ── Instalar dependencias en orden correcto ───────────────────────────────────
-info "Instalando dependencias..."
-
-# 1. Dependencias base (numpy/shapely primero para evitar conflictos)
-info "  [1/6] Base científica..."
-pip install "numpy==2.4.6" "scipy==1.17.1" "pandas==3.0.3" --quiet
-
-# 2. Geoespacial (fiona antes de geopandas)
-info "  [2/6] Geoespacial..."
-pip install "shapely==2.1.2" "pyproj==3.7.2" "fiona==1.10.1" --quiet
-pip install "pyogrio==0.12.1" "geopandas==1.1.3" --quiet
-
-# 3. Grafos y visualización
-info "  [3/6] Grafos y visualización..."
-pip install "networkx==3.6.1" "matplotlib==3.11.0" --quiet
-
-# 4. Análisis espacial
-info "  [4/6] Análisis espacial..."
-pip install "libpysal==4.14.1" "esda==2.6.0" --quiet
-
-# 5. Persistencia (parquet)
-info "  [5/7] Pyarrow (parquet)..."
-pip install "pyarrow>=14.0.0" --quiet
-
-# 6. Machine learning (dependencia de gerrychain)
-info "  [6/7] Scikit-learn..."
-pip install "scikit-learn==1.9.0" --quiet
-
-# 7. Redistritaje
-info "  [7/7] Gerrychain..."
-pip install "gerrychain==0.3.2" --quiet
-
-# ── Instalar chiledist en modo editable ───────────────────────────────────────
+# ── Instalar chiledist (+ dependencias) en modo editable ───────────────────────
+# pyproject.toml es la única fuente de verdad de dependencias — no
+# reimplementar la lista de paquetes acá (ver pyproject.toml [project]
+# dependencies). `pip install -e .` resuelve e instala todo lo declarado ahí.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/setup.py" ]; then
-    info "Instalando chiledist en modo editable..."
-    pip install -e "$SCRIPT_DIR" --quiet
-fi
+info "Instalando chiledist en modo editable (+ dependencias declaradas en pyproject.toml)..."
+pip install -e "$SCRIPT_DIR[dev]" --quiet
 
 # ── Verificar instalación ─────────────────────────────────────────────────────
 info "Verificando instalación..."
@@ -140,8 +109,8 @@ checks = [
     ("shapely",           "shapely"),
     ("pyarrow",           "pyarrow"),
     ("gerrychain",        "gerrychain"),
-    ("chiledist",         "chiledist"),
-    ("chiledist.samplers","chiledist.samplers"),
+    ("chiledist",                 "chiledist"),
+    ("chiledist.engines.samplers","chiledist.engines.samplers"),
 ]
 
 print()
@@ -165,14 +134,14 @@ else:
 import chiledist as cd
 try:
     crs = cd.get_optimal_crs.__module__   # smoke test — función debe existir
-    print(f"  ✓  cd.get_optimal_crs       disponible (equivalence)")
+    print(f"  ✓  cd.get_optimal_crs       disponible (domain.equivalence)")
 except AttributeError:
     print("  ✗  cd.get_optimal_crs       NO encontrado")
     sys.exit(1)
 
 try:
     _ = cd.ScoringConfig.default()
-    print(f"  ✓  cd.ScoringConfig         disponible (scenario_comparison)")
+    print(f"  ✓  cd.ScoringConfig         disponible (evaluation.scoring)")
 except AttributeError:
     print("  ✗  cd.ScoringConfig         NO encontrado")
     sys.exit(1)
@@ -181,10 +150,10 @@ PYCHECK
 # ── Verificar R (opcional, solo para flujo SMC) ───────────────────────────────
 if command -v Rscript &>/dev/null; then
     R_VER=$(Rscript -e "cat(R.version\$major, R.version\$minor, sep='.')" 2>/dev/null || echo "?")
-    info "R disponible: $R_VER (recomendado para samplers.smc)"
+    info "R disponible: $R_VER (recomendado para engines.samplers.smc — extra [smc])"
 else
     warning "Rscript no encontrado en PATH."
-    warning "  El flujo SMC (samplers.smc) requiere R con el paquete 'redist'."
+    warning "  El flujo SMC (engines.samplers.smc) requiere R con el paquete 'redist'."
     warning "  Para instalar R: https://cran.r-project.org/"
     warning "  Los flujos ReCom y de análisis funcionan sin R."
 fi

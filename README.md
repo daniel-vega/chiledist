@@ -84,11 +84,19 @@ env\Scripts\activate          # Windows
 
 ### Instalación manual
 
+`chiledist` es un paquete instalable vía `pip install -e .` (`pyproject.toml` en la raíz del repo declara todas las dependencias — es la única fuente de verdad; `setup_env.sh` lo usa internamente, no reimplementa la lista de paquetes).
+
 ```bash
-pip install -r requirements.txt
+# Instalación básica (dependencias de chiledist.__init__ y los flujos ReCom/análisis)
+pip install -e .
+
+# Con dependencias de test (pytest, pytest-randomly)
+pip install -e ".[dev]"
 ```
 
-> No hay `setup.py`/`pyproject.toml` en la raíz del proyecto — `chiledist` no es un paquete instalable con `pip install -e .` todavía. Para usar la librería, ejecuta los scripts desde la raíz del repo (todos insertan `ROOT` en `sys.path` automáticamente) o agrega la raíz a `PYTHONPATH`.
+No hay extra `[smc]` con paquetes Python adicionales — el puente a R (`chiledist.engines.samplers.smc`, `scripts/smc_pipeline.py`) es generación de script R + subprocess, no una librería Python. Requiere R con el paquete `redist` instalado aparte (fuera de pip) — ver "Bridge R / redist" más abajo. `pip install -e ".[smc]"` funciona igual (es un extra vacío) pero no reemplaza instalar R.
+
+`requirements.txt` sigue disponible como lista plana equivalente para entornos que prefieran `pip install -r requirements.txt` en vez de una instalación editable del paquete.
 
 ### Verificar instalación
 

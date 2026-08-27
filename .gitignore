@@ -3,6 +3,9 @@
 **/venv/
 **/.venv/
 
+# Metadata de instalación editable (pip install -e .)
+*.egg-info/
+
 # Datos geoespaciales
 **/SHP_APC2023
 
