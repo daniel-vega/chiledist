@@ -9,6 +9,25 @@ sobre los 28 distritos reales.
 **Estado actual: `PARTIAL`, no `EXACT_REPRODUCTION`.** Este documento
 explica por qué, qué se corrigió para llegar hasta acá, y qué falta.
 
+## 0. Estado canónico (fuente de verdad)
+
+**96/96 y 24/28 son dos validaciones distintas contra fuentes distintas — nunca combinar en una sola cifra.**
+
+```json
+{
+  "SERVEL_INTERNAL_CONSISTENCY": {"result": "96/96", "status": "PASS", "source": "validar_dhondt.py vs SERVEL 2025"},
+  "TRICEL_OFFICIAL_REPRODUCTION": {"result": "24/28 distritos", "status": "PARTIAL", "detail": "141/155 escaños, 181/185 asignaciones de lista, 141/155 candidatos", "source": "validar_tricel.py vs TRICEL 2025", "unresolved": ["D3", "D5", "D8", "D19"]},
+  "EXACT_REPRODUCTION": false
+}
+```
+
+| Validación | Resultado | Estado | Contra qué | Script |
+|---|---|---|---|---|
+| `SERVEL_INTERNAL_CONSISTENCY` | 96/96 combinaciones (distrito, pacto) | PASS | Resultado oficial **SERVEL** 2025 (no TRICEL) | `scripts/validar_dhondt.py` |
+| `TRICEL_OFFICIAL_REPRODUCTION` | 24/28 distritos (141/155 escaños, 181/185 asignaciones de lista, 141/155 candidatos) | PARTIAL | Proclamaciones oficiales **TRICEL** 2025 | `scripts/validar_tricel.py` |
+
+Cualquier documento que cite "validado 96/96" debe decir explícitamente **vs SERVEL 2025**, no vs TRICEL — ver §2-3 más abajo para el detalle de por qué estas dos cifras no son intercambiables.
+
 ---
 
 ## 1. Output completo de la última corrida

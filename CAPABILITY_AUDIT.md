@@ -104,13 +104,13 @@ Con las cuatro capacidades de arriba, la infraestructura de H2 está completa: f
 - `aggregate_votes()`, `run_electoral_plan()`, `national_shares()` forman un pipeline coherente.
 - `gallagher_index()`, `loosemore_hanby()`, `rae_index()`, `effective_number_of_parties()`: índices de proporcionalidad implementados correctamente.
 - `plan_electoral_metrics()`: integra el pipeline en una función, y acepta `pacto_map` para el caso binivel.
-- **✓ Implementado — D'Hondt binivel (pactos → partidos)**: `dhondt_binivel()` y `run_electoral_plan_binivel()` (`chiledist/engines/allocation/dhondt.py:209,302`, post-B1; antes `chiledist/electoral/dhondt.py`) implementan el mecanismo real chileno de dos etapas — D'Hondt entre pactos y luego asignación intra-pacto por mayor votación individual. Era la brecha más crítica del borrador original ("sin él, cualquier análisis con datos reales produce asignaciones incorrectas") y ya no existe. Validado 96/96 combinaciones (distrito, pacto) contra el resultado oficial TRICEL 2025.
+- **✓ Implementado — D'Hondt binivel (pactos → partidos)**: `dhondt_binivel()` y `run_electoral_plan_binivel()` (`chiledist/engines/allocation/dhondt.py:209,302`, post-B1; antes `chiledist/electoral/dhondt.py`) implementan el mecanismo real chileno de dos etapas — D'Hondt entre pactos y luego asignación intra-pacto por mayor votación individual. Era la brecha más crítica del borrador original ("sin él, cualquier análisis con datos reales produce asignaciones incorrectas") y ya no existe. Validado 96/96 combinaciones (distrito, pacto) vs SERVEL 2025 (`validar_dhondt.py`); validado 24/28 distritos (PARTIAL) vs proclamaciones oficiales TRICEL 2025 (`validar_tricel.py`) — ver `VALIDATION_REPORT.md`.
 - **✓ Implementado — `chiledist/inference/electoral_ensemble/` (post-B1; antes `chiledist/electoral_ensemble/`, módulo completo, no mencionado en el borrador original)**: `run_electoral_ensemble()` (`chiledist/inference/electoral_ensemble/core.py:91`) corre D'Hondt (uni- o binivel, según si se pasa `pacto_map`) sobre cada plan de un ensemble; `ensemble_gallagher()`, `ensemble_seat_bonus()`, `ensemble_enp()`, `ensemble_effective_threshold()`, `summarize_electoral_ensemble()` dan las distribuciones agregadas. Esto integra exactamente lo que el borrador pedía como brecha ("Gallagher bajo escenarios alternativos... posible si se integra plan_electoral_metrics con el pipeline de ensemble").
 - **✓ Implementado — `margen_ultimo_escano(votos_district, magnitud)`** (`chiledist/evaluation/district_malapportionment.py:204`, post-B1; antes `chiledist/electoral/district_malapportionment.py:112`): votos entre el último electo y el primer no electo, por circunscripción.
 - **✓ Implementado — `umbral_efectivo(magnitud)`** (`chiledist/evaluation/district_malapportionment.py:175`, post-B1; antes `chiledist/electoral/district_malapportionment.py:83`): `1/(M+1)` por circunscripción.
 - **✓ Implementado — `seat_bonus(vote_shares, seat_shares)`** (`chiledist/evaluation/proportionality.py:125`, post-B1; antes `chiledist/electoral/proportionality.py`): diferencia entre cuota de escaños y cuota de votos. La firma final difiere levemente de la propuesta en el borrador (`seat_bonus(resultados_por_pacto)`) pero es funcionalmente equivalente.
 - **✓ Implementado — capa de datos SERVEL/TRICEL (no contemplada en el borrador original)**: `import_candidates()`, `filter_administrative_rows()`, `normalize_commune_name()` (`chiledist/domain/data/servel/__init__.py`) y `import_proclamations()`, `import_votes()` (`chiledist/domain/data/tricel/__init__.py`) parsean e importan datos electorales oficiales SERVEL/TRICEL directamente a los formatos que consume el pipeline D'Hondt, reemplazando la carga manual de CSV.
-- **✓ Implementado — `validate_election()` + `ValidationReport`** (`chiledist/validation/__init__.py:155,37`): valida un resultado electoral calculado contra las proclamaciones oficiales TRICEL, reportando coincidencias/discrepancias por distrito. Es el mecanismo detrás de la validación 96/96 documentada arriba.
+- **✓ Implementado — `validate_election()` + `ValidationReport`** (`chiledist/validation/__init__.py:155,37`): valida un resultado electoral calculado contra las proclamaciones oficiales TRICEL, reportando coincidencias/discrepancias por distrito. Es el mecanismo detrás de la validación TRICEL (24/28 distritos, PARTIAL) — distinta de la validación 96/96 vs SERVEL documentada arriba (`validar_dhondt.py`), que no pasa por `validate_election()`. Ver `VALIDATION_REPORT.md`.
 
 **Lo que ya es suficiente para H4:**
 
@@ -191,7 +191,7 @@ Con `compare_sensitivity`, `ranking_concordance`, la resolución consistente de 
 | **H4** | `umbral_efectivo(magnitud)` | ✅ Completo | — | — |
 | **H4** | `seat_bonus(vote_shares, seat_shares)` | ✅ Completo | — | — |
 | **H4** | Capa de datos SERVEL/TRICEL: `import_candidates()`, `import_proclamations()`, `import_votes()` | ✅ Completo | — | — |
-| **H4** | `validate_election()` + `ValidationReport` — validado 96/96 vs TRICEL 2025 | ✅ Completo | — | — |
+| **H4** | `validate_election()` + `ValidationReport` — validado 24/28 distritos (PARTIAL) vs TRICEL 2025; 96/96 combinaciones vs SERVEL 2025 (`validar_dhondt.py`, sin pasar por `validate_election()`) | ✅ Completo | — | — |
 | **H5** Robustez metodológica | Múltiples `pop_source` | ✅ Completo | — | — |
 | **H5** | Múltiples `island_policy` | ✅ Completo | — | — |
 | **H5** | Bridge SMC (ReCom vs SMC) | ✅ Completo | — | — |
@@ -260,7 +260,7 @@ No queda ningún ajuste pendiente identificado para H3.
 
 ### Estado: resuelto por completo
 
-**D'Hondt binivel (pactos → partidos)** — antes la brecha más crítica del módulo electoral — está implementado en `chiledist/engines/allocation/dhondt.py::dhondt_binivel` / `run_electoral_plan_binivel` (post-B1; antes `chiledist/electoral/dhondt.py`): D'Hondt entre pactos sobre votos totales de lista, luego asignación intra-pacto por mayor votación individual. Validado 96/96 vs TRICEL 2025. `chiledist/inference/electoral_ensemble/core.py::run_electoral_ensemble` (post-B1; antes `chiledist/electoral_ensemble/`) lo integra sobre ensembles completos cuando se provee `pacto_map`.
+**D'Hondt binivel (pactos → partidos)** — antes la brecha más crítica del módulo electoral — está implementado en `chiledist/engines/allocation/dhondt.py::dhondt_binivel` / `run_electoral_plan_binivel` (post-B1; antes `chiledist/electoral/dhondt.py`): D'Hondt entre pactos sobre votos totales de lista, luego asignación intra-pacto por mayor votación individual. Validado 96/96 combinaciones (distrito, pacto) vs SERVEL 2025 (`validar_dhondt.py`); validado 24/28 distritos (PARTIAL) vs proclamaciones oficiales TRICEL 2025 (`validar_tricel.py`) — ver `VALIDATION_REPORT.md`. `chiledist/inference/electoral_ensemble/core.py::run_electoral_ensemble` (post-B1; antes `chiledist/electoral_ensemble/`) lo integra sobre ensembles completos cuando se provee `pacto_map`.
 
 **`margen_ultimo_escano(votos_district, magnitud)`** → `chiledist/evaluation/district_malapportionment.py:204` (post-B1).
 
@@ -270,7 +270,7 @@ No queda ningún ajuste pendiente identificado para H3.
 
 **Capa de datos SERVEL/TRICEL** (no contemplada en el borrador original) → `import_candidates()`, `filter_administrative_rows()`, `normalize_commune_name()` (`chiledist/domain/data/servel/`) e `import_proclamations()`, `import_votes()` (`chiledist/domain/data/tricel/`) importan datos oficiales directamente al formato del pipeline D'Hondt.
 
-**`validate_election()` + `ValidationReport`** → `chiledist/validation/__init__.py` — valida el resultado calculado contra las proclamaciones TRICEL; es el mecanismo detrás del 96/96.
+**`validate_election()` + `ValidationReport`** → `chiledist/validation/__init__.py` — valida el resultado calculado contra las proclamaciones TRICEL; es el mecanismo detrás de la validación TRICEL (24/28 distritos, PARTIAL), distinta del 96/96 vs SERVEL (`validar_dhondt.py`, no usa `validate_election()`).
 
 ### Investigación futura (genuinamente fuera de alcance)
 
@@ -317,7 +317,7 @@ Si un comité del Congreso quisiera usar ChileDist para estudiar una eventual re
 
 **Sobre proporcionalidad**
 
-- *Índice de Gallagher por elección bajo el mapa vigente* con datos reales SERVEL. **✓ Computable**: D'Hondt binivel (`dhondt_binivel`) + `datos/asignacion_vigente.json` + datos SERVEL vía `scripts/electoral_analysis.py --assignment-path --servel-path`. Validado 96/96 vs TRICEL 2025 (`validate_election()`).
+- *Índice de Gallagher por elección bajo el mapa vigente* con datos reales SERVEL. **✓ Computable**: D'Hondt binivel (`dhondt_binivel`) + `datos/asignacion_vigente.json` + datos SERVEL vía `scripts/electoral_analysis.py --assignment-path --servel-path`. Validado 96/96 vs SERVEL 2025 (`validar_dhondt.py`); 24/28 distritos (PARTIAL) vs TRICEL 2025 (`validate_election()`, ver `VALIDATION_REPORT.md`).
 - *Gallagher bajo escenarios alternativos*: distribución del ensemble de Gallagher por escenario. **✓ Computable** vía `chiledist.inference.electoral_ensemble.run_electoral_ensemble()` (post-B1) + `ensemble_gallagher()`.
 - *Umbral efectivo por circunscripción*: qué porcentaje de votos necesita un partido para ganar escaño en cada distrito. **✓ Computable** con `umbral_efectivo(magnitud)`.
 
@@ -334,7 +334,7 @@ Si un comité del Congreso quisiera usar ChileDist para estudiar una eventual re
 
 Los ocho ítems P0 y cinco de los seis ítems P1 originales de este documento ya están implementados (ver secciones 1–8 arriba para la referencia exacta de cada uno): `pop_afectada_pct`, `personas_por_escano`, `peso_relativo_del_voto`, comparación de magnitudes vigentes vs Censo 2024, D'Hondt binivel, `margen_ultimo_escano`, posicionamiento del mapa vigente en espacio Pareto, split metrics por plan en `ensemble_stats.csv`, barrido de `split_penalty`, `umbral_efectivo`, `seat_bonus`, `compare_sensitivity`, concordancia de ranking (Kendall τ), Índice de Gini de representación. También se resolvió el P2 de bandas de confianza en la frontera de Pareto (`bootstrap_bands`).
 
-**RESOLVED desde la última revisión (agosto 2026, post-refactorización B1):** `assign_seat_magnitudes_dhondt()` (validado 26/28 vs Resolución O 129/2026), `MAGNITUDES_CENSO2024_2026`, `weighted_population_balance()`, la capa de datos SERVEL/TRICEL (`import_candidates()`, `import_proclamations()`, `import_votes()`) y `validate_election()` + `ValidationReport` (validado 96/96 vs TRICEL 2025). H1, H2, H3, H4, H8 y H9 corrieron con datos reales (ver `SCIENTIFIC_HYPOTHESES.md § Estado consolidado`).
+**RESOLVED desde la última revisión (agosto 2026, post-refactorización B1):** `assign_seat_magnitudes_dhondt()` (validado 26/28 vs Resolución O 129/2026), `MAGNITUDES_CENSO2024_2026`, `weighted_population_balance()`, la capa de datos SERVEL/TRICEL (`import_candidates()`, `import_proclamations()`, `import_votes()`) y `validate_election()` + `ValidationReport` (validado 24/28 distritos, PARTIAL, vs TRICEL 2025; 96/96 combinaciones vs SERVEL 2025 por separado vía `validar_dhondt.py` — ver `VALIDATION_REPORT.md`). H1, H2, H3, H4, H8 y H9 corrieron con datos reales (ver `SCIENTIFIC_HYPOTHESES.md § Estado consolidado`).
 
 ### P0/P1 — Pendiente
 
