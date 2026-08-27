@@ -492,7 +492,23 @@ def import_candidate_counts(
         `votos_por_partido`/`candidates_servel`/`pacto_map` en el resto
         del pipeline (que vienen de SERVEL, no de TRICEL).
     CANONICAL: cuenta candidatos únicos (`num_tricel`) por
-        (district_id, party_id).
+        (district_id, party_id) — el número REAL de candidatos
+        declarados, no un máximo teórico.
+
+    Fundamento legal y por qué NO se usa una fórmula (verificado, agosto
+    2026, ver VALIDATION_REPORT.md § "Verificación art. 5"): el art. 5
+    del DFL N° 2 de 2017 (texto refundido de la Ley N° 18.700) fija un
+    MÁXIMO de candidatos que un partido o pacto puede declarar por
+    distrito — "un máximo de candidatos equivalente al número
+    inmediatamente superior al del número de parlamentarios que
+    corresponda elegir" (magnitud + 1) — no un mínimo ni un número
+    obligatorio. Un partido puede declarar menos. Verificado
+    empíricamente sobre los 28 distritos reales: 437 de 488 filas
+    (district_id, party_id) declararon MENOS candidatos que la propia
+    magnitud del distrito (sin contar siquiera el +1) — asumir
+    "magnitud + 1" como tope en vez de contar el roster real habría
+    producido un tope demasiado alto, y por lo tanto incorrecto, para
+    la enorme mayoría de los partidos.
 
     Parameters
     ----------

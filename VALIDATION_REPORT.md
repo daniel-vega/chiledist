@@ -287,3 +287,47 @@ Total de escaños nacional: 155 en ambos casos.
 ### `run_electoral_ensemble()` — no se migró, y no debería por defecto
 
 `chiledist.inference.electoral_ensemble.core.run_electoral_ensemble()` aplica D'Hondt sobre **planes de redistritaje sintéticos** (asignaciones unidad→distrito generadas por ReCom) — distritos hipotéticos que nunca existieron en una boleta real. No hay "candidatos inscritos" que consultar para un distrito que el ensemble inventó, así que `candidatos_por_partido` no es aplicable conceptualmente ahí, no solo por falta de dato disponible. **No se propone migrar el default de `run_electoral_ensemble()` a `dhondt_binivel_cl()`** — seguiría requiriendo `dhondt_binivel()` (votos-only) para tener sentido. Si en el futuro se necesitara modelar candidatos dentro de un ensemble, sería un diseño nuevo (ej. muestrear cuántos candidatos por partido postularían bajo cada plan hipotético), no una migración directa de parámetro.
+
+---
+
+## 11. Verificación art. 5 — ¿el tope usado es el roster real o una fórmula (magnitud+1) asumida?
+
+**Pregunta:** `dhondt_binivel_cl()` aplica un tope de candidatos por partido — ¿de dónde sale ese número? El art. 5 del DFL N° 2 de 2017 (texto refundido, coordinado y sistematizado de la Ley N° 18.700) fija un **máximo** legal de candidatos que un partido/pacto puede declarar por distrito, no un mínimo obligatorio. Si la implementación asumiera ese máximo (magnitud+1) como el tope en vez de contar cuántos candidatos se declararon REALMENTE, sería un bug latente — los 7 pactos usados como evidencia en §3 podrían simplemente haber declarado el máximo permitido, sin que eso probara nada sobre partidos que declaran menos.
+
+### Texto legal (verificado, cita literal)
+
+Obtenido de la Biblioteca del Congreso Nacional (bcn.cl, DFL N° 2 de 2017, "texto refundido, coordinado y sistematizado de la Ley N°18.700"), a diferencia del intento anterior (tarea previa, §9) esta vez sí accesible vía fetch:
+
+> **Artículo 5.-** En el caso de las declaraciones de candidaturas para la elección de diputados y senadores, los partidos políticos o pactos electorales podrán presentar en cada distrito o circunscripción **un máximo de candidatos equivalente al número inmediatamente superior al del número de parlamentarios que corresponda elegir** en el distrito o circunscripción de que se trate.
+
+Confirma exactamente lo que planteaba el encargo: es un techo (magnitud + 1), no un piso. Nota de interpretación: el máximo se define para "los partidos políticos **o** pactos electorales" como entidad declarante — cuando varios partidos forman un pacto, el techo legal (magnitud+1) aplica al **total declarado por el pacto**, no es automáticamente magnitud+1 *para cada partido miembro por separado*. Esto es coherente con — y no contradice — que el tope que necesita `dhondt_binivel_cl()` sea el número real de candidatos de cada partido individual: cualquiera sea el reparto que los partidos de un pacto hayan acordado dentro de su cupo conjunto, lo que importa para el algoritmo es cuántas personas *ese partido específico* puso en la papeleta, no el máximo teórico que la ley le habría permitido a todo el pacto.
+
+### Verificación contra la implementación
+
+`chiledist.domain.data.tricel.import_candidate_counts()` (`chiledist/domain/data/tricel/__init__.py`):
+
+```python
+candidatos = _read_candidatos_sheet(path)          # roster real, hoja CANDIDATOS
+...
+counts = candidatos.groupby(party_id)["num_tricel"].nunique()   # conteo real, no fórmula
+```
+
+Cuenta candidatos únicos (`num_tricel`) efectivamente presentes en la hoja CANDIDATOS de cada `TRICEL_2025/Distrito-XX.xlsx` — **no hay ninguna fórmula `magnitud + 1` en el código**, ni en esta función ni en `dhondt_con_tope()`/`dhondt_binivel_cl()` (que solo reciben `max_seats`/`candidatos_por_partido` como parámetro externo y no calculan ningún tope por sí mismas).
+
+### Verificación empírica: ¿existen casos reales de "menos que el máximo"?
+
+Sí, y son la abrumadora mayoría — no un caso aislado:
+
+```python
+counts, _ = cd.import_candidate_counts(source_dir=DATA_DIR)
+counts["magnitud"] = counts["district_id"].map(cd.MAGNITUDES_LEGALES_LEY20840)
+(counts["n_candidatos"] < counts["magnitud"]).sum()       # 437
+(counts["n_candidatos"] < counts["magnitud"] + 1).sum()   # 456
+len(counts)                                                # 488
+```
+
+**437 de 488 filas (distrito, partido) — 89.5%** — declararon menos candidatos que la magnitud del distrito sola, sin siquiera contar el +1 del art. 5. Ejemplos concretos de la tabla completa (`district_id`, `party_id`, `n_candidatos`, `magnitud`): Distrito 1/"evolucion politica"/1/3, Distrito 3/"partido liberal de chile"/1/5, Distrito 3/"partido por la democracia"/1/5 — este último es exactamente el Partido Liberal y el PPD del ejemplo de §3 (Distrito 3, pacto UNIDAD POR CHILE): **1 candidato cada uno, contra una magnitud de 5 (art. 5 les habría permitido hasta 6)**. Los 7 pactos de §3 usados como evidencia YA incluían mayoritariamente partidos con 1 solo candidato declarado — muy por debajo de cualquier "magnitud+1" asumido — y `dhondt_binivel_cl()` los reprodujo exactamente usando ese número real, no una fórmula.
+
+### Conclusión — **Escenario 2 confirmado explícitamente**
+
+La implementación ya cuenta candidatos reales desde el roster de TRICEL, consistente con que el art. 5 fija un máximo permitido (magnitud+1 por partido/pacto declarante), no un mínimo obligatorio. **No se requirió ningún cambio de código.** Se actualizaron los docstrings de `import_candidate_counts()` (`chiledist/domain/data/tricel/__init__.py`) y `dhondt_binivel_cl()` (`chiledist/engines/allocation/dhondt.py`) con la cita legal exacta y la evidencia empírica de arriba, para que quede documentado por qué NO se usa `magnitud + 1` como atajo. No se agregó ningún test nuevo: los 7 pactos ya presentes en `tests/test_dhondt_binivel_cl.py::TestPactosRealesD3D5D19` ya ejercitan mayoritariamente partidos con recuentos reales muy por debajo de magnitud+1 (ver ejemplo Liberal/PPD arriba), así que ya constituyen regresión permanente contra este caso.

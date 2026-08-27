@@ -457,6 +457,19 @@ def dhondt_binivel_cl(
         entrada aquí se trata como sin tope (ver dhondt_con_tope()) —
         no es un error, pero anula el propósito de esta función para
         ese partido específico.
+
+        Debe ser el número REAL de candidatos declarados, no
+        magnitud+1: verificado (agosto 2026, ver VALIDATION_REPORT.md §
+        "Verificación art. 5") que el art. 5 del DFL N° 2 de 2017
+        (texto refundido Ley 18.700) fija ese "magnitud+1" como un
+        MÁXIMO permitido de declaración por partido/pacto, no un
+        mínimo ni un número obligatorio — en los datos reales de 2025,
+        437 de 488 (distrito, partido) declararon menos candidatos que
+        la magnitud del distrito sola, sin contar siquiera el +1.
+        Pasar magnitud+1 en vez del roster real produciría un tope
+        demasiado alto (incorrecto) para la enorme mayoría de los
+        partidos — `import_candidate_counts()` ya cuenta el roster
+        real, no aplica esta fórmula.
     threshold : float
 
     Returns
