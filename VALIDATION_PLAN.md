@@ -65,7 +65,7 @@ Subconjunto de la validación estadística. Verifica que ReCom y SMC producen di
 | `constraints.py` | Updater de balance poblacional calcula correctamente | `build_updaters_for_scenario()` produce updater con valores correctos | GDF sintético con pop conocida | Desviación calculada == desviación manual | P1 |
 | `metrics.py` | Polsby-Popper = 1.0 para círculo perfecto | `polsby_popper(círculo)` == 1.0 ± 1e-6 | GDF con un polígono circular generado con buffer | PP ∈ [0.999, 1.001] | P0 |
 | `metrics.py` | Polsby-Popper ∈ [0, 1] para todas las formas reales | Ningún valor fuera del rango | GDF distrital APC de cualquier región | min >= 0, max <= 1 | P0 |
-| `metrics.py` | `cut_edges()` conteo correcto (undirected) | Comparar con conteo manual en grafo de juguete | Grafo 3×3, partición manual | cut_edges == valor esperado manualmente | P1 |
+| `metrics.py` | `cut_edges()` conteo correcto (undirected) | Comparar con conteo manual en grafo de juguete | Grafo 3×3, partición manual | cut_edges == valor esperado manualmente | P1 — ✅ IMPLEMENTED, ver `tests/test_metrics.py::test_cut_edges_grafo_lineal_tres_nodos` |
 | `split_metrics.py` | `count_split_units()` == 0 para plan legal | Plan que respeta CUT no debe generar splits | GDF sintético + asignación que respeta CUT | count_split_units == 0 | P0 |
 | `split_metrics.py` | `split_severity_index()` escala correctamente | Índice mayor cuando fragmentos son más pequeños | GDF sintético con splits conocidos | Orden relativo correcto entre casos | P1 |
 | `scenario_comparison.py` | `pareto_frontier_nd()` identifica correctamente los no dominados | Verificar con conjunto donde el frente es conocido | DataFrame 5×2 con puntos dominados conocidos | Índices retornados == índices esperados | P0 |
@@ -441,6 +441,9 @@ assert len(map_data.gdf_dec) == gdf_dist["CUT"].nunique()
 
 **Qué valida:** que ningún plan en el ensemble supera la `pop_tolerance` definida en el escenario.
 
+**Modelo A implementado: warm-up libre hasta ≤pop_tol, epsilon_recom = pop_tol exacto,
+valid_fraction ≈ 1.0 por construcción. Ver P1-#5: IMPLEMENTED.**
+
 **Mecanismo (modelo A — restricción dura desde el draw 0; P0-1, implementado):**
 antes de este fix, la cadena principal usaba `epsilon_recom = max(dev_warmed/100 + 0.02, pop_tol)`,
 casi siempre mayor que `pop_tol`, y el cumplimiento de la tolerancia dependía de un filtrado
@@ -655,6 +658,13 @@ def validate_metrics_reconstructible(assignments_path, gdf, ensemble_stats_path,
         assert abs(recalc["max_dev_pob_pct"].iloc[0] - ref["max_dev_pob_pct"].iloc[0]) < tol
 ```
 
+**Contrato de datos entre archivos de salida (post-B1):**
+
+- `assignments.parquet` es la traza completa: todos los draws, incluidos los inválidos, sin filtrar.
+- `ensemble_stats.csv` es la **fuente canónica** que consume `scripts/compare_scenarios.py` y el resto del pipeline downstream — no `assignments.parquet` directamente.
+- `is_valid` en `metricas_cadena.csv` (nivel draw, no plan) es el criterio de validez por draw: `max_dev_pct <= pop_tol * 100` (ver `scripts/redistritaje.py`).
+- `validity_filter` en `run_manifest.json` (bajo `ensemble`) declara explícitamente el contrato usado para filtrar/reportar validez (`pop_tol*100`, no un valor hardcodeado), verificable con `check_validity_filter_consistency()` en `scripts/compare_scenarios.py`.
+
 ---
 
 ### 7.4 Reproducibilidad por semilla
@@ -784,8 +794,9 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 **Evidencia entrega:** cobertura funcional de cada módulo sin dependencias externas (sin shapefiles, sin gerrychain).
 
 **Archivos:**
-- Ya implementados: `tests/test_smoke.py`, `tests/test_persistence.py`, `tests/test_split_metrics.py`, `tests/test_feasibility.py`, `tests/test_regiones_apc.py`, `tests/test_compare_scenarios_incomplete.py`, `tests/test_electoral_magnitudes.py`, `tests/test_electoral_binivel.py`, `tests/test_electoral_ensemble.py`, `tests/test_malapportionment.py`, `tests/test_malapportionment_functions.py`, `tests/test_fairshare.py`, `tests/test_pareto_sweep.py`, `tests/test_scenario_analysis.py` — cubren en conjunto lo que este documento agrupaba como "D'Hondt con ejemplos manuales" y "Pareto frontier con conjuntos de dominancia conocida" (§6 los presenta con nombres ilustrativos, no literales).
-- Por crear: `tests/test_metrics.py` (compacidad y balance poblacional como módulo dedicado — hoy solo cubierto indirectamente vía `test_smoke.py`/`test_split_metrics.py`), `tests/test_hierarchy.py` (`validate_hierarchy`, `contract_to_decision_units` como módulo dedicado).
+- Ya implementados: `tests/test_smoke.py`, `tests/test_persistence.py`, `tests/test_split_metrics.py`, `tests/test_feasibility.py`, `tests/test_regiones_apc.py`, `tests/test_compare_scenarios_incomplete.py`, `tests/test_electoral_magnitudes.py`, `tests/test_electoral_binivel.py`, `tests/test_electoral_ensemble.py`, `tests/test_malapportionment.py`, `tests/test_malapportionment_functions.py`, `tests/test_fairshare.py`, `tests/test_pareto_sweep.py`, `tests/test_scenario_analysis.py`, `tests/test_metrics.py` (✅ IMPLEMENTED: compacidad — PP círculo/cuadrado/L-shape, Reock, `population_balance`, `cut_edges` — ver §10 P0#7-8, P1 cut_edges), `tests/test_graph_contraction.py` (✅ IMPLEMENTED: contracción a CUT, Queen⊇Rook, conservación de conectividad y viviendas — ver §10 P1#3-4) — cubren en conjunto lo que este documento agrupaba como "D'Hondt con ejemplos manuales" y "Pareto frontier con conjuntos de dominancia conocida" (§6 los presenta con nombres ilustrativos, no literales).
+- Tests arquitectónicos (post-refactorización B1, no contemplados en el borrador original): `tests/test_architecture.py` — ✅ IMPLEMENTED, verifica la API pública (`TestPublicAPI`), las fronteras entre las 5 capas del paquete (`TestLayerBoundaries`) y equivalencia numérica pre/post-refactorización (`TestNumericEquivalence`).
+- Por crear: `tests/test_hierarchy.py` (`validate_hierarchy`, `contract_to_decision_units` como módulo dedicado — hoy solo cubierto indirectamente vía `test_smoke.py`/`test_graph_contraction.py`).
 
 **Criterio de aceptación:** todos los tests pasan en cualquier entorno con solo `pip install chiledist`.
 
@@ -805,7 +816,7 @@ Ver Sección 2 del documento original (R2, ahora reformulada): aplicar KS test s
 
 **Evidencia entrega:** evidencia científica mínima para afirmar que la librería produce resultados correctos sobre datos reales.
 
-**Archivos:** `tests/test_integration_r11.py` (por crear, requiere shapefiles APC R11 + opcionalmente Censo 2024) sigue siendo la brecha real de este nivel — nada de lo agregado desde 2026-06-21 la cierra. Sí existe ya un patrón de integración más liviano (sin datos geográficos reales) que vale la pena imitar para R11: `tests/test_scripts_demo.py`, `tests/test_redistritaje_status.py`, `tests/test_redistritaje_n_distritos.py` y `tests/test_entrypoints_n_distritos.py` cargan los scripts de `scripts/*.py` vía `importlib` (no son paquete instalable) y ejercitan sus funciones internas o su `main()` con fixtures sintéticas/mocks, en vez de shapefiles reales.
+**Archivos:** `tests/test_integration_r11.py` — ✅ IMPLEMENTED (agosto 2026): pipeline completo end-to-end con datos APC reales de R11, cubre archivos de salida (`test_1_pipeline_produces_expected_output_files`), reproducibilidad por semilla (`test_2_same_seed_produces_identical_assignments`), 0 splits en `SCENARIO_LEGAL` (`test_3_scenario_legal_produces_zero_splits`), join de Censo 2024 (`test_4_census2024_join_preserves_r11_population_total`), `valid_fraction≈1.0` bajo modelo A (`test_5_valid_fraction_is_one_modelo_a`) y estados `status` documentados (`test_6_status_is_ok_or_documented_infeasible`). Cierra la brecha que este documento marcaba como pendiente desde 2026-06-21. Complementa el patrón de integración más liviano (sin datos geográficos reales) de `tests/test_scripts_demo.py`, `tests/test_redistritaje_status.py`, `tests/test_redistritaje_n_distritos.py` y `tests/test_entrypoints_n_distritos.py`, que cargan los scripts de `scripts/*.py` vía `importlib` con fixtures sintéticas/mocks.
 
 **Criterio de aceptación:** se ejecuta en entorno con datos; todos los invariantes de validación pasan.
 
@@ -825,8 +836,8 @@ Estos tests deben pasar antes de usar ChileDist para cualquier análisis.
 | 4 | `validate_hierarchy()` detecta violaciones APC/CUT | `hierarchy.py` | Unitario |
 | 5 | Contracción CUT conserva Σ pop | `hierarchy.py` | Unitario |
 | 6 | Grafo conectado tras island policy | `graph.py` | Unitario |
-| 7 | PP = 1.0 para círculo | `metrics.py` | Unitario |
-| 8 | PP ∈ [0,1] para todas las geometrías | `metrics.py` | Unitario |
+| 7 | PP = 1.0 para círculo | `metrics.py` | Unitario — ✅ IMPLEMENTED, ver `tests/test_metrics.py::test_polsby_popper_circulo_perfecto` |
+| 8 | PP ∈ [0,1] para todas las geometrías | `metrics.py` | Unitario — ✅ IMPLEMENTED, ver `tests/test_metrics.py` (`test_polsby_popper_cuadrado_unitario`, `test_polsby_popper_l_shape_en_rango`) |
 | 9 | count_split_units == 0 para plan que respeta CUT | `split_metrics.py` | Unitario |
 | 10 | D'Hondt: ejemplo manual A=3, B=2 | `electoral.py` | Unitario |
 | 11 | Σ escaños == n_seats en D'Hondt | `electoral.py` | Unitario |
@@ -852,9 +863,9 @@ Estos tests son necesarios antes de publicar resultados o presentarlos en un con
 |---|------|--------|------|
 | 1 | Join Censo 2024: pérdida < 1% por CUT | `data/census2024.py` | Integración |
 | 2 | Join padrón SERVEL: inscritos == h+m | `data/servel.py` | Integración |
-| 3 | Queen es superconjunto de rook | `graph.py` | Unitario |
-| 4 | Contracción grafo: n_nodos == n_CUTs | `graph.py` | Unitario |
-| 5 | pop_tolerance se respeta en todos los draws | `samplers/recom.py` | Integración — ✅ implementado (modelo A: restricción dura desde el draw 0, ver §5.5 y `scripts/redistritaje.py`; verificado con corrida real R12/apc_free, `pop_tol=0.10` → 100/100 planes válidos) |
+| 3 | Queen es superconjunto de rook | `graph.py` | Unitario — ✅ IMPLEMENTED, ver `tests/test_graph_contraction.py::test_queen_es_superconjunto_de_rook` |
+| 4 | Contracción grafo: n_nodos == n_CUTs | `graph.py` | Unitario — ✅ IMPLEMENTED, ver `tests/test_graph_contraction.py::test_contract_graph_produce_n_cuts_nodos` |
+| 5 | pop_tolerance se respeta en todos los draws | `samplers/recom.py` | Integración — ✅ IMPLEMENTED (modelo A: restricción dura desde el draw 0, ver §5.5 y `scripts/redistritaje.py`; verificado con corrida real R12/apc_free, `pop_tol=0.10` → 100/100 planes válidos; ver también `tests/test_integration_r11.py::test_5_valid_fraction_is_one_modelo_a`) |
 | 6 | Estabilidad por semilla (CV < 0.05 entre 5 semillas) | `samplers/recom.py` | Estadístico |
 | 7 | Sensibilidad a n_steps: convergencia documentada | `samplers/recom.py` | Estadístico |
 | 8 | Índices proporcionalidad == 0 para distribución perfecta | `electoral.py` | Unitario |
@@ -895,3 +906,22 @@ Estos tests son necesarios antes de entregar resultados a una institución o pub
 - [ ] Decidir si los tests P2 de integración se ejecutan en CI o solo manualmente con datos locales.
 - [ ] Documentar explícitamente en el docstring de `electoral.py` la limitación del D'Hondt binivel.
 - [ ] Decidir el umbral `tol` para el test de suma APC→CUT (actualmente propuesto: ±5 viviendas por CUT).
+
+---
+
+## 11. Bugs corregidos durante la validación (agosto 2026)
+
+| Bug | Estado | Evidencia |
+|---|---|---|
+| `reock()`: incompatibilidad con shapely 2.x | FIXED | `tests/test_metrics.py::test_reock_circulo_perfecto`, `test_reock_cuadrado_unitario`, `test_reock_l_shape_en_rango` |
+| `normalize_party_name()`: tolerancia a mayúsculas/acentos para el cruce D'Hondt binivel | FIXED | `tests/test_electoral_binivel.py` (ver `normalize_party_name("Evolución Política") == "evolucion politica"`) |
+| `comunas_partidas_ref` quedaba en 0 (lookup sparse del ensemble, inicialización dentro de bloque condicional) | FIXED | `tests/test_comunas_partidas_ref.py` (`test_n_split_ref_assigned_from_len_split_summary`, `test_no_sparse_ensemble_lookup_remains`, `test_n_split_ref_initialized_before_conditional_block`) |
+| `warmup_steps` con conteo triangular | FIXED (no verificado independientemente contra el código actual en esta revisión — incluido tal cual fue reportado; no se encontró la palabra "triangular" en el código ni en `VALIDATION_REPORT.md`) | — |
+| Preflight de factibilidad: `n_distritos` no se ajustaba cuando excedía el máximo factible | FIXED | `scripts/redistritaje.py` (mensaje `"n_distritos ajustado: {n_distritos_eff} → {n_distritos_max}"`) |
+| `asignacion_vigente.json`: 8 CUT de la Región Metropolitana mal asignados a distrito | FIXED | Validado 96/96 combinaciones (distrito, pacto) vs SERVEL 2025 tras la corrección (ver `chiledist/CAPABILITY_AUDIT.md`); commit `b72aff0` según `VALIDATION_REPORT.md` §4 |
+| `Puntos_Edificacion_Rural`: capa sin `COD_DISTRITO` (solo CUT a nivel comuna) requiere manejo especial en R11 | FIXED | `chiledist/domain/loader.py` (proxy rural), `tests/test_integration_r11.py` |
+| `import_proclamations()`: cruce `candidate_id % 100` fallaba para `num_tricel` de 3 dígitos | FIXED — `% 100` → `% 1000` | `chiledist/domain/data/tricel/__init__.py`; validación TRICEL 2025 pasó de 20/28 a **24/28** distritos (ver `VALIDATION_REPORT.md` §2, commit `1aea69e`) |
+
+---
+
+**Última actualización: agosto 2026 — modelo A implementado, tests Nivel 1-3 completados, validación TRICEL 2025 (24/28).**
