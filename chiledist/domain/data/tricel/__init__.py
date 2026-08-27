@@ -70,8 +70,9 @@ _PROCLAMATION_RECORD_FIELDS: list[str] = [
 
 
 #: Columnas de identificación de mesa en la hoja MESA A MESA — determinadas
-#: por inspección directa de DISTRITO-01.xlsx. La fila de totales
-#: distritales es la única fila con NaN en TODAS estas columnas.
+#: por inspección directa de DISTRITO-01.xlsx. Usadas para EXCLUIR estas
+#: columnas de la detección de candidatos (nunca son nombres de
+#: candidato) — no para detectar la fila de totales, ver _MESA_GEO_COLS.
 _MESA_ID_COLS = {
     "Número Región", "Región", "Número Provincia", "Provincia",
     "Número Comuna", "Comuna", "Número Distrito", "Número Distrito.1",
@@ -79,8 +80,33 @@ _MESA_ID_COLS = {
     "Tipo de mesa", "Mesa", "Fusionadas", "Local", "Dirección del local",
 }
 
+#: Columnas geográficas de MESA A MESA que están en NaN en la fila de
+#: totales distritales en los 28 archivos reales — a diferencia de
+#: "Tipo de mesa"/"Mesa"/"Fusionadas"/"Local"/"Dirección del local", que
+#: en Distrito-15 y Distrito-16 NO están en NaN en esa fila (traen "0" o
+#: sumas numéricas en vez de blanco), así que no son confiables para
+#: detectar la fila de totales.
+_MESA_GEO_COLS = [
+    "Número Región", "Región",
+    "Número Provincia", "Provincia",
+    "Número Comuna", "Comuna",
+    "Número Distrito", "Número Circunscripción Electoral",
+    "Circunscripción Electoral",
+]
+
 #: Columnas administrativas al final de MESA A MESA (no son candidatos).
 _MESA_ADMIN_COLS = {"Nulos", "Blancos", "Total votos", "Inscritos"}
+
+
+def _safe_int(x) -> int:
+    """
+    int() tolerante a NaN — Distrito-08 trae Nulos/Blancos en NaN en su
+    fila de totales real (el archivo oficial no los completó ahí,
+    aunque sí en la fila de subtotal anterior); `int(x or 0)` no lo
+    captura porque NaN es truthy en Python.
+    """
+    v = pd.to_numeric(x, errors="coerce")
+    return 0 if pd.isna(v) else int(v)
 
 def _district_id_from_filename(path: "str | Path") -> Optional[int]:
     """Extrae el número de distrito de un nombre tipo 'DISTRITO-01.xlsx'."""
@@ -310,11 +336,15 @@ def import_votes(
     Importa la votación mesa a mesa (totales distritales) de TRICEL.
 
     RAW: lee la hoja MESA A MESA de cada DISTRITO-XX.xlsx en source_dir.
-    NORMALIZED: identifica la fila de totales distritales por NaN en
-        todas las columnas de identificación de mesa (Región, Comuna,
-        Mesa, ...); filtra las columnas de candidato (excluye columnas
+    NORMALIZED: identifica la fila de totales distritales por NaN en las
+        columnas geográficas (Región, Provincia, Comuna, Distrito,
+        Circunscripción Electoral — ver _MESA_GEO_COLS; las columnas de
+        mesa en sí, "Tipo de mesa"/"Mesa"/"Fusionadas"/"Local"/
+        "Dirección del local", no son confiables para esto en todos los
+        distritos); filtra las columnas de candidato (excluye columnas
         de identificación, columnas administrativas y columnas de
-        pacto, cruzando contra los nombres de la hoja CANDIDATOS).
+        pacto, cruzando contra los nombres de la hoja CANDIDATOS);
+        convierte valores numéricos con _safe_int() (tolerante a NaN).
     CANONICAL: un registro por (distrito, candidato) con los totales
         distritales.
 
@@ -346,8 +376,8 @@ def import_votes(
         sha256_by_district[district_id] = prov.sha256
 
         mesa = pd.read_excel(path, sheet_name="MESA A MESA", header=0)
-        id_cols_present = [c for c in _MESA_ID_COLS if c in mesa.columns]
-        totales_mask = mesa[id_cols_present].isna().all(axis=1)
+        geo_cols_present = [c for c in _MESA_GEO_COLS if c in mesa.columns]
+        totales_mask = mesa[geo_cols_present].isna().all(axis=1)
         totales = mesa.loc[totales_mask]
         if totales.empty:
             raise ValueError(f"No se encontró fila de totales en MESA A MESA de {path}")
@@ -356,9 +386,9 @@ def import_votes(
         candidatos = _read_candidatos_sheet(path)
         nombres_candidatos = set(candidatos["candidate_name"])
 
-        votes_null = int(totales_row.get("Nulos", 0) or 0)
-        votes_blank = int(totales_row.get("Blancos", 0) or 0)
-        total_votes = int(totales_row.get("Total votos", 0) or 0)
+        votes_null = _safe_int(totales_row.get("Nulos"))
+        votes_blank = _safe_int(totales_row.get("Blancos"))
+        total_votes = _safe_int(totales_row.get("Total votos"))
 
         candidate_cols = [
             c for c in mesa.columns
@@ -367,14 +397,11 @@ def import_votes(
             and c in nombres_candidatos
         ]
         for col in candidate_cols:
-            votes_final = totales_row[col]
-            if pd.isna(votes_final):
-                continue
             filas.append({
                 "election_id": election_id,
                 "district_id": district_id,
                 "candidate_name": col,
-                "votes_final": int(votes_final),
+                "votes_final": _safe_int(totales_row[col]),
                 "votes_null": votes_null,
                 "votes_blank": votes_blank,
                 "total_votes": total_votes,
