@@ -6,9 +6,11 @@ Librería Python para redistritaje electoral y análisis distrital de Chile usan
 
 ## Cambios recientes
 
-Los módulos más grandes de la librería (`electoral.py`, `scenario_comparison.py`, `malapportionment.py`, `pareto_sweep.py`, `electoral_ensemble.py`) se reorganizaron internamente de un archivo único a un **paquete del mismo nombre**, separando la lógica de cálculo de las funciones de graficado (submódulo `plots.py` en cada uno) y eliminando la duplicación de helpers de estilo (ahora centralizados en `chiledist/_plot_style.py`).
+**Refactorización B1 (agosto 2026):** la librería se reorganizó de módulos sueltos y paquetes ad-hoc (`electoral/`, `scenario_comparison/`, `malapportionment/`, `pareto_sweep/`, `electoral_ensemble/`, `metrics.py`, `split_metrics.py`, `config.py`, etc.) a una **arquitectura de 5 capas**: `domain` → `rules` → `engines` → `inference`/`evaluation`, más `validation` como pipeline transversal. Ver [Estructura del proyecto](#estructura-del-proyecto) y `ARCHITECTURE.md` para el detalle completo.
 
-Esto es **100% compatible hacia atrás**: la API pública (`import chiledist as cd`, `from chiledist.electoral import dhondt`, etc.) no cambió en absoluto — solo cambió cómo está organizado el código internamente. Ver la sección [Estructura del proyecto](#estructura-del-proyecto) para el detalle de cada paquete.
+A diferencia de la reorganización anterior (single-file → paquete), **esta NO es compatible hacia atrás a nivel de submódulo**: `from chiledist.electoral import dhondt`, `chiledist.scenario_comparison`, `chiledist.malapportionment`, etc. ya no existen — no hay shim de compatibilidad. Lo que sí se mantiene sin cambios es la API pública de nivel superior: `import chiledist as cd; cd.dhondt(...)` sigue funcionando igual, porque `chiledist/__init__.py` reexporta las funciones públicas de las 5 capas.
+
+También se agregó la **capa de datos SERVEL/TRICEL** (`chiledist.domain.data.tricel`, `chiledist.domain.data.servel`) y el pipeline de **validación electoral** (`chiledist.validation.validate_election()`) — ver secciones "Datos externos" y "Validación electoral" más abajo.
 
 ---
 
@@ -98,62 +100,60 @@ python -c "import chiledist as cd; cd.print_equivalence()"
 
 ## Estructura del proyecto
 
+> **Post-refactorización B1 (agosto 2026):** la librería se reorganizó de módulos
+> sueltos/paquetes ad-hoc a una **arquitectura de 5 capas** (`domain` → `rules` →
+> `engines` → `inference`/`evaluation`, más `validation` como pipeline transversal).
+> Los imports antiguos (`chiledist.electoral`, `chiledist.scenario_comparison`,
+> `chiledist.malapportionment`, `chiledist.metrics`, etc.) **ya no existen** — no
+> hay shim de compatibilidad. La API pública vía `import chiledist as cd` (funciones
+> reexportadas en `chiledist/__init__.py`) no cambió. Ver **`ARCHITECTURE.md`** para
+> el detalle completo de cada capa, sus fronteras y la justificación del diseño.
+
 ```
 chiledist/
 ├── chiledist/                      # Librería principal
-│   ├── __init__.py                 # API pública (no se ve afectada por la reorganización interna de abajo)
-│   ├── equivalence.py              # Tabla USA ↔ Chile, CRS, get_optimal_crs
-│   ├── loader.py                   # Carga de capas APC y build_national
-│   ├── graph.py                    # Grafos de adyacencia y matrices sparse
-│   ├── metrics.py                  # Compacidad y balance poblacional
+│   ├── __init__.py                 # API pública (reexporta las 5 capas)
+│   ├── _version.py
+│   ├── _plot_style.py              # Paleta y estilo compartido por los plots.py de cada capa
 │   ├── viz.py                      # Visualización de capas, grafos y planes
-│   ├── _plot_style.py              # Paleta y estilo compartido por los plots.py de los paquetes de abajo
-│   ├── config.py                   # ScenarioConfig + escenarios predefinidos + YAML
-│   ├── hierarchy.py                # Contracción APC → CUT, validación de jerarquía
-│   ├── constraints.py              # Restricciones gerrychain + penalización splits
-│   ├── split_metrics.py            # Métricas de comunas partidas por plan
-│   ├── feasibility.py              # check_population_feasibility — preflight de factibilidad poblacional
-│   ├── fairshare.py                # Fair share biproporcional (IPF) y distancia al ideal
-│   ├── persistence.py              # PlanEnsemble, manifiestos de corrida reproducibles
-│   ├── map.py                      # ChileDistMap — contenedor de datos cargados por corrida
-│   ├── electoral/                  # D'Hondt uni/binivel, magnitudes, proporcionalidad
-│   │   ├── __init__.py             # Reexporta la misma API pública que antes de la reorganización
-│   │   ├── constants.py            # TOTAL_ESCANOS_CAMARA, MAGNITUDES_LEGALES_LEY20840
-│   │   ├── dhondt.py               # dhondt, dhondt_binivel, run_electoral_plan(_binivel)
-│   │   ├── magnitudes.py           # assign_seat_magnitudes, comparar_magnitudes
+│   ├── domain/                     # capa 0: entidades, loaders, grafos
+│   │   ├── scenario.py             # ScenarioConfig + escenarios predefinidos + YAML (antes config.py)
+│   │   ├── hierarchy.py            # Contracción APC → CUT, validación de jerarquía
+│   │   ├── graph.py                # Grafos de adyacencia y matrices sparse
+│   │   ├── loader.py               # Carga de capas APC y build_national
+│   │   ├── persistence.py          # PlanEnsemble, manifiestos de corrida reproducibles
+│   │   ├── ensemble_store.py       # build_scenario_overview, assess_comparison_completeness
+│   │   ├── equivalence.py          # Tabla USA ↔ Chile, CRS, get_optimal_crs
+│   │   ├── map.py                  # ChileDistMap — contenedor de datos cargados por corrida
+│   │   ├── utils.py                # normalize_party_name y otros helpers de normalización
+│   │   └── data/                   # census2024.py + servel/ (SERVEL) + tricel/ (TRICEL, ver "Datos externos")
+│   ├── rules/                      # capa 1: restricciones legales, magnitudes
+│   │   ├── constraints.py          # Restricciones gerrychain + penalización splits
+│   │   ├── electoral_rules.py      # MAGNITUDES_LEGALES_LEY20840, MAGNITUDES_CENSO2024_2026
+│   │   ├── feasibility.py          # check_population_feasibility — preflight de factibilidad
+│   │   ├── scenario_rules.py       # Reglas de escenario (legal/apc_soft/apc_free)
+│   │   └── split_rules.py          # is_split() y otras reglas de partición
+│   ├── engines/                    # capa 2: D'Hondt, ReCom, métricas
+│   │   ├── metrics.py              # Compacidad, balance poblacional Y métricas de comunas partidas (antes metrics.py + split_metrics.py)
+│   │   ├── fairshare.py            # Fair share biproporcional (IPF) y distancia al ideal
+│   │   ├── redistricting.py
+│   │   ├── diagnostics.py
+│   │   ├── allocation/             # dhondt.py (D'Hondt uni/binivel), magnitudes.py, plan_metrics.py
+│   │   └── samplers/               # recom.py, smc.py, accept.py, updaters.py, diagnostics.py
+│   ├── inference/                  # capa 3: ensembles, Pareto, sensibilidad
+│   │   ├── comparison.py           # compare_ensembles, scenario_delta, pareto_frontier_nd
+│   │   ├── sensitivity.py          # position_plan_vigente, compare_sensitivity, ranking_concordance (H5)
+│   │   ├── plots.py                # plot_tradeoff_frontier, boxplots, radar
+│   │   ├── pareto_sweep/           # sweep_split_penalty, build_tradeoff_frontier, knee point (H2)
+│   │   └── electoral_ensemble/     # run_electoral_ensemble, ensemble_gallagher, etc.
+│   ├── evaluation/                 # capa 4: proporcionalidad, malapportionment
 │   │   ├── proportionality.py      # gallagher_index, loosemore_hanby, rae_index, seat_bonus
-│   │   ├── district_malapportionment.py  # personas_por_escano, peso_relativo_del_voto
-│   │   └── plan_metrics.py         # plan_electoral_metrics (agregador de un plan completo)
-│   ├── electoral_ensemble/         # Análisis distribucional electoral sobre ensembles
-│   │   ├── __init__.py
-│   │   ├── core.py                 # run_electoral_ensemble, ensemble_gallagher, etc.
-│   │   └── plots.py                # plot_ensemble_histogram/violin/ecdf
-│   ├── malapportionment/           # Malapportionment geográfico comparado internacionalmente
-│   │   ├── __init__.py
-│   │   ├── indices.py              # samuels_snyder_index, gini_personas_por_escano, etc.
-│   │   ├── comparison.py           # compare_plans, international_comparison, benchmarks
-│   │   └── plots.py                # plot_pxe_distribution, plot_malapportionment_ranking
-│   ├── scenario_comparison/        # Comparación multi-escenario + visualizaciones
-│   │   ├── __init__.py
+│   │   ├── district_malapportionment.py  # personas_por_escano, peso_relativo_del_voto, weighted_population_balance
 │   │   ├── scoring.py              # ScoringConfig, METRICAS_STD, PESOS_DEFAULT
-│   │   ├── compare.py              # compare_ensembles, rank_scenarios, pareto_frontier_nd
-│   │   ├── sensitivity.py          # compare_sensitivity, ranking_concordance (H5)
-│   │   └── plots.py                # plot_tradeoff_frontier, boxplots, radar
-│   ├── pareto_sweep/                # Barrido split_penalty → frontera Pareto continua (H2)
-│   │   ├── __init__.py
-│   │   ├── frontier.py             # sweep_split_penalty, build_tradeoff_frontier, knee point
-│   │   └── plots.py                # plot_tradeoff_curve
-│   ├── samplers/                   # Muestreo modular (ReCom · SMC · diagnósticos)
-│   │   ├── __init__.py
-│   │   ├── recom.py                # Cadenas de Markov ReCom (gerrychain)
-│   │   ├── smc.py                  # Bridge R/redist para SMC (ALARM Harvard)
-│   │   └── diagnostics.py         # R-hat, ESS, ACF, multi-cadena
-│   ├── redistricting.py            # Re-exporta samplers.recom (compatibilidad)
-│   ├── diagnostics.py              # Re-exporta samplers.diagnostics + smc (compatibilidad)
-│   └── data/
-│       ├── __init__.py
-│       ├── census2024.py           # Loader Censo 2024 (comunal y manzana)
-│       └── servel.py               # Padrón electoral + resultados históricos
+│   │   ├── framing.py              # reforma_context
+│   │   └── malapportionment/       # indices.py, comparison.py (international_comparison), plots.py
+│   └── validation/                 # pipeline de validación electoral (TRICEL 2025)
+│       └── __init__.py             # validate_election(), ValidationReport
 │
 ├── scripts/                        # Scripts de análisis operativos
 │   ├── setup.py                    # Inicialización del proyecto
@@ -165,7 +165,11 @@ chiledist/
 │   ├── run_chains.py               # H5: N cadenas ReCom + diagnósticos de convergencia
 │   ├── smc_pipeline.py             # H5: bridge Python → R/redist → Python
 │   ├── autocorrelacion.py          # Autocorrelación espacial
-│   └── export_imc_bundle.py        # Exportación bundle IMC Plan Lab
+│   ├── export_imc_bundle.py        # Exportación bundle IMC Plan Lab
+│   ├── validar_dhondt.py           # Validación D'Hondt binivel vs SERVEL 2025 (96/96)
+│   ├── validar_tricel.py           # Validación electoral completa vs TRICEL 2025 (24/28)
+│   ├── validar_datos_externos.py   # Validación de datos externos antes de análisis
+│   └── recalcular_reock.py         # Recalcula métrica Reock tras corrección shapely 2.x
 │
 ├── datos/                      # Salidas (generado automáticamente) + insumos manuales
 │   ├── asignacion_vigente.json # Insumo manual: mapa distrital vigente (Ley 20.840), ver
@@ -255,9 +259,9 @@ a los mapas sintéticos que produce `redistritaje.py`.
 
 > **No hace falta decidir si el CUT "debe" tener 4 o 5 dígitos en cada
 > fuente de datos.** Distintas fuentes lo representan de forma distinta —
-> `chiledist.data.census2024.load_census2024()` devuelve CUT como `int`
+> `chiledist.domain.data.census2024.load_census2024()` devuelve CUT como `int`
 > (sin cero inicial), mientras que este archivo usa strings de 5 dígitos.
-> Usa `chiledist.normalize_cut(valor)` (`chiledist/hierarchy.py`) en
+> Usa `chiledist.normalize_cut(valor)` (`chiledist/domain/hierarchy.py`) en
 > ambos lados de cualquier cruce/lookup por CUT entre fuentes distintas —
 > acepta int, str con o sin cero inicial, o float, y siempre devuelve el
 > string canónico de 5 dígitos. `scripts/malapportionment.py` y
@@ -421,6 +425,28 @@ python scripts/electoral_analysis.py \
 
 **Referencias.** Servicio Electoral de Chile (SERVEL): resoluciones sobre formalización de pactos y declaraciones de candidaturas para las Elecciones Generales (Ley N° 18.700 Orgánica Constitucional sobre Votaciones Populares y Escrutinios); base de datos de resultados electorales y registro de partidos políticos constituidos.
 
+---
+
+### `TRICEL_2025/` — proclamaciones oficiales del Tribunal Calificador de Elecciones
+
+A diferencia de los archivos anteriores, este no es un único archivo curado sino un **directorio de 28 archivos** descargados directamente de la fuente oficial, uno por distrito.
+
+**Qué es.** Las proclamaciones oficiales de Diputados 2025 del Tribunal Calificador de Elecciones (TRICEL) — la fuente de verdad contra la que se valida que `chiledist.engines.allocation.dhondt.dhondt_binivel()` reproduce el resultado real. Se usa para validación (`scripts/validar_tricel.py`), no como insumo de los análisis H1-H9.
+
+- **Fuente**: [tribunalcalificador.cl/resultados_de_elecciones](https://tribunalcalificador.cl/resultados_de_elecciones/)
+- **Archivos**: `Distrito-01.xlsx` a `Distrito-28.xlsx` (28 archivos; nótese el guion y capitalización título — no `DISTRITO-XX.xlsx`), cada uno con las hojas ELECTOS (proclamaciones) y MESA A MESA (votación).
+- **Convención de directorio**: `$CHILEDIST_DATA_DIR/TRICEL_2025/` — la variable de entorno `CHILEDIST_DATA_DIR` se exporta automáticamente al pasar `--data-dir` a `scripts/validar_tricel.py` (ver `.env.example`).
+- **Loaders**:
+  ```python
+  from chiledist.domain.data.tricel import import_proclamations, import_votes
+
+  proclamaciones = import_proclamations(data_dir)  # hoja ELECTOS: candidato → escaño proclamado
+  votos          = import_votes(data_dir)          # hoja MESA A MESA: votación por candidato/mesa
+  ```
+- **Estado de la validación**: 24/28 distritos coinciden exactamente contra el D'Hondt binivel calculado por chiledist (`PARTIAL`, no `EXACT_REPRODUCTION` — los 4 distritos restantes se explican por cobertura incompleta del SERVEL preliminar, no por un bug del cálculo). Ver "Validación electoral" más abajo y `VALIDATION_REPORT.md` para el detalle completo, incluidas las causas distrito por distrito.
+
+---
+
 ### Datos externos — resumen y scripts de generación
 
 chiledist requiere 6 archivos de datos externos. Cuatro se generan con los scripts en `datos/scripts_extra/`; los dos `.json` (`asignacion_vigente.json`, `pacto_map_2025.json`, documentados en detalle arriba en esta misma sección) son de construcción manual. Ninguno de estos scripts se distribuye como parte instalable de la librería — son utilitarios de una sola vez para transformar fuentes externas (Censo 2024, SERVEL, Ley 20.840) al formato que consume chiledist.
@@ -475,7 +501,7 @@ chiledist requiere 6 archivos de datos externos. Cuatro se generan con los scrip
 
 Sin script de generación automática — construcción manual, documentada en detalle más arriba en esta misma sección (`## Datos externos`). Resumen:
 
-- **`asignacion_vigente.json`**: desde el texto de la Ley 20.840 ([bcn.cl/2f773](https://bcn.cl/2f773)). `{"CUT_str": n_distrito_int}`, 346 comunas → 28 circunscripciones (1-28). Ver `chiledist.data.REGIONES_APC` para el mapeo de regiones.
+- **`asignacion_vigente.json`**: desde el texto de la Ley 20.840 ([bcn.cl/2f773](https://bcn.cl/2f773)). `{"CUT_str": n_distrito_int}`, 346 comunas → 28 circunscripciones (1-28). Ver `chiledist.domain.data.REGIONES_APC` para el mapeo de regiones.
 - **`pacto_map_2025.json`**: desde resultados SERVEL 2025. `{"nombre_partido": "nombre_pacto"}`, en formato título con tildes (`"Evolución Política"`) — `chiledist.normalize_party_name()` normaliza automáticamente al hacer lookups, así que el mismatch de formato con SERVEL (MAYÚSCULAS sin tildes) no afecta los resultados.
 
 #### Ejecución de los scripts
@@ -500,6 +526,42 @@ cp servel_2025_diputados_por_cut.csv datos/servel_2025_por_cut.csv
 Los Excel de SERVEL (`PRELIMINARES_DIPUTADOS_DISTRITO_N.xlsx`) y el CSV de microdatos del Censo 2024 no se distribuyen con la librería y deben obtenerse directamente de las fuentes.
 
 ⚠ Los datos electorales son `votos_preliminares` (conteo nocturno), no el escrutinio general final. En cocientes D'Hondt ajustados esto puede producir diferencias de 1 escaño respecto al resultado oficial — documentado en `SCIENTIFIC_HYPOTHESES.md` § H4.
+
+---
+
+## Validación electoral
+
+`chiledist.validation` no es una de las 5 capas del paquete — es un consumidor terminal que compara la salida del motor D'Hondt (capa `engines`) contra la fuente oficial de verdad (TRICEL, capa `domain`), sin reimplementar ninguna regla de asignación de escaños.
+
+```python
+from chiledist.validation import validate_election, ValidationReport
+from chiledist.domain.data.tricel import import_proclamations, import_votes
+
+proclamaciones = import_proclamations(data_dir)
+votos_tricel   = import_votes(data_dir)
+
+report: ValidationReport = validate_election(
+    candidates_servel=candidates_servel,      # datos/servel_2025_candidatos.csv
+    proclamations_tricel=proclamaciones,
+    assignment=asignacion_vigente,            # datos/asignacion_vigente.json
+    magnitudes=MAGNITUDES_LEGALES_LEY20840,
+    pacto_map=pacto_map,                      # datos/pacto_map_2025.json
+    votes_tricel=votos_tricel,
+)
+print(report)  # Districts validated: 24/28, Status: PARTIAL
+```
+
+**Pipeline** (ver docstring de `validate_election()` para el detalle completo): corre `dhondt_binivel()` sobre los votos SERVEL agregados por partido y distrito, determina los candidatos ganadores dentro de cada partido por mayor votación individual (regla real, Ley 18.700 — no un segundo D'Hondt intra-partido), compara escaños calculados vs. proclamados TRICEL por (distrito, pacto) y por candidato, y reporta discrepancias y empates que requieren resolución legal.
+
+**Estado actual: `PARTIAL` — 24/28 distritos validados** exactamente contra las proclamaciones oficiales TRICEL 2025 (141/155 escaños, 181/185 asignaciones de lista). Los 4 distritos restantes (D3, D5, D8, D19) muestran únicamente discrepancias "proclamado pero no calculado" — no hay ningún falso positivo — y se explican por cobertura incompleta del SERVEL preliminar (38.8%-86% del escrutinio final certificado por TRICEL, según distrito), no por un error del motor D'Hondt. Ver `VALIDATION_REPORT.md` para el historial completo de la validación, las causas distrito por distrito y el camino hacia `EXACT_REPRODUCTION`.
+
+```bash
+python scripts/validar_tricel.py \
+    --data-dir "$CHILEDIST_DATA_DIR" \
+    --servel-candidates datos/servel_2025_candidatos.csv \
+    --pacto-map datos/pacto_map_2025.json \
+    --assignment datos/asignacion_vigente.json
+```
 
 ---
 
@@ -1093,7 +1155,7 @@ python scripts/smc_pipeline.py --base-dir ./SHP_APC2023 --regiones 13 \
 | `--plans-csv` | _(auto)_ | CSV de planes SMC generado por R (default: `<output_dir>/<scenario>_smc_planes.csv`) |
 | `--recom-ensemble` | — | CSV del ensemble ReCom para comparar |
 
-No tiene `--output-dir`: la salida siempre va a `datos/{REGION}/smc/` (vía `chiledist.data.REGIONES_APC`, o `R{código}` si la región no está en el mapa de 16 regiones).
+No tiene `--output-dir`: la salida siempre va a `datos/{REGION}/smc/` (vía `chiledist.domain.data.REGIONES_APC`, o `R{código}` si la región no está en el mapa de 16 regiones).
 
 **Salidas en `datos/{REGION}/smc/`:**
 
@@ -1108,6 +1170,81 @@ smc_vs_recom_ranking.csv       # concordancia de rankings, Kendall τ / Spearman
 ```
 
 **Requiere:** R con paquete `redist` instalado. Ver instrucciones en https://alarm-redist.org.
+
+---
+
+### 11. validar_dhondt.py — H4: D'Hondt binivel vs SERVEL oficial
+
+Valida que `dhondt_binivel()` reproduce los escaños oficiales SERVEL 2025 por distrito y pacto. Estado actual: **96/96 combinaciones (distrito, pacto), PASS completo**.
+
+```bash
+# Modo por_cut (default): agrega por CUT+partido, pacto vía pacto_map_2025.json
+python scripts/validar_dhondt.py
+
+# Modo candidatos: agrega por candidato real desde servel_2025_candidatos.csv
+python scripts/validar_dhondt.py --modo candidatos \
+    --votos-path datos/servel_2025_candidatos.csv
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--modo` | `por_cut` | `por_cut` agrega por CUT+partido (pacto vía `pacto_map_2025.json`); `candidatos` agrega por candidato real, con el pacto que ya trae cada candidato desde SERVEL |
+| `--votos-path` | _(según `--modo`)_ | Default: `datos/servel_2025_por_cut.csv` (por_cut) o `datos/servel_2025_candidatos.csv` (candidatos) |
+
+---
+
+### 12. validar_tricel.py — Validación electoral completa vs TRICEL
+
+Validación candidato a candidato: D'Hondt binivel chiledist vs proclamaciones oficiales TRICEL 2025, sobre los 28 distritos reales. Ver "Validación electoral" más arriba y `VALIDATION_REPORT.md` para el detalle completo. Estado actual: **24/28 distritos validados (`PARTIAL`)**.
+
+```bash
+python scripts/validar_tricel.py \
+    --data-dir "$CHILEDIST_DATA_DIR" \
+    --servel-candidates datos/servel_2025_candidatos.csv \
+    --pacto-map datos/pacto_map_2025.json \
+    --assignment datos/asignacion_vigente.json
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--data-dir` | _(requerido)_ | Directorio raíz con `SERVEL_2025/`, `TRICEL_2025/` y `SHP_APC2023_R*` (ver `.env.example`) |
+| `--base-dir` | `./SHP_APC2023` | Carpeta con shapefiles APC |
+| `--servel-candidates` | _(requerido)_ | CSV de candidatos SERVEL |
+| `--pacto-map` | _(requerido)_ | JSON `{partido: pacto}` |
+| `--assignment` | _(requerido)_ | JSON `{CUT: n_distrito}` |
+| `--verbose` | — | Muestra el detalle completo de cada discrepancia (por default solo el resumen agrupado por distrito) |
+
+---
+
+### 13. validar_datos_externos.py — Validación de datos externos
+
+Valida los 4 archivos de datos externos usados por `malapportionment.py` y `electoral_analysis.py` (ver "Datos externos" más arriba): `poblacion_comunal_censo2024.csv`, `servel_2025_por_cut.csv`, `asignacion_vigente.json`, `pacto_map_2025.json`. Para cada archivo imprime shape/keys y una muestra de 3 filas, corre verificaciones específicas (columnas, nulos, formato de CUT, cobertura) etiquetadas OK/WARNING, y termina con código de salida distinto de 0 si hubo alguna WARNING (uso en CI).
+
+```bash
+# Sin argumentos — resuelve datos/ relativo a la raíz del proyecto
+python scripts/validar_datos_externos.py
+```
+
+---
+
+### 14. recalcular_reock.py — Recalcula Reock tras fix de shapely 2.x
+
+Recalcula la métrica Reock en `ensemble_stats.csv` de corridas ya generadas, tras la corrección del bug de compatibilidad de `reock()` con shapely 2.x (ver "Problemas conocidos" más abajo) — evita tener que re-correr ReCom completo solo para refrescar Reock.
+
+```bash
+python scripts/recalcular_reock.py --base-dir . --regiones 13 --scenario legal
+
+# Varios escenarios a la vez
+python scripts/recalcular_reock.py --base-dir . --regiones 13 \
+    --scenarios legal,apc_free,apc_soft
+```
+
+| Argumento | Default | Descripción |
+|-----------|---------|-------------|
+| `--base-dir` | `.` | Directorio raíz con `SHP_APC2023_R*` y `datos/` |
+| `--regiones` | `13` | Regiones: número o lista separada por coma |
+| `--scenario` | — | Un solo escenario (`legal`\|`apc_free`\|`apc_soft`) — mutuamente excluyente con `--scenarios` |
+| `--scenarios` | — | Lista separada por coma, ej. `legal,apc_free,apc_soft` |
 
 ---
 
@@ -1213,7 +1350,7 @@ cd.plot_compactness(distritos, metricas, id_col="ID_DIST",
                     metric="polsby_popper", save_path="compacidad.png")
 ```
 
-### Escenarios (config.py)
+### Escenarios (chiledist.domain.scenario, post-B1; antes config.py)
 
 `ScenarioConfig` define todos los parámetros de un análisis en un único dataclass. Tres escenarios predefinidos cubren los casos de uso principales.
 
@@ -1266,7 +1403,7 @@ cd.save_scenario(sc, "scenarios/custom.yml")
 
 ---
 
-### Jerarquía y restricciones (hierarchy.py, constraints.py)
+### Jerarquía y restricciones (chiledist.domain.hierarchy, chiledist.rules.constraints, post-B1)
 
 Funciones para contraer la capa APC a la unidad de decisión del escenario y para construir las restricciones gerrychain correspondientes.
 
@@ -1313,7 +1450,7 @@ score = cd.score_with_split_penalty(partition, penalty=0.25)
 
 ---
 
-### Métricas de comunas partidas (split_metrics.py)
+### Métricas de comunas partidas (chiledist.engines.metrics, post-B1; antes split_metrics.py)
 
 Analiza cuántas comunas quedan divididas entre distritos en un plan dado.
 
@@ -1348,7 +1485,7 @@ Subpaquete para cargar datos de población desde el Censo 2024 o el padrón SERV
 #### Censo 2024 — join exacto por distrito (recomendado)
 
 ```python
-import chiledist.data.census2024 as c24
+import chiledist.domain.data.census2024 as c24
 
 # Cargar tabla manzana-entidad (Base_manzana_entidad_CPV24.csv, ~24 MB, TSV)
 mz = c24.load_manzana_censo2024(
@@ -1379,7 +1516,7 @@ gdf = c24.join_census_to_apc(gdf_apc, census, proxy_col="viviendas")
 #### Padrón electoral SERVEL
 
 ```python
-import chiledist.data.servel as sv
+import chiledist.domain.data.servel as sv
 
 # Cargar padrón comunal
 padron = sv.load_padron_electoral("datos/padron_2024.csv")
@@ -1394,7 +1531,7 @@ resultados = sv.load_resultados_electorales("datos/resultados_eleccion.csv")
 
 ---
 
-### Comparación de escenarios (chiledist.scenario_comparison)
+### Comparación de escenarios (chiledist.inference.comparison, chiledist.inference.plots, chiledist.evaluation.scoring, chiledist.domain.ensemble_store)
 
 ```python
 import chiledist as cd
@@ -1501,7 +1638,7 @@ completeness = cd.assess_comparison_completeness(
 | `plot_radar_comparativo` | Gráfico de araña multi-métrica normalizada |
 | `plot_boxplots_comparativos` | Boxplots de métricas por escenario |
 
-### Preflight de factibilidad poblacional (chiledist.feasibility)
+### Preflight de factibilidad poblacional (chiledist.rules.feasibility)
 
 ```python
 import chiledist as cd
@@ -1523,9 +1660,9 @@ if not resultado.feasible:
 
 ---
 
-### Electoral (chiledist.electoral)
+### Electoral (chiledist.engines.allocation, chiledist.evaluation.proportionality)
 
-Implementa el sistema electoral chileno: D'Hondt, magnitudes de escaño por distrito y métricas de proporcionalidad.
+Implementa el sistema electoral chileno: D'Hondt y magnitudes de escaño por distrito (`chiledist.engines.allocation`) y métricas de proporcionalidad (`chiledist.evaluation.proportionality`).
 
 ```python
 import chiledist as cd
@@ -1579,14 +1716,14 @@ metrics = cd.plan_electoral_metrics(assignment, votes_df, pop_by_unit)
 
 ---
 
-### Fair share y distancia al ideal fraccional (fairshare.py)
+### Fair share y distancia al ideal fraccional (chiledist.engines.fairshare, post-B1; antes fairshare.py)
 
 Mide qué tan lejos está una asignación entera (D'Hondt) del ideal fraccional que satisface
 simultáneamente proporcionalidad nacional y respeto a las magnitudes distritales.
 
 ```python
 import chiledist as cd
-import chiledist.fairshare as fs
+import chiledist.engines.fairshare as fs
 
 # ── Fair share matrix ─────────────────────────────────────────────────────────
 
@@ -1658,15 +1795,15 @@ print(f"L1_norm mediana del ensemble: {df_h6['l1_norm'].median():.4f}")
 
 ---
 
-### Malapportionment geográfico (chiledist.malapportionment)
+### Malapportionment geográfico (chiledist.evaluation.malapportionment, post-B1; antes chiledist.malapportionment)
 
 Índices de malapportionment comparables internacionalmente. Complementa
-`personas_por_escano` / `peso_relativo_del_voto` (distritales) con escalares globales
+`personas_por_escano` / `peso_relativo_del_voto` (distritales, `chiledist.evaluation.district_malapportionment`) con escalares globales
 que permiten comparar planes entre sí y con sistemas de otros países. Implementa H9.
 
 ```python
 import chiledist as cd
-import chiledist.malapportionment as mala
+import chiledist.evaluation.malapportionment as mala
 import pandas as pd
 
 pop_d = pd.Series({1: 500_000, 2: 300_000, 3: 200_000})
@@ -1758,7 +1895,7 @@ cd.plot_international_comparison(
 
 ---
 
-### Barrido paramétrico y frontera Pareto continua (chiledist.pareto_sweep)
+### Barrido paramétrico y frontera Pareto continua (chiledist.inference.pareto_sweep, post-B1; antes chiledist.pareto_sweep)
 
 Construye la frontera Pareto real del espacio de tradeoffs operando sobre **planes individuales**
 —no medianas por escenario— con bandas bootstrap de incertidumbre y detección automática del
@@ -1843,7 +1980,7 @@ print(summary[["n_planes", "pct_pareto", "is_knee"]])
 
 ---
 
-### Análisis distribucional electoral sobre ensembles (chiledist.electoral_ensemble)
+### Análisis distribucional electoral sobre ensembles (chiledist.inference.electoral_ensemble, post-B1; antes chiledist.electoral_ensemble)
 
 Evalúa cómo se distribuyen las métricas electorales (Gallagher, ENP, prima de escaños) sobre
 el universo de planes de redistritaje. Permite determinar si el resultado del mapa vigente es
@@ -1914,7 +2051,7 @@ cd.plot_ensemble_ecdf(results, metric="gallagher", observed=obs_gallagher,
 # ── Umbral efectivo (magnitudes variables) ────────────────────────────────────
 
 # Cuando magnitudes se calculan por plan (magnitudes=None en run_electoral_ensemble)
-from chiledist.electoral import assign_seat_magnitudes
+from chiledist.engines.allocation import assign_seat_magnitudes
 mags_list = [
     assign_seat_magnitudes(
         pd.Series({d: sum(pop.get(u, 0) for u, dd in a.items() if dd == d)
@@ -1940,7 +2077,7 @@ threshold_df = cd.ensemble_effective_threshold(mags_list)
 
 ---
 
-### Diagnósticos de convergencia (samplers/diagnostics.py)
+### Diagnósticos de convergencia (chiledist.engines.samplers.diagnostics, post-B1)
 
 Herramientas para evaluar si la cadena MCMC ha convergido y para ejecutar análisis multi-cadena.
 
@@ -1948,7 +2085,7 @@ Herramientas para evaluar si la cadena MCMC ha convergido y para ejecutar análi
 
 ```python
 import chiledist as cd
-# o directamente: from chiledist.samplers.diagnostics import ...
+# o directamente: from chiledist.engines.samplers.diagnostics import ...
 import numpy as np
 
 # Función de autocorrelación
@@ -1992,7 +2129,7 @@ planes, chain_metrics = cd.run_multiple_chains(
 tabla = cd.mixing_diagnostics(chain_metrics)
 ```
 
-#### Bridge R / redist (samplers/smc.py)
+#### Bridge R / redist (chiledist.engines.samplers.smc, post-B1)
 
 ```python
 # Exportar a GeoPackage + generar script R completo para SMC
@@ -2199,7 +2336,7 @@ Ocurre en regiones con pocos nodos por grupo (spanning trees lineales sin arista
 
 ### Columnas truncadas en DBF
 
-El formato DBF trunca nombres a 10 caracteres. `loader.py` lo normaliza automáticamente. Si se carga manualmente:
+El formato DBF trunca nombres a 10 caracteres. `chiledist/domain/loader.py` lo normaliza automáticamente. Si se carga manualmente:
 
 ```python
 distritos = distritos.rename(columns={
@@ -2224,6 +2361,17 @@ for k in range(1, max_order + 1):
     w_k = WSP(W_norm).to_W()
     mi_k = Moran(y, w_k, permutations=199)
 ```
+
+### Bugs corregidos (agosto 2026)
+
+Los siguientes problemas fueron detectados y corregidos durante la validación post-B1; se listan aquí para trazabilidad, no son problemas abiertos.
+
+| Bug | Estado | Detalle |
+|---|---|---|
+| `reock()` incompatible con shapely 2.x | **RESUELTO** | `scripts/recalcular_reock.py` permite recalcular Reock en `ensemble_stats.csv` de corridas antiguas sin re-correr ReCom completo. Ver `tests/test_metrics.py` (`test_reock_circulo_perfecto`, `test_reock_cuadrado_unitario`, `test_reock_l_shape_en_rango`). |
+| `normalize_party_name()` no toleraba mayúsculas/acentos en el cruce D'Hondt binivel | **RESUELTO** | Necesario para cruzar nombres de partido entre SERVEL (mayúsculas sin tildes) y `pacto_map_2025.json` (formato título con tildes). Ver `chiledist/domain/utils.py` y `tests/test_electoral_binivel.py`. |
+| `Puntos_Edificacion_Rural` sin `COD_DISTRITO` (solo CUT a nivel comuna) rompía el pipeline en regiones sin cobertura urbana completa | **RESUELTO** | Manejado como proxy rural especial en `chiledist/domain/loader.py`. Ver `tests/test_integration_r11.py`. |
+| `datos/asignacion_vigente.json`: 8 CUT de la Región Metropolitana mal asignados a distrito | **RESUELTO** | Corrección validada indirectamente: la asignación corregida reproduce 96/96 combinaciones (distrito, pacto) contra SERVEL 2025 (ver `scripts/validar_dhondt.py`) y 24/28 distritos contra TRICEL 2025 (ver "Validación electoral" más arriba, `VALIDATION_REPORT.md`). |
 
 ---
 
