@@ -331,3 +331,75 @@ len(counts)                                                # 488
 ### Conclusión — **Escenario 2 confirmado explícitamente**
 
 La implementación ya cuenta candidatos reales desde el roster de TRICEL, consistente con que el art. 5 fija un máximo permitido (magnitud+1 por partido/pacto declarante), no un mínimo obligatorio. **No se requirió ningún cambio de código.** Se actualizaron los docstrings de `import_candidate_counts()` (`chiledist/domain/data/tricel/__init__.py`) y `dhondt_binivel_cl()` (`chiledist/engines/allocation/dhondt.py`) con la cita legal exacta y la evidencia empírica de arriba, para que quede documentado por qué NO se usa `magnitud + 1` como atajo. No se agregó ningún test nuevo: los 7 pactos ya presentes en `tests/test_dhondt_binivel_cl.py::TestPactosRealesD3D5D19` ya ejercitan mayoritariamente partidos con recuentos reales muy por debajo de magnitud+1 (ver ejemplo Liberal/PPD arriba), así que ya constituyen regresión permanente contra este caso.
+
+## 12. Pivote de verificación previo a H5 — cuatro problemas estructurales resueltos
+
+Antes de correr las Fases 1–4 de robustez metodológica de H5 (multi-semilla, sensibilidad a `n_steps`, ReCom vs SMC, sensibilidad a `island_policy`), la Fase 0 de esa validación encontró cuatro problemas estructurales que habrían invalidado cualquier resultado numérico corrido sobre ellos. Este pivote los cierra uno por uno, con verificación explícita, antes de retomar el cómputo pesado.
+
+### Punto 2 — `scenarios/*.yml` no coincidían con los ensembles canónicos de H1
+
+**Diagnóstico (no supuesto — verificado contra `git log` y contra el propio texto de `SCIENTIFIC_HYPOTHESES.md`):** los 3 YAML versionados (`legal_comunas.yml`, `contrafactual_apc_libre.yml`, `contrafactual_apc_soft.yml`) y el registro `chiledist.rules.scenario_rules.SCENARIOS` (`legal`/`apc_soft`/`apc_free`) tenían `population.column=viviendas`, `tolerance=0.05`, `n_steps=10000` desde su primer commit (`c76bb51`, jun-2026) — nunca se tocaron cuando el análisis migró a Censo 2024. La sección "Decisiones metodológicas previas a la ejecución" de `SCIENTIFIC_HYPOTHESES.md` (línea 2540) documenta explícitamente, *antes* de correr los ensembles definitivos: *"usar `pop_col=\"personas\"` (Censo 2024) como fuente primaria. `\"viviendas\"` (APC 2023) es alternativa documentada; H5 verifica la concordancia entre ambas."* — es decir, `personas`/censo2024 fue una decisión metodológica deliberada y pre-registrada, no un accidente; pero esa decisión nunca se propagó al YAML/registro, que siguieron reflejando el default anterior a esa decisión.
+
+**Decisión tomada: opción (a) + (b) combinadas.** Se actualizaron ambas fuentes (los 3 YAML **y** el registro `SCENARIOS`, que tiene precedencia sobre el YAML para los nombres cortos `legal`/`apc_soft`/`apc_free` — un hallazgo en sí mismo: existían dos definiciones paralelas del mismo escenario que podían divergir silenciosamente) para que `pop_col`, `pop_tolerance`, `n_steps` coincidan exactamente con los manifiestos canónicos (`personas`/±10%/50.000). La ruta del CSV de Censo 2024 (`--census-path`) se dejó **fuera** del escenario deliberadamente: es una ubicación de datos en el sistema de archivos, no una propiedad científica del escenario, y se documenta como flag obligatorio junto al comando de reproducción.
+
+**Bug adicional descubierto y corregido:** tanto `scripts/redistritaje.py` como `scripts/run_chains.py` tenían defaults de argparse no-`None` para `--n-steps`/`--seed`/`--pop-source` (`--pop-tol` sí era correcto), que por lo tanto **siempre pisaban silenciosamente el valor del escenario** aunque el usuario no pasara el flag — actualizar el YAML/registro solo no habría bastado. Se corrigieron ambos scripts para que `None` (el nuevo default) caiga de vuelta al valor del escenario, replicando el patrón que `--pop-tol` ya usaba correctamente.
+
+**Verificación (campo por campo, no solo "corrió sin error"):** comando único documentado —
+
+```bash
+python scripts/redistritaje.py --scenario legal \
+    --census-path datos/poblacion_comunal_censo2024.csv \
+    --n-steps 6000 --regiones 13   # --n-steps reducido solo para la verificación
+```
+
+— corrido para los 3 escenarios canónicos (`legal`, `apc_soft`, `apc_free`, vía `redistritaje.py` y vía `run_chains.py`), comparando el `run_manifest.json` resultante contra el canónico (`cc037ac8`/`97cf1309`/`856910a5`) en los campos `pop_col`, `pop_tolerance`, `pop_source`, `decision_unit`, `preserve_mode`, `preserve_units`, `sampler`, `island_policy`, `contiguity`, `n_districts`: **coincidencia exacta en los 3 escenarios**, sin pasar ningún flag adicional de override.
+
+### Punto 3 — `run_chains.py`: confirmación de que el fix funciona con la config real
+
+El bug de la sesión anterior (`analizar_region(output_dir=...)` cuando la firma real es `output_base`) se re-verificó ya con la configuración real (post Punto 2), no solo con el smoke test genérico de 3.000 pasos: los 3 escenarios canónicos corrieron vía `run_chains.py --scenario {legal,apc_soft,apc_free} --census-path ... --n-chains 1 --n-steps 6000` y los 3 `run_manifest.json` resultantes (en `chains/<escenario>/seed_0042/`) coinciden campo por campo con sus manifiestos canónicos (misma verificación que Punto 2). Documentado también en el docstring de `run_chains()` y en el mensaje de commit correspondiente.
+
+### Punto 4 — `island_policy` no solo es intestable en R13: no está conectado al pipeline en absoluto
+
+El hallazgo original ("R13 tiene 0 islas bajo Queen, así que `island_policy` no puede tener efecto ahí") resultó ser **incompleto**. Al buscar una región con islas reales para una validación de infraestructura (se revisaron R05/Valparaíso: 3 islas, R10/Los Lagos: 29 islas, R11/Aysén: 2, R12/Magallanes: 5 — R10 sería el candidato natural, con margen suficiente para una comparación significativa), se descubrió que **`scripts/redistritaje.py` no usa `chiledist.domain.graph.build_graph()` en absoluto** — el pipeline real que produjo los ensembles canónicos de H1 construye el grafo con `gc.Graph.from_geodataframe()` + una función local, `conectar_islas_y_componentes()`, que:
+
+- Conecta **siempre** las islas (grado 0) al nodo más cercano, sin leer `scenario.island_policy` ni `island_threshold_km` en ningún punto.
+- Si tras eso el grafo sigue desconectado en componentes múltiples, los fusiona igual por distancia de centroides — una garantía de conectividad total, independiente de cualquier política.
+
+Es decir: `ScenarioConfig.island_policy` es un **campo inerte** para el pipeline que realmente importa (el que generó H1). Cambiar su valor no altera el grafo resultante en absoluto, en ninguna región. Más aún: `island_policy="none"` es estructuralmente incompatible con ReCom (que requiere un grafo conexo para operar) — incluso si se conectara el parámetro, "none" no podría dejar islas realmente desconectadas, porque el paso de fusión de componentes las reconectaría de todos modos.
+
+**Decisión: NO se ejecuta la validación de sensibilidad a `island_policy`.** No por la razón original (0 islas en R13), sino por una más fundamental: no hay ningún parámetro real que variar en el pipeline de producción sin antes hacer una modificación de código no trivial (conectar `island_policy`/`island_threshold_km` a `conectar_islas_y_componentes()`), y aun haciéndolo, el diseño garantiza conectividad total de todos modos, por lo que el efecto esperado de esa sensibilidad sería marginal/incidental (qué arista específica se agrega en casos raros), no una variación metodológica sustantiva. Se documentó esta limitación directamente en el docstring de `conectar_islas_y_componentes()` (`scripts/redistritaje.py`). Queda fuera de alcance de H5 — es un gap de infraestructura de chiledist (`ScenarioConfig.island_policy` sin efecto en el pipeline principal), no una pregunta científica sobre H1/H2, y debe tratarse como tarea separada si se decide conectar el parámetro en el futuro.
+
+**Estado en la tabla de síntesis de H5 (Fase 5, pendiente): `NOT_APPLICABLE_TO_H1H2`** — razón: parámetro no conectado al pipeline de producción (no solo "región sin islas").
+
+### Punto 5 — bridge SMC: no ejecutaba en ningún escenario; ahora funciona para `contrafactual_apc_libre`
+
+**Decisión sobre el alcance, tomada antes de tocar código:** se verificó la documentación real del paquete R instalado (`redist` 4.3.2, no asumida) en vez de suponer que "preservar CUT" era posible o imposible. Hallazgo: `redist_smc()` acepta un parámetro `counties=`, pero su propia documentación es explícita — *"the algorithm will only generate maps which split up to `ndists-1` counties"* — es decir, **limita** el número de comunas partidas, no las **preserva** estrictamente. Esto es un mecanismo más cercano al `preserve_mode="soft"` de chiledist (`contrafactual_apc_soft`) que a `preserve_mode="hard"` (`legal_comunas`). Para una réplica fiel de `legal_comunas` en SMC habría que contraer el GDF a nivel de comuna con `chiledist.contract_to_decision_units()` **antes** de exportarlo a `redist_map()` (exactamente lo que hace ReCom vía `decision_unit="CUT"`) — no implementado en este pivote, fuera de alcance de tiempo.
+
+**Decisión: opción (b).** La limitación de `legal_comunas` se acepta y se documenta explícitamente (en `scripts/smc_pipeline.py` y `chiledist/engines/samplers/smc.py`, no solo aquí). La comparación ReCom vs SMC de H5 (Fase 3) queda **restringida a `contrafactual_apc_libre`** (`decision_unit="ID_DIST"`, `preserve_mode="none"` — el bridge SÍ lo replica fielmente, sin contracción de por medio).
+
+**Hallazgo no anticipado: el bridge no ejecutaba en NINGÚN escenario, ni siquiera en `apc_libre`.** Antes de llegar a la pregunta de `counties=`, `scripts/smc_pipeline.py --scenario apc_free` fallaba de entrada, por 4 bugs independientes y acumulativos, todos corregidos y verificados con una corrida real (`--n-sims 200`, región 13, `apc_free`, `--census-path`):
+
+1. `load_region_data()` pasaba `base_dir=<root>/datos` a `cd.load_layer()`, que espera el root del proyecto directamente (igual que `redistritaje.py`) → `FileNotFoundError`.
+2. `load_region_data()` nunca enriquecía la capa cruda con ninguna columna de población — la capa `distrital` sin procesar no trae ni `viviendas` ni `personas` — con el default `--pop-col personas` esto era `KeyError` garantizado. Corregido reutilizando `enrich_population()` de `redistritaje.py` (mismo import dinámico que ya usa `run_chains.py` para `analizar_region`), con nuevos flags `--pop-source`/`--census-path`/`--padron-path`.
+3. El script R generado por `generate_redist_script()` pasaba `adj=st_relate(units, units, pattern="F***T****")` explícito a `redist_map()`, que fallaba con `Error: Index out of bounds` — `st_relate()` no reproyecta a un CRS métrico ni entrega el formato de lista de adyacencia 0-indexada sin huecos que `redist_map()` espera internamente. Corregido omitiendo `adj=` por completo: `redist_map()` la calcula sola desde la geometría (reproyectando vía `planarize=3857`), documentado como tal en la Value section de `?redist_map`.
+4. El mismo script llamaba a `ndists(map)`, `nsims(plans_smc)`, `distr_polsby_popper(map)` y `get_target_pop(map)` — ninguna de las 4 existe en `redist` 4.3.2 instalado (verificado listando `ls("package:redist")`/`ls("package:redistmetrics")`; `distr_compactness()`/`redist.compactness()` sí existen pero están deprecadas a favor de `redistmetrics::comp_polsby()`). Corregido usando `comp_polsby(plans=get_plans_matrix(plans_smc), shp=map)`, `get_target(map)`, y los valores `n_districts`/`n_sims` ya conocidos al generar el script (sin necesidad de un accesor).
+
+**Verificación end-to-end ejecutada** (no solo "el script se generó"): `Rscript apc_free_redist.R` corrió 200 simulaciones SMC reales sobre los 451 nodos ID_DIST de R13 en 0.38s, exportó `apc_free_smc_planes.csv`/`apc_free_smc_metricas.csv`, y `python scripts/smc_pipeline.py --compare --recom-ensemble .../contrafactual_apc_libre/.../856910a5/ensemble_stats.csv` produjo una comparación real:
+
+| métrica | KS stat | mediana SMC (n=200) | mediana ReCom (n=50.000) | efecto |
+|---|---|---|---|---|
+| `pp_promedio` | 0.964 | 0.0962 | 0.2148 | grande |
+| `max_dev_pob_pct` | 0.711 | 4.40% | 9.12% | grande |
+
+Divergencia grande en ambas métricas — SMC (200 partículas) concentra el balance poblacional mucho más cerca del centro de la banda ±10% que ReCom (50.000 pasos), y también converge a compacidad más baja. Esto es un resultado preliminar (smoke test de verificación, no la corrida completa de Fase 3 — n_sims=200 es deliberadamente pequeño solo para confirmar que el bridge funciona) pero **sustantivo**: no se debe asumir que ReCom y SMC son intercambiables para `contrafactual_apc_libre` sin más evidencia a mayor escala en la Fase 3 real.
+
+### Síntesis del pivote
+
+| Punto | Decisión | Verificado |
+|---|---|---|
+| 2 — YAML vs canónico | (a)+(b): YAML/registro alineados a personas/±10%/50k; census-path documentado aparte | Manifiesto campo-por-campo idéntico en 3/3 escenarios |
+| 3 — fix de `run_chains.py` | Confirmado con config real (no solo smoke test genérico) | 3/3 manifiestos correctos vía `run_chains.py` |
+| 4 — `island_policy` | Fuera de alcance — parámetro inerte en el pipeline de producción, no solo "sin islas en R13" | Código de `conectar_islas_y_componentes()` leído y confirmado sin referencia a `island_policy` |
+| 5 — bridge SMC | Restringido a `contrafactual_apc_libre`; `legal_comunas` documentado como no soportado | 4 bugs corregidos; corrida SMC real de 200 sims + comparación KS vs ReCom ejecutada |
+
+Con estos 4 puntos cerrados y verificados, las Fases 1–4 de H5 se retoman usando `--scenario {legal,apc_soft,apc_free} --census-path datos/poblacion_comunal_censo2024.csv` como comando base (sin overrides adicionales de `pop-tol`/`pop-source`/`n-steps` salvo los que cada fase varíe deliberadamente), reemplazando cualquier config usada en corridas de background previas a este pivote (detenidas sin guardar resultados).

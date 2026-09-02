@@ -27,6 +27,47 @@ Salidas en datos/<REGION>/smc/<SCENARIO>/:
     smc_vs_recom_ks.csv            (solo con --compare)
     smc_vs_recom_ranking.csv       (solo con --compare)
     smc_vs_recom_ks.png            (solo con --compare)
+
+Bugs corregidos en la verificación H5 (2026-08-27) — antes de este fix el
+bridge no ejecutaba en NINGÚN escenario:
+    1. load_region_data() pasaba base_dir=<root>/datos a cd.load_layer(),
+       que espera el root del proyecto directamente (igual que
+       scripts/redistritaje.py) -> FileNotFoundError.
+    2. load_region_data() nunca enriquecía la capa cruda con ninguna
+       columna de población (ni 'viviendas' vía manzanas, ni 'personas'
+       vía Censo 2024) -> KeyError con el default --pop-col personas.
+       Corregido reutilizando scripts/redistritaje.py::enrich_population()
+       (ver --pop-source/--census-path/--padron-path).
+    3. El template R (chiledist.engines.samplers.smc.generate_redist_script)
+       pasaba adj=st_relate(...) explícito a redist_map() -> "Index out of
+       bounds" (st_relate() no reproyecta ni entrega el formato de lista
+       de adyacencia 0-indexada que redist_map() espera). Corregido
+       omitiendo adj= y dejando que redist_map() la calcule sola.
+    4. El mismo template llamaba a ndists()/nsims()/distr_polsby_popper()/
+       get_target_pop(), ninguna de las cuales existe en redist 4.3.2
+       (algunas fueron renombradas, otras deprecadas en favor de los
+       scorers de redistmetrics). Corregido con comp_polsby()/get_target()
+       y los valores {n_districts}/{n_sims} ya conocidos al generar el script.
+
+LIMITACIÓN CONOCIDA (no corregida — fuera de alcance de este pivote):
+    este bridge exporta la capa APC/distrital directamente a
+    redist_map() sin contraer previamente a nivel comunal, por lo que
+    SOLO puede replicar fielmente escenarios con decision_unit=ID_DIST
+    y preserve_mode="none"/"soft" (ej. contrafactual_apc_libre,
+    contrafactual_apc_soft). NO puede replicar legal_comunas
+    (decision_unit="CUT", preserve_mode="hard"): redist_smc() acepta un
+    argumento `counties=`, pero éste solo LIMITA el número de comunas
+    partidas (hasta ndists-1) — no las preserva estrictamente como hace
+    ReCom con decision_unit="CUT" (que agrega los datos a nivel comunal
+    ANTES de muestrear, vía chiledist.contract_to_decision_units(), de
+    modo que una comuna simplemente no puede partirse). Para una
+    comparación SMC vs ReCom válida sobre legal_comunas, este pipeline
+    tendría que llamar primero a contract_to_decision_units() sobre el
+    GDF (igual que hace scripts/redistritaje.py) antes de exportar a R —
+    no implementado aquí. Ver VALIDATION_REPORT.md / reporte de robustez
+    H5, "Punto 5 — bridge SMC", para el análisis completo y la decisión
+    de alcance: la comparación SMC vs ReCom de H5 se restringe a
+    contrafactual_apc_libre.
 """
 
 import argparse
@@ -86,28 +127,98 @@ def _resolve_scenario_n_districts(scenario_name: str, base_dir: str):
 # Paso 1–2: carga de datos y grafo
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _import_redistritaje():
+    """Importa scripts/redistritaje.py como módulo (reutiliza enrich_population,
+    sin duplicar su lógica de fuentes de población). Mismo patrón que
+    run_chains.py::_import_analizar_region()."""
+    import importlib.util
+    _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "redistritaje.py")
+    _spec = importlib.util.spec_from_file_location("redistritaje", _path)
+    _mod  = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    return _mod
+
+
 def load_region_data(
     region_code: int,
     base_dir: str,
     layer: str = "distrital",
     id_col: str = "ID_DIST",
     pop_col: str = "personas",
+    pop_source: str = "censo2024",
+    census_path: str | None = None,
+    padron_path: str | None = None,
 ):
-    """Carga GDF de la región y construye su grafo de adyacencia."""
+    """Carga GDF de la región y construye su grafo de adyacencia.
+
+    BUG corregido 2026-08-27 (verificación H5): antes de este fix,
+    load_region_data() (a) pasaba ``base_dir=<base_dir>/datos`` a
+    cd.load_layer(), que en realidad espera el directorio que CONTIENE
+    ``SHP_APC2023_R*`` (el root del proyecto, no ``<root>/datos`` — ver
+    scripts/redistritaje.py, que llama cd.load_layer(base_dir=base_dir)
+    directamente); y (b) nunca enriquecía la capa cruda con ninguna fuente
+    de población (ni 'viviendas' vía manzanas, ni 'personas' vía Censo
+    2024) — la capa 'distrital' cruda no trae ninguna columna de
+    población. Con --pop-col personas (el default de este script) esto
+    hacía fallar smc_pipeline.py con KeyError en TODOS los escenarios,
+    no solo en los que requieren preservar comunas. Ver VALIDATION_REPORT.md /
+    reporte de robustez H5, "Punto 5 — bridge SMC", para el detalle.
+    """
     print(f"\n  Cargando capa '{layer}' para región {region_code}...")
-    gdf = cd.load_layer(layer, base_dir=os.path.join(base_dir, "datos"),
-                        regions=[region_code])
+    gdf = cd.load_layer(layer, base_dir=base_dir, regions=[region_code])
 
     if id_col not in gdf.columns:
         raise KeyError(
             f"Columna '{id_col}' no encontrada. "
             f"Columnas disponibles: {list(gdf.columns)}"
         )
+
+    if pop_col not in gdf.columns:
+        if layer != "distrital":
+            raise KeyError(
+                f"Columna '{pop_col}' no encontrada, y el enriquecimiento "
+                f"automático de población (manzanas + enrich_population) solo "
+                f"está implementado para layer='distrital' (recibido: '{layer}'). "
+                "Pasa un GDF que ya incluya la columna de población o usa "
+                "layer='distrital'."
+            )
+        redistritaje = _import_redistritaje()
+        print(f"  Columna '{pop_col}' no está en la capa cruda — enriqueciendo "
+              f"población (mismo pipeline que scripts/redistritaje.py)...")
+        mz_urb = cd.load_layer("manzana_urbana", base_dir=base_dir, regions=[region_code])
+        mz_ald = cd.load_layer("manzana_aldea",  base_dir=base_dir, regions=[region_code])
+        try:
+            puntos_rural = cd.load_layer("puntos_rural", base_dir=base_dir, regions=[region_code])
+        except FileNotFoundError:
+            puntos_rural = None
+
+        pop_urb = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
+        pop_ald = cd.aggregate_population(mz_ald, level="distrito", source="aldea")
+        pop = (
+            pop_urb.merge(pop_ald, on=["CUT", "COD_DISTRITO"],
+                          how="outer", suffixes=("_urb", "_ald"))
+            .fillna(0)
+        )
+        pop["viviendas"] = pop.get("viviendas_urb", 0) + pop.get("viviendas_ald", 0)
+        gdf = gdf.merge(
+            pop[["CUT", "COD_DISTRITO", "viviendas"]],
+            on=["CUT", "COD_DISTRITO"], how="left"
+        ).fillna({"viviendas": 0})
+        gdf["viviendas"] = gdf["viviendas"].astype(int)
+        gdf = cd.apply_rural_proxy_fallback(gdf, puntos_rural)
+        gdf["viviendas"] = gdf["viviendas"].astype(int)
+
+        if pop_source != "viviendas":
+            print(f"  Enriqueciendo población: fuente='{pop_source}'...")
+        gdf, _resolved_pop_col = redistritaje.enrich_population(
+            gdf, pop_source, census_path, padron_path
+        )
+
     if pop_col not in gdf.columns:
         alt_cols = [c for c in gdf.columns if "pers" in c.lower() or "pob" in c.lower()]
         raise KeyError(
-            f"Columna '{pop_col}' no encontrada. "
-            f"Posibles alternativas: {alt_cols}"
+            f"Columna '{pop_col}' no encontrada tras enriquecimiento "
+            f"(fuente='{pop_source}'). Posibles alternativas: {alt_cols}"
         )
 
     print(f"  {len(gdf)} unidades cargadas  |  "
@@ -135,6 +246,7 @@ def export_and_generate_script(
     output_dir: str,
     scenario_name: str,
     extra_cols: list = None,
+    pop_tol: float = 0.1,
 ) -> str:
     """
     Exporta los datos en formato redist y genera el script R.
@@ -153,6 +265,7 @@ def export_and_generate_script(
         n_sims=n_sims,
         scenario_name=scenario_name,
         extra_cols=extra_cols,
+        pop_tol=pop_tol,
     )
 
     return r_path
@@ -347,6 +460,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Columna de ID de unidad")
     p.add_argument("--pop-col", default="personas",
                    help="Columna de población")
+    p.add_argument("--pop-source", default="censo2024",
+                   choices=["viviendas", "censo2024", "manzana", "padron"],
+                   help="Fuente de población a enriquecer si --pop-col no está "
+                        "en la capa cruda (mismo significado que en "
+                        "scripts/redistritaje.py). 'censo2024' reproduce la "
+                        "configuración canónica de H1/H2.")
+    p.add_argument("--census-path", default=None,
+                   help="Ruta a poblacion_comunal_censo2024.csv, requerida por "
+                        "--pop-source censo2024/manzana.")
+    p.add_argument("--padron-path", default=None,
+                   help="Ruta a padrón electoral SERVEL, requerida por "
+                        "--pop-source padron.")
+    p.add_argument("--pop-tol", type=float, default=0.1,
+                   help="Tolerancia poblacional para redist_map() (default: "
+                        "0.10, igual que el ensemble canónico ReCom de H1; "
+                        "el default de generate_redist_script() por sí sola "
+                        "es 0.05 y NO coincide con H1 si se omite este flag).")
     p.add_argument("--n-districts", type=int, default=None,
                    help="Número de particiones territoriales a generar (NO "
                         "la magnitud electoral 3-8 de Ley 20.840). Default: "
@@ -389,6 +519,9 @@ def main():
             layer=args.layer,
             id_col=args.id_col,
             pop_col=args.pop_col,
+            pop_source=args.pop_source,
+            census_path=args.census_path,
+            padron_path=args.padron_path,
         )
 
         # ── Resolver n_districts: --n-districts explícito > scenario.n_districts ──
@@ -417,6 +550,7 @@ def main():
             output_dir=output_dir,
             scenario_name=scenario_name,
             extra_cols=args.extra_cols,
+            pop_tol=args.pop_tol,
         )
 
         # ── Paso 4: instrucciones para R ──────────────────────────────────────

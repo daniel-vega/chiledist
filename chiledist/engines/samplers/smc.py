@@ -195,6 +195,7 @@ def generate_redist_script(
 # Requiere: install.packages(c("redist", "sf", "dplyr", "ggplot2"))
 
 library(redist)
+library(redistmetrics)
 library(sf)
 library(dplyr)
 library(ggplot2)
@@ -205,14 +206,21 @@ cat("Unidades cargadas:", nrow(units), "\\n")
 cat("Población total:", sum(units${pop_col}), "\\n")
 
 # ── 2. Construir objeto redist_map ───────────────────────────────────────────
+# adj se omite deliberadamente: redist_map() la calcula sola desde la
+# geometría (reproyectando internamente vía planarize=3857 si el shapefile
+# está en lon/lat). Una versión anterior pasaba
+# adj=st_relate(units, units, pattern="F***T****") explícito, que fallaba
+# con "Index out of bounds" porque st_relate() no reproyecta ni entrega el
+# formato de lista de adyacencia 0-indexada sin huecos que redist_map()
+# espera (ver redist.adjacency() en la documentación del paquete) — bug
+# detectado y corregido en la verificación H5 (2026-08-27).
 map <- redist_map(
     units,
     pop      = {pop_col},
     ndists   = {n_districts},
-    pop_tol  = {pop_tol},
-    adj      = st_relate(units, units, pattern = "F***T****")
+    pop_tol  = {pop_tol}
 )
-cat("redist_map construido:", ndists(map), "distritos\\n")
+cat("redist_map construido:", {n_districts}, "distritos\\n")
 
 # ── 3. Simulación SMC ────────────────────────────────────────────────────────
 set.seed(42)
@@ -221,13 +229,19 @@ plans_smc <- redist_smc(
     nsims   = {n_sims},
     verbose = TRUE
 )
-cat("SMC:", nsims(plans_smc), "planes generados\\n")
+cat("SMC:", {n_sims}, "planes generados\\n")
 
 # ── 4. Métricas ──────────────────────────────────────────────────────────────
+# distr_polsby_popper()/get_target_pop()/ndists()/nsims() no existen en
+# redist 4.3.2 (verificación H5, 2026-08-27): distr_compactness()/
+# redist.compactness() están deprecadas en favor de los scorers de
+# redistmetrics (comp_*), y get_target()/{{n_districts}}/{{n_sims}}
+# (ya conocidos al generar este script) reemplazan a los accesores
+# inexistentes.
 plans_smc <- plans_smc |>
     mutate(
-        polsby_popper = distr_polsby_popper(map),
-        pop_deviation = abs(total_pop / get_target_pop(map) - 1)
+        polsby_popper = comp_polsby(plans = get_plans_matrix(plans_smc), shp = map),
+        pop_deviation = abs(total_pop / get_target(map) - 1)
     )
 
 # ── 5. Resumen y gráfico ─────────────────────────────────────────────────────

@@ -195,6 +195,24 @@ def conectar_islas_y_componentes(graph, gdf_nodos) -> int:
 
     Retorna el número de islas encontradas (antes de conectarlas) --
     el caller lo necesita para el run_manifest.json (n_islands_found).
+
+    LIMITACIÓN CONOCIDA (detectada en verificación H5, 2026-08-27):
+    esta función NO recibe ni respeta ``scenario.island_policy`` /
+    ``island_threshold_km`` — a diferencia de
+    ``chiledist.domain.graph.build_graph()`` (que sí implementa
+    nearest/threshold/none), aquí las islas SIEMPRE se conectan al nodo
+    más cercano, y cualquier componente que siga desconectado se fusiona
+    igual más abajo por distancia de centroides. Es decir: para el
+    pipeline real que produjo los ensembles canónicos de H1
+    (`scripts/redistritaje.py`), ``ScenarioConfig.island_policy`` es un
+    campo inerte — cambiar su valor no altera el grafo resultante.
+    Además, ``island_policy="none"`` es estructuralmente incompatible con
+    ReCom (requiere un grafo conexo para operar), por lo que incluso si se
+    conectara este parámetro, "none" no podría dejar islas realmente
+    desconectadas: el paso de fusión de componentes de más abajo las
+    reconectaría de todos modos. Ver VALIDATION_REPORT.md / reporte de
+    robustez H5, sección "Punto 4 — island_policy", para el análisis
+    completo y la decisión de alcance.
     """
     centroids = {}
     for n in graph.nodes():
@@ -277,10 +295,12 @@ def parse_args():
                    help="Tolerancia poblacional (default: usa pop_tolerance del escenario, "
                         "normalmente 0.05 = ±5%%. Usa 0.15 para regiones con pocos nodos "
                         "o particiones iniciales difíciles de balancear.)")
-    p.add_argument("--n-steps",    type=int, default=10000,
-                   help="Pasos de la cadena ReCom (default: 10000)")
-    p.add_argument("--seed",       type=int, default=42,
-                   help="Semilla aleatoria (default: 42)")
+    p.add_argument("--n-steps",    type=int, default=None,
+                   help="Pasos de la cadena ReCom (default: usa n_steps del "
+                        "escenario; si no hay escenario, 10000).")
+    p.add_argument("--seed",       type=int, default=None,
+                   help="Semilla aleatoria (default: usa seed del escenario; "
+                        "si no hay escenario, 42).")
     p.add_argument("--skip-viz",   action="store_true",
                    help="Omitir visualizaciones")
 
@@ -304,10 +324,12 @@ def parse_args():
 
     # Fuente de población
     pg = p.add_argument_group("Fuente de población")
-    pg.add_argument("--pop-source", default="viviendas",
+    pg.add_argument("--pop-source", default=None,
                     choices=["viviendas", "censo2024", "manzana", "padron"],
-                    help="Fuente de datos de población. "
-                         "'viviendas' (default): conteo APC Manzana. "
+                    help="Fuente de datos de población (default: usa "
+                         "pop_source del escenario si está definido en el YAML "
+                         "['population.source']; si no, 'viviendas'). "
+                         "'viviendas': conteo APC Manzana. "
                          "'manzana': n_per exacto por distrito desde Base_manzana_entidad_CPV24.csv "
                          "(requiere --census-path). "
                          "'censo2024': personas Censo 2024 distribuidas por comuna "
@@ -551,9 +573,9 @@ def build_scenario(args) -> ScenarioConfig:
         changes["n_districts"] = args.n_distritos
     if args.pop_tol:
         changes["pop_tolerance"] = args.pop_tol
-    if args.n_steps:
+    if args.n_steps is not None:
         changes["n_steps"] = args.n_steps
-    if args.seed:
+    if args.seed is not None:
         changes["seed"] = args.seed
     if getattr(args, "magnitudes", "uniforme") != "uniforme":
         changes["magnitudes"] = (cd.MAGNITUDES_LEGALES_LEY20840
@@ -1687,10 +1709,20 @@ def main():
     regiones    = parse_regiones(args.regiones)
     scenario    = build_scenario(args)
 
-    # pop_tol: --pop-tol explícito tiene precedencia; si no se pasa, se toma del
-    # escenario (scenario.pop_tolerance, default 0.05). El CLI acepta None para
-    # que el escenario sea la fuente de verdad y los resultados sean reproducibles.
-    pop_tol = args.pop_tol if args.pop_tol is not None else scenario.pop_tolerance
+    # pop_tol/n_steps/seed/pop_source: el CLI explícito tiene precedencia; si no
+    # se pasa (None), se toma del escenario. build_scenario() ya aplicó
+    # args.n_steps/args.seed a scenario.n_steps/scenario.seed cuando vienen
+    # explícitos, así que scenario.{n_steps,seed} es la fuente de verdad post-CLI
+    # para ambos. pop_source no pasa por build_scenario() (no es un campo que
+    # dataclasses.replace() reciba de args) por lo que se resuelve aparte contra
+    # scenario.pop_source (población.source del YAML). Este fallback es lo que
+    # permite que `--scenario <nombre>` sin más flags reproduzca exactamente el
+    # escenario tal como está documentado en su YAML/registro (ver
+    # SCIENTIFIC_HYPOTHESES.md, comandos de reproducción de H1).
+    pop_tol    = args.pop_tol if args.pop_tol is not None else scenario.pop_tolerance
+    n_steps    = scenario.n_steps
+    seed       = scenario.seed
+    pop_source = args.pop_source if args.pop_source is not None else (scenario.pop_source or "viviendas")
 
     print(f"\nchiledist — Redistritaje")
     print(f"  base_dir    : {base_dir}")
@@ -1701,8 +1733,12 @@ def main():
           f"{'  (--n-distritos explícito)' if args.n_distritos is not None else '  (desde escenario)'}")
     print(f"  pop_tol     : ±{pop_tol*100:.0f}%"
           f"{'  (--pop-tol explícito)' if args.pop_tol is not None else '  (desde escenario)'}")
-    print(f"  n_steps     : {args.n_steps:,}")
-    print(f"  pop_source  : {args.pop_source}")
+    print(f"  n_steps     : {n_steps:,}"
+          f"{'  (--n-steps explícito)' if args.n_steps is not None else '  (desde escenario)'}")
+    print(f"  seed        : {seed}"
+          f"{'  (--seed explícito)' if args.seed is not None else '  (desde escenario)'}")
+    print(f"  pop_source  : {pop_source}"
+          f"{'  (--pop-source explícito)' if args.pop_source is not None else '  (desde escenario)'}")
     print(f"  magnitudes  : {args.magnitudes}"
           + ("  (balance uniforme, comportamiento actual)" if args.magnitudes == "uniforme"
              else "  (balance ponderado por magnitud legal)"))
@@ -1716,11 +1752,11 @@ def main():
                 output_base=output_base,
                 n_distritos=scenario.n_districts,
                 pop_tol=pop_tol,
-                n_steps=args.n_steps,
-                seed=args.seed,
+                n_steps=n_steps,
+                seed=seed,
                 skip_viz=args.skip_viz,
                 scenario=scenario,
-                pop_source=args.pop_source,
+                pop_source=pop_source,
                 census_path=getattr(args, "census_path", None),
                 padron_path=getattr(args, "padron_path", None),
                 assignment_path=getattr(args, "assignment_path", None),

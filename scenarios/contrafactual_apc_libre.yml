@@ -1,3 +1,9 @@
+# Config alineada 2026-08-27 con el ensemble canónico de H1
+# (datos/R13_METROPOLITANA/redistritaje/contrafactual_apc_libre/run_20260819_194058_856910a5/).
+# población.source=censo2024 requiere además pasar --census-path
+# datos/poblacion_comunal_censo2024.csv por CLI: la ruta al archivo es un
+# detalle de ubicación de datos, no un campo leído desde este YAML (ver
+# SCIENTIFIC_HYPOTHESES.md, comando de reproducción de H1).
 name: contrafactual_apc_libre
 description: 'Reforma fuerte: APCs como unidad mínima, sin restricción de partición
   comunal. Escenario contrafactual: no es legal bajo la norma vigente.'
@@ -10,14 +16,14 @@ preserve:
   split_penalty: 0.0
   min_fragment_pop_share: 0.0
 population:
-  column: viviendas
-  tolerance: 0.05
-  source: null
+  column: personas
+  tolerance: 0.1
+  source: censo2024
 districts:
   n_districts: 8
 sampler:
   method: recom
-  n_steps: 10000
+  n_steps: 50000
   n_steps_warmup: 500
   seed: 42
 connectivity:

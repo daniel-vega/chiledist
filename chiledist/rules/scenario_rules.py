@@ -41,6 +41,13 @@ SCENARIO_LEGAL = ScenarioConfig(
     decision_unit="CUT",
     preserve_units=["CUT"],
     preserve_mode="hard",
+    # Alineado 2026-08-27 con el ensemble canónico de H1 (run cc037ac8, ver
+    # SCIENTIFIC_HYPOTHESES.md). pop_source="censo2024" además requiere pasar
+    # --census-path datos/poblacion_comunal_censo2024.csv por CLI.
+    pop_col="personas",
+    pop_tolerance=0.1,
+    pop_source="censo2024",
+    n_steps=50_000,
 )
 
 SCENARIO_APC_STRICT = ScenarioConfig(
@@ -71,6 +78,13 @@ SCENARIO_APC_SOFT = ScenarioConfig(
     preserve_units=["CUT"],
     preserve_mode="soft",
     split_penalty=0.25,
+    # Alineado 2026-08-27 con el ensemble canónico de H1 (run 97cf1309, ver
+    # SCIENTIFIC_HYPOTHESES.md). pop_source="censo2024" además requiere pasar
+    # --census-path datos/poblacion_comunal_censo2024.csv por CLI.
+    pop_col="personas",
+    pop_tolerance=0.1,
+    pop_source="censo2024",
+    n_steps=50_000,
 )
 
 SCENARIO_APC_FREE = ScenarioConfig(
@@ -85,6 +99,13 @@ SCENARIO_APC_FREE = ScenarioConfig(
     decision_unit="ID_DIST",
     preserve_units=[],
     preserve_mode="none",
+    # Alineado 2026-08-27 con el ensemble canónico de H1 (run 856910a5, ver
+    # SCIENTIFIC_HYPOTHESES.md). pop_source="censo2024" además requiere pasar
+    # --census-path datos/poblacion_comunal_censo2024.csv por CLI.
+    pop_col="personas",
+    pop_tolerance=0.1,
+    pop_source="censo2024",
+    n_steps=50_000,
 )
 
 SCENARIOS: dict[str, ScenarioConfig] = {

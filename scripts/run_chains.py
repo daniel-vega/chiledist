@@ -30,6 +30,7 @@ Salidas en datos/<REGION>/chains/<SCENARIO>/:
 
 import argparse
 import os
+import shutil
 import sys
 import warnings
 warnings.filterwarnings("ignore")
@@ -104,6 +105,9 @@ def run_chains(
     n_steps: int,
     pop_tol: float,
     n_distritos: int,
+    pop_source: str = "viviendas",
+    census_path: str | None = None,
+    padron_path: str | None = None,
 ) -> list[str]:
     """Corre N cadenas independientes y retorna las rutas de sus directorios."""
     analizar_region = _import_analizar_region()
@@ -121,17 +125,37 @@ def run_chains(
         print(f"  Salida: {run_dir}")
         print(f"{'='*60}")
 
-        analizar_region(
+        # analizar_region() no acepta output_dir: usa output_base como raíz
+        # y arma internamente <output_base>/<region_name>/redistritaje/
+        # <scenario.name>/run_<timestamp>_<id>/ (más una copia de compatibilidad
+        # en <output_base>/<region_name>/redistritaje/<scenario.name>/). Se le
+        # pasa run_dir (seed_XXXX/) como output_base y luego se copian los CSV
+        # resultantes hacia la raíz de run_dir, que es donde load_chain_metrics()
+        # los espera.
+        resultado = analizar_region(
             region_code=region_code,
             base_dir=base_dir,
-            output_dir=run_dir,
+            output_base=run_dir,
             scenario=scenario,
             n_distritos=n_distritos,
             pop_tol=pop_tol,
             n_steps=n_steps,
             seed=seed,
             skip_viz=True,
+            pop_source=pop_source,
+            census_path=census_path,
+            padron_path=padron_path,
         )
+        if resultado.get("status") != "ok":
+            print(f"  [ERROR] Cadena seed={seed} terminó con status="
+                  f"'{resultado.get('status')}': {resultado.get('error', '')}")
+        else:
+            real_run_dir = resultado["run_dir"]
+            for fname in ("metricas_cadena.csv", "ensemble_stats.csv",
+                          "run_manifest.json"):
+                src = os.path.join(real_run_dir, fname)
+                if os.path.exists(src):
+                    shutil.copy2(src, os.path.join(run_dir, fname))
         run_dirs.append(run_dir)
 
     return run_dirs
@@ -322,10 +346,24 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Número de cadenas independientes")
     p.add_argument("--base-seed", type=int, default=42,
                    help="Semilla base; cadena k usa base_seed + k")
-    p.add_argument("--n-steps", type=int, default=5_000,
-                   help="Pasos de la cadena ReCom por cadena")
-    p.add_argument("--pop-tol", type=float, default=0.05,
-                   help="Tolerancia poblacional ReCom")
+    p.add_argument("--n-steps", type=int, default=None,
+                   help="Pasos de la cadena ReCom por cadena (default: usa "
+                        "n_steps del escenario; si no hay escenario, 5000).")
+    p.add_argument("--pop-tol", type=float, default=None,
+                   help="Tolerancia poblacional ReCom (default: usa "
+                        "pop_tolerance del escenario; si no hay escenario, 0.05).")
+    p.add_argument("--pop-source", default=None,
+                   help="Fuente de población a enriquecer en analizar_region() "
+                        "(default: usa pop_source del escenario ['population."
+                        "source' del YAML]; si no está definido, 'viviendas'). "
+                        "'censo2024' reproduce la configuración canónica de H1/H2.")
+    p.add_argument("--census-path", default=None,
+                   help="Ruta a poblacion_comunal_censo2024.csv, requerida por "
+                        "--pop-source censo2024/manzana (si no se pasa, "
+                        "analizar_region() usa 'viviendas' como fallback).")
+    p.add_argument("--padron-path", default=None,
+                   help="Ruta a padrón electoral SERVEL, requerida por "
+                        "--pop-source padron.")
     p.add_argument("--n-distritos", type=int, default=None,
                    help="Número de particiones territoriales a generar (NO "
                         "la magnitud electoral 3-8 de Ley 20.840). Default: "
@@ -352,10 +390,21 @@ def main():
             os.path.join(base, "scenarios", f"{args.scenario}.yml")
         )
 
+    # n_steps/pop_tol/pop_source: el CLI explícito tiene precedencia; si no se
+    # pasa (None), se toma del escenario cargado. Sin este fallback, los
+    # defaults numéricos del argparse (5000/0.05/'viviendas') pisarían
+    # silenciosamente lo definido en scenarios/<nombre>.yml y `--scenario
+    # legal` nunca reproduciría la configuración real de H1 aunque el YAML
+    # estuviera correctamente actualizado (ver SCIENTIFIC_HYPOTHESES.md).
+    n_steps    = args.n_steps if args.n_steps is not None else scenario.n_steps
+    pop_tol    = args.pop_tol if args.pop_tol is not None else scenario.pop_tolerance
+    pop_source = args.pop_source if args.pop_source is not None else (scenario.pop_source or "viviendas")
+
     for region_code in args.regiones:
         print(f"\n{'#'*70}")
         print(f"  Región {region_code}  |  Escenario: {scenario.name}")
-        print(f"  {args.n_chains} cadenas  |  {args.n_steps} pasos  |  seed base={args.base_seed}")
+        print(f"  {args.n_chains} cadenas  |  {n_steps} pasos  |  seed base={args.base_seed}  |  "
+              f"pop_tol=±{pop_tol*100:.0f}%  |  pop_source={pop_source}")
         print(f"{'#'*70}")
 
         chain_dir  = _chain_output_dir(base, region_code, scenario.name)
@@ -375,9 +424,12 @@ def main():
                 scenario=scenario,
                 n_chains=args.n_chains,
                 base_seed=args.base_seed,
-                n_steps=args.n_steps,
-                pop_tol=args.pop_tol,
+                n_steps=n_steps,
+                pop_tol=pop_tol,
                 n_distritos=n_dist,
+                pop_source=pop_source,
+                census_path=args.census_path,
+                padron_path=args.padron_path,
             )
 
         cadenas = load_chain_metrics(chain_dir, args.n_chains, args.base_seed)

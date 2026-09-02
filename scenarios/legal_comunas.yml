@@ -1,3 +1,9 @@
+# Config alineada 2026-08-27 con el ensemble canónico de H1
+# (datos/R13_METROPOLITANA/redistritaje/legal_comunas/run_20260819_193847_cc037ac8/).
+# población.source=censo2024 requiere además pasar --census-path
+# datos/poblacion_comunal_censo2024.csv por CLI: la ruta al archivo es un
+# detalle de ubicación de datos, no un campo leído desde este YAML (ver
+# SCIENTIFIC_HYPOTHESES.md, comando de reproducción de H1).
 name: legal_comunas
 description: 'Régimen vigente (Ley 18.700): comunas indivisibles. Unidad de decisión
   = CUT. Baseline de comparación para H1.'
@@ -10,14 +16,14 @@ preserve:
   split_penalty: 0.0
   min_fragment_pop_share: 0.0
 population:
-  column: viviendas
-  tolerance: 0.05
-  source: null
+  column: personas
+  tolerance: 0.1
+  source: censo2024
 districts:
   n_districts: 8
 sampler:
   method: recom
-  n_steps: 10000
+  n_steps: 50000
   n_steps_warmup: 500
   seed: 42
 connectivity:
