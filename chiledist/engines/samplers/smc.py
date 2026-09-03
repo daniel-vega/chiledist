@@ -122,6 +122,7 @@ def generate_redist_script(
     n_sims: int = 500,
     scenario_name: str = "chiledist",
     extra_cols: Optional[list[str]] = None,
+    adj: Optional[sp.csr_matrix] = None,
 ) -> str:
     """
     Exporta datos APC y genera un script R completo para redist SMC.
@@ -129,6 +130,7 @@ def generate_redist_script(
     Exporta:
         {output_dir}/{scenario_name}_units.gpkg
         {output_dir}/{scenario_name}_redist.R
+        {output_dir}/{scenario_name}_adj.csv   (solo si adj is not None)
 
     El script R:
         - Construye el objeto redist_map
@@ -154,6 +156,20 @@ def generate_redist_script(
         Prefijo para archivos generados.
     extra_cols : list[str], opcional
         Columnas adicionales a incluir en el GPKG (ej. 'CUT', 'N_COMUNA').
+    adj : scipy.sparse.csr_matrix, opcional
+        Matriz de adyacencia ya construida en Python (ej. por
+        chiledist.build_graph()), con islas ya conectadas según
+        island_policy. Sus filas/columnas 0-indexadas deben corresponder,
+        en orden, a las filas de `gdf` (mismo orden en que se escriben en
+        el GPKG). Si se provee, se exporta a `{scenario_name}_adj.csv` y
+        el script R la reconstruye y la pasa explícitamente a
+        redist_map(adj=...), en vez de dejar que redist_map() recalcule
+        adyacencia desde la geometría — lo que produciría un grafo
+        desconectado (islas) distinto del ya conectado por Python,
+        causando "Adjacency graph not contiguous" en redist_smc(). Si es
+        None, redist_map() calcula su propia adyacencia desde la
+        geometría (comportamiento previo; sin garantía de islas
+        conectadas).
 
     Returns
     -------
@@ -189,6 +205,58 @@ def generate_redist_script(
     gdf_out.to_file(str(gpkg_path), driver="GPKG")
     print(f"  Exportado: {gpkg_path.name}  ({len(gdf_out)} unidades)")
 
+    adj_path = None
+    if adj is not None:
+        adj_path = output_dir / f"{scenario_name}_adj.csv"
+        adj_coo  = adj.tocoo()
+        mask     = adj_coo.row < adj_coo.col
+        edges_df = pd.DataFrame({
+            "from": adj_coo.row[mask],
+            "to":   adj_coo.col[mask],
+        })
+        edges_df.to_csv(adj_path, index=False)
+        print(f"  Exportado: {adj_path.name}  ({len(edges_df)} aristas)")
+
+    if adj_path is not None:
+        adj_r_block = f"""\
+# Adyacencia pre-calculada por Python (chiledist.build_graph()), con islas
+# ya conectadas según island_policy — se pasa explícitamente a
+# redist_map() en vez de dejar que la recalcule desde la geometría, que
+# produciría un grafo desconectado distinto (bug detectado en la
+# verificación H5, 2026-09-03: "Adjacency graph not contiguous" con
+# ensembles nacionales que requieren conexión manual de islas).
+adj_edges <- read.csv("{adj_path}")
+n_units   <- nrow(units)
+adj_list  <- vector("list", n_units)
+for (i in seq_len(n_units)) adj_list[[i]] <- integer(0)
+# redist_map(adj=...) espera una lista R (posiciones 1-indexed, como toda
+# lista R) cuyos VALORES sean IDs de vecino 0-indexados (convención interna
+# de redist/Rcpp — ver el comentario histórico más abajo sobre el bug de
+# st_relate()). Sumar 1 también a los valores (no solo a las posiciones)
+# produce "Index out of bounds" (detectado en la verificación H5,
+# 2026-09-03, con el ensemble nacional_comunal: extent=345, index=345).
+for (k in seq_len(nrow(adj_edges))) {{
+    from0 <- adj_edges$from[k]   # 0-indexed, tal como viene del CSV
+    to0   <- adj_edges$to[k]     # 0-indexed, tal como viene del CSV
+    adj_list[[from0 + 1L]] <- c(adj_list[[from0 + 1L]], to0)
+    adj_list[[to0   + 1L]] <- c(adj_list[[to0   + 1L]], from0)
+}}
+
+"""
+        map_adj_arg = ",\n    adj      = adj_list"
+    else:
+        adj_r_block = (
+            "# adj se omite deliberadamente: redist_map() la calcula sola desde la\n"
+            "# geometría (reproyectando internamente vía planarize=3857 si el shapefile\n"
+            "# está en lon/lat). Una versión anterior pasaba\n"
+            "# adj=st_relate(units, units, pattern=\"F***T****\") explícito, que fallaba\n"
+            "# con \"Index out of bounds\" porque st_relate() no reproyecta ni entrega el\n"
+            "# formato de lista de adyacencia 0-indexada sin huecos que redist_map()\n"
+            "# espera (ver redist.adjacency() en la documentación del paquete) — bug\n"
+            "# detectado y corregido en la verificación H5 (2026-08-27).\n"
+        )
+        map_adj_arg = ""
+
     r_script = f"""\
 # Script generado por chiledist — {scenario_name}
 # Ejecutar en R: source("{r_path.name}")
@@ -206,19 +274,11 @@ cat("Unidades cargadas:", nrow(units), "\\n")
 cat("Población total:", sum(units${pop_col}), "\\n")
 
 # ── 2. Construir objeto redist_map ───────────────────────────────────────────
-# adj se omite deliberadamente: redist_map() la calcula sola desde la
-# geometría (reproyectando internamente vía planarize=3857 si el shapefile
-# está en lon/lat). Una versión anterior pasaba
-# adj=st_relate(units, units, pattern="F***T****") explícito, que fallaba
-# con "Index out of bounds" porque st_relate() no reproyecta ni entrega el
-# formato de lista de adyacencia 0-indexada sin huecos que redist_map()
-# espera (ver redist.adjacency() en la documentación del paquete) — bug
-# detectado y corregido en la verificación H5 (2026-08-27).
-map <- redist_map(
+{adj_r_block}map <- redist_map(
     units,
     pop      = {pop_col},
     ndists   = {n_districts},
-    pop_tol  = {pop_tol}
+    pop_tol  = {pop_tol}{map_adj_arg}
 )
 cat("redist_map construido:", {n_districts}, "distritos\\n")
 

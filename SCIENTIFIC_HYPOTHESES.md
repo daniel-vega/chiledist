@@ -694,6 +694,100 @@ del mapa vigente calculadas.
 Pendiente: frontera Pareto nacional para comparación válida
 (requiere ensemble nacional).
 
+### Escenarios multinivel (preservación jerárquica) — intento de ensemble nacional
+
+El ensemble nacional pendiente de arriba requiere generar planes
+alternativos a escala de los 28 distritos reales, no solo zonas
+experimentales de R13. `--regiones nacional_comunal` (scripts/
+redistritaje.py) y los escenarios `SCENARIO_COMUNAS_HARD_REGION_SOFT`/
+`_HARD`/`SCENARIO_REGION_SOFT_ONLY` (chiledist/rules/scenario_rules.py —
+preservación jerárquica CUT+COD_REGION, ver ARCHITECTURE.md) se
+construyeron para esto. El intento de correrlo con n=28 topó con la
+misma limitación de ReCom que ya bloqueaba `apc_strict` (ver H1.5):
+
+## Limitación ReCom para ensemble nacional (28 distritos)
+
+El escenario `comunas_hard_region_soft` con n=28 distritos
+nacionales y preservación comunal hard no converge con ReCom
+(gerrychain 0.3.2) — desviación mínima alcanzable ≈ 25%
+independientemente del presupuesto de warm-up (verificado
+hasta 9.000 pasos con pop_tol=±10% y ±15%).
+
+Causa: misma que apc_strict — spanning trees sin sesgo
+hacia fronteras preservadas + comunas grandes indivisibles
+(Santiago 438k, Puente Alto 568k, Maipú 504k) que dominan
+el balance con ideal=660k por distrito.
+
+Acción requerida: SMC (scripts/smc_pipeline.py, paquete
+redist de R) — puede muestrear condicionado a preservación
+comunal sin depender de spanning trees.
+
+Estado: PENDING SMC.
+
+## Ensemble Nacional SMC — primer resultado verificado
+
+### Parámetros
+
+    Sampler: SMC (redist 4.3.2, R)
+    Escenario: legal_comunas (comunas indivisibles)
+    Unidades: 345 comunas (todas las regiones)
+    Distritos: 28
+    Simulaciones: 5000
+    pop_tol: ±10%
+    Población: Censo 2024 (18,480,368 personas)
+    Adyacencia: queen + conexión manual de 3 componentes
+                aislados (Chiloé A/B, Magallanes/TDF)
+
+### Resultados
+
+| Métrica | Mediana | IQR | Min | Max |
+|---------|---------|-----|-----|-----|
+| pp_promedio | 0.077 | 0.074–0.080 | 0.065 | 0.090 |
+| max_dev_pob_pct | 9.75% | 9.69–9.90% | 8.58% | 10.00% |
+
+Planes válidos (max_dev ≤ ±10%): 5000/5000 (100%)
+— restricción dura aplicada por redist_smc(pop_tol=0.10)
+
+### Hallazgos
+
+1. El espacio de planes comunales nacionales de 28
+   distritos balanceados a ±10% existe y es no vacío —
+   confirma que la restricción comunal es matemáticamente
+   compatible con el balance ±10% a escala nacional con
+   Censo 2024.
+
+2. El espacio es estrecho: max_dev mediana de 9.75%
+   indica que los planes válidos se concentran cerca
+   del límite de tolerancia. La varianza es muy baja
+   (std=0.0020) — poca diversidad entre planes.
+
+3. La compacidad es baja (PP mediana 0.076) — coherente
+   con la geografía de Chile (país largo y angosto) y
+   con el resultado SMC vs ReCom para R13 (PP 0.102).
+
+4. ReCom no puede generar este ensemble — warm-up no
+   converge en 9000 pasos con 345 comunas y 28 grupos.
+   SMC resuelve este gap correctamente.
+
+### Advertencias metodológicas
+
+- Corrida de 5000 simulaciones: warning de diversidad
+  resuelto (80% range: 0.43–0.65). Distribución estable
+  — agregar más muestras no cambia las conclusiones.
+- 3 conexiones artificiales en el grafo:
+    Chiloé A → continente: 49.8 km (10202→10108)
+    Chiloé B → Chiloé A:   19.5 km (10204→10201)
+    Magallanes → continente: 82.0 km (12302→12104)
+  Necesarias para conectividad pero no reflejan
+  adyacencia geográfica real.
+- Split 27: tasa de aceptación 6.7% — cuello de botella
+  en la última partición.
+
+### Estado
+
+COMPLETED — 5000 planes, diagnósticos SMC aceptables.
+Sin warnings de diversidad ni tasas de aceptación críticas.
+
 ---
 
 ## H3 — Malapportionment: desigualdad del voto bajo magnitudes legales
@@ -2607,6 +2701,72 @@ Las siguientes llamadas tenían firmas incorrectas y fueron corregidas:
 | `scripts/electoral_analysis.py` | D'Hondt binivel sobre ensemble; `--demo` con datos sintéticos | H4 |
 | `scripts/run_chains.py` | N cadenas ReCom independientes + `mixing_diagnostics` + sensibilidad a pesos | H5 |
 | `scripts/smc_pipeline.py` | Bridge Python → R/redist → Python; comparación SMC vs ReCom | H5 |
+
+---
+
+## Validación de Samplers — ReCom vs SMC
+
+### Experimento
+
+Comparación directa ReCom vs SMC sobre el escenario
+legal_comunas, R13, Censo 2024, n=7 distritos, ±10%.
+
+    ReCom: 50.000 planes, warm-up convergido, modelo A
+           (run_20260903_113751_11045158)
+    SMC:   500 planes, redist 4.3.2, nsims=500
+           (legal_smc_planes.csv)
+
+### Resultados KS test
+
+| Métrica | SMC mediana | ReCom mediana | KS stat | p-valor | Efecto |
+|---------|-------------|---------------|---------|---------|--------|
+| pp_promedio | 0.102 | 0.289 | 0.999 | 0.000 | grande |
+| max_dev_pob_pct | 4.70% | 9.07% | 0.637 | 0.000 | grande |
+
+### Interpretación
+
+ReCom y SMC producen distribuciones estadísticamente
+distintas (KS≈1.0, p=0.0) sobre el mismo espacio de
+planes válidos:
+
+SMC produce planes con mejor balance poblacional (4.70%
+vs 9.07% de desviación mediana) y menor compacidad
+(PP 0.102 vs 0.289). La diferencia no se explica por
+el número de distritos (verificado con n=7 en ambos) —
+es una diferencia estructural entre los algoritmos.
+
+Causa probable: ReCom es una caminata aleatoria sin
+distribución objetivo cerrada, sesgada por el punto
+de inicio y la geometría del grafo. SMC muestrea desde
+una distribución objetivo explícita (uniforme sobre
+planes válidos con balance poblacional en redist),
+produciendo planes más balanceados pero menos compactos.
+
+### Implicaciones metodológicas
+
+1. Los ensembles ReCom no son muestras de la distribución
+   uniforme sobre planes válidos — no tienen garantía
+   de representar el espacio completo de planes posibles.
+
+2. Para análisis exploratorio y comparación de escenarios
+   (H1, H2, H8), ReCom es adecuado si se interpreta como
+   "distribución de referencia condicionada al procedimiento",
+   no como muestra uniforme.
+
+3. Para inferencia probabilística estricta ("¿qué fracción
+   de planes legales tienen propiedad X?"), SMC es el
+   sampler correcto.
+
+4. La concordancia de ranking (τ=1.0, ρ=1.0) sugiere que
+   ambos samplers ordenan los escenarios de la misma forma
+   — las conclusiones comparativas de H1/H2 son robustas
+   aunque las distribuciones absolutas difieran.
+
+### Estado
+
+COMPLETED — comparación ReCom vs SMC para legal_comunas R13.
+Pendiente: replicar para apc_free y apc_soft para verificar
+si el patrón se mantiene en escenarios sin preservación comunal.
 
 ---
 

@@ -1,2 +1,2 @@
-region,region_name,scenario,decision_unit,preserve_mode,status,n_unidades,n_planes,ref_plan_id,ref_desv,comunas_partidas_ref,out_dir,run_dir,run_id
-13,R13_METROPOLITANA,legal_comunas,CUT,hard,ok,52,50000,12445,3.346,0,./datos/R13_METROPOLITANA/redistritaje/legal_comunas,./datos/R13_METROPOLITANA/redistritaje/legal_comunas/run_20260819_193847_cc037ac8,cc037ac8-caab-4ff2-893b-f3c99955916f
+region,region_name,scenario,status,reason,n_warmup_steps,warmup_final_dev
+13,R13_METROPOLITANA,legal_comunas,sin_convergencia_warmup,warmup_did_not_reach_pop_tol,1,21.709991163045856

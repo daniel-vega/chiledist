@@ -136,18 +136,24 @@ class TestAnalizarRegionSourceComputesFromSplitSummary:
     come from split_summary (exact, per-reference-plan), never from the
     sparse df_ensemble["n_comunas_partidas"] lookup."""
 
+    # Motor ReCom extraído a _run_recom_sobre_gdf() (analizar_region() pasa
+    # a ser un wrapper de carga de datos que delega ahí, reutilizado
+    # también por analizar_nacional_comunal() — ver scripts/redistritaje.py,
+    # sección "--regiones nacional_comunal") — esta lógica de
+    # n_split_ref/split_summary vive ahora en la función extraída.
+
     def test_n_split_ref_assigned_from_len_split_summary(self, redistritaje):
-        source = inspect.getsource(redistritaje.analizar_region)
+        source = inspect.getsource(redistritaje._run_recom_sobre_gdf)
         assert "n_split_ref = len(split_summary)" in source
 
     def test_no_sparse_ensemble_lookup_remains(self, redistritaje):
-        source = inspect.getsource(redistritaje.analizar_region)
+        source = inspect.getsource(redistritaje._run_recom_sobre_gdf)
         assert 'df_ensemble.loc[ref_idx, "n_comunas_partidas"]' not in source
 
     def test_n_split_ref_initialized_before_conditional_block(self, redistritaje):
         """n_split_ref must default to 0 before the id_col == 'ID_DIST'
         check, so non-APC scenarios (e.g. legal) still get a defined value."""
-        source = inspect.getsource(redistritaje.analizar_region)
+        source = inspect.getsource(redistritaje._run_recom_sobre_gdf)
         init_pos = source.index("n_split_ref = 0")
         block_pos = source.index(
             'if id_col == "ID_DIST" and "CUT" in gdf_dec.columns:\n        split_summary'
@@ -155,5 +161,5 @@ class TestAnalizarRegionSourceComputesFromSplitSummary:
         assert init_pos < block_pos
 
     def test_return_dict_still_uses_n_split_ref_unchanged(self, redistritaje):
-        source = inspect.getsource(redistritaje.analizar_region)
+        source = inspect.getsource(redistritaje._run_recom_sobre_gdf)
         assert '"comunas_partidas_ref": n_split_ref,' in source

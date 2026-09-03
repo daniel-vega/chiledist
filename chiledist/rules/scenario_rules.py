@@ -108,9 +108,55 @@ SCENARIO_APC_FREE = ScenarioConfig(
     n_steps=50_000,
 )
 
+SCENARIO_COMUNAS_HARD_REGION_SOFT = ScenarioConfig(
+    name="comunas_hard_region_soft",
+    decision_unit="CUT",
+    preserve_units=["CUT", "COD_REGION"],
+    preserve_mode={"CUT": "hard", "COD_REGION": "soft"},
+    split_penalty={"CUT": 0.0, "COD_REGION": 0.25},
+    tipo_reforma="contrafactual_regional",
+    description=(
+        "Comunas indivisibles (hard) + penalización blanda "
+        "por cruce de fronteras regionales. "
+        "E2 en la tabla de escenarios de la propuesta metodológica."
+    ),
+)
+
+SCENARIO_COMUNAS_HARD_REGION_HARD = ScenarioConfig(
+    name="comunas_hard_region_hard",
+    decision_unit="CUT",
+    preserve_units=["CUT", "COD_REGION"],
+    preserve_mode={"CUT": "hard", "COD_REGION": "hard"},
+    tipo_reforma="contrafactual_regional",
+    description=(
+        "Comunas y regiones indivisibles (ambas hard). "
+        "E3: preservación legal ampliada a nivel regional. "
+        "⚠ Riesgo de warm-up infinito documentado en "
+        "SCIENTIFIC_HYPOTHESES.md §apc_strict."
+    ),
+)
+
+SCENARIO_REGION_SOFT_ONLY = ScenarioConfig(
+    name="region_soft_only",
+    decision_unit="CUT",
+    preserve_units=["COD_REGION"],
+    preserve_mode={"COD_REGION": "soft"},
+    split_penalty={"COD_REGION": 0.25},
+    tipo_reforma="contrafactual_regional",
+    description=(
+        "Solo penalización blanda por cruce regional, "
+        "sin restricción comunal. "
+        "E6: aísla el costo marginal de la restricción "
+        "regional sin interacción con restricción comunal."
+    ),
+)
+
 SCENARIOS: dict[str, ScenarioConfig] = {
     "legal":       SCENARIO_LEGAL,
     "apc_strict":  SCENARIO_APC_STRICT,
     "apc_soft":    SCENARIO_APC_SOFT,
     "apc_free":    SCENARIO_APC_FREE,
+    "comunas_hard_region_soft": SCENARIO_COMUNAS_HARD_REGION_SOFT,
+    "comunas_hard_region_hard": SCENARIO_COMUNAS_HARD_REGION_HARD,
+    "region_soft_only":         SCENARIO_REGION_SOFT_ONLY,
 }

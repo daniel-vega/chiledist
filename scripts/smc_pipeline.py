@@ -148,8 +148,20 @@ def load_region_data(
     pop_source: str = "censo2024",
     census_path: str | None = None,
     padron_path: str | None = None,
+    contract_to_cut: bool = False,
 ):
     """Carga GDF de la región y construye su grafo de adyacencia.
+
+    contract_to_cut : bool
+        Si True, contrae el GDF de ID_DIST a CUT (cd.contract_to_
+        decision_units()) antes de construir el grafo — necesario para que
+        el bridge SMC pueda replicar fielmente escenarios con
+        decision_unit="CUT" (ej. legal_comunas, comunas_hard_region_soft):
+        cada nodo exportado a R es entonces una comuna indivisible por
+        construcción, en vez de un ID_DIST que redist_smc() podría partir
+        libremente (ver LIMITACIÓN CONOCIDA en el docstring del módulo).
+        id_col pasa a ser "CUT" cuando contract_to_cut=True, sin importar
+        el id_col recibido — la contracción no tiene sentido con otro id.
 
     BUG corregido 2026-08-27 (verificación H5): antes de este fix,
     load_region_data() (a) pasaba ``base_dir=<base_dir>/datos`` a
@@ -224,8 +236,89 @@ def load_region_data(
     print(f"  {len(gdf)} unidades cargadas  |  "
           f"población total: {gdf[pop_col].sum():,.0f}")
 
+    if contract_to_cut:
+        print("  Contrayendo ID_DIST → CUT...")
+        agg_spec = {pop_col: "sum"}
+        gdf = cd.contract_to_decision_units(
+            gdf, decision_unit="CUT", agg_spec=agg_spec
+        )
+        id_col = "CUT"
+        print(f"  → {len(gdf)} comunas")
+
     print("  Construyendo grafo de adyacencia...")
     G, adj, id_list = cd.build_graph(gdf, id_col=id_col)
+    print(f"  Grafo: {G.number_of_nodes()} nodos, {G.number_of_edges()} aristas")
+
+    return gdf, G, adj, id_list
+
+
+def load_national_comunal_data(
+    base_dir: str,
+    pop_col: str = "personas",
+    pop_source: str = "censo2024",
+    census_path: str | None = None,
+    padron_path: str | None = None,
+):
+    """Carga las 16 regiones y construye el grafo de adyacencia a nivel
+    comunal (CUT) — análogo a redistritaje.py::analizar_nacional_comunal(),
+    pero solo hasta datos+grafo (el motor de muestreo aquí es el script R
+    generado más adelante, no ReCom).
+
+    Contrae siempre a CUT, sin flag: es el único modo con sentido a escala
+    nacional con SMC (ver LIMITACIÓN CONOCIDA en el docstring del módulo —
+    redist_smc() con ~2768 unidades ID_DIST a escala nacional no tiene
+    ninguna preservación comunal, ni siquiera blanda vía `counties=`, salvo
+    que ya se contraiga antes de exportar).
+    """
+    print("\n  Cargando capas nacionales (16 regiones)...")
+    gdf    = cd.load_layer("distrital", base_dir=base_dir)
+    mz_urb = cd.load_layer("manzana_urbana", base_dir=base_dir)
+    mz_ald = cd.load_layer("manzana_aldea",  base_dir=base_dir)
+    try:
+        puntos_rural = cd.load_layer("puntos_rural", base_dir=base_dir)
+    except FileNotFoundError:
+        puntos_rural = None
+
+    pop_urb = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
+    pop_ald = cd.aggregate_population(mz_ald, level="distrito", source="aldea")
+    pop = (
+        pop_urb.merge(pop_ald, on=["CUT", "COD_DISTRITO"],
+                      how="outer", suffixes=("_urb", "_ald"))
+        .fillna(0)
+    )
+    pop["viviendas"] = pop.get("viviendas_urb", 0) + pop.get("viviendas_ald", 0)
+    gdf = gdf.merge(
+        pop[["CUT", "COD_DISTRITO", "viviendas"]],
+        on=["CUT", "COD_DISTRITO"], how="left"
+    ).fillna({"viviendas": 0})
+    gdf["viviendas"] = gdf["viviendas"].astype(int)
+    gdf = cd.apply_rural_proxy_fallback(gdf, puntos_rural)
+    gdf["viviendas"] = gdf["viviendas"].astype(int)
+
+    if pop_source != "viviendas":
+        print(f"  Enriqueciendo población: fuente='{pop_source}'...")
+    redistritaje = _import_redistritaje()
+    gdf, _resolved_pop_col = redistritaje.enrich_population(
+        gdf, pop_source, census_path, padron_path
+    )
+
+    if pop_col not in gdf.columns:
+        alt_cols = [c for c in gdf.columns if "pers" in c.lower() or "pob" in c.lower()]
+        raise KeyError(
+            f"Columna '{pop_col}' no encontrada tras enriquecimiento "
+            f"(fuente='{pop_source}'). Posibles alternativas: {alt_cols}"
+        )
+
+    print(f"  {len(gdf)} unidades cargadas  |  "
+          f"población total: {gdf[pop_col].sum():,.0f}")
+
+    print("  Contrayendo ID_DIST → CUT...")
+    agg_spec = {pop_col: "sum"}
+    gdf = cd.contract_to_decision_units(gdf, decision_unit="CUT", agg_spec=agg_spec)
+    print(f"  → {len(gdf)} comunas")
+
+    print("  Construyendo grafo de adyacencia...")
+    G, adj, id_list = cd.build_graph(gdf, id_col="CUT")
     print(f"  Grafo: {G.number_of_nodes()} nodos, {G.number_of_edges()} aristas")
 
     return gdf, G, adj, id_list
@@ -251,6 +344,15 @@ def export_and_generate_script(
     """
     Exporta los datos en formato redist y genera el script R.
     Retorna la ruta al script R generado.
+
+    Pasa `adj` (ya construida por cd.build_graph(), con islas conectadas
+    según island_policy) a generate_redist_script(), que la exporta como
+    CSV de aristas y hace que el script R la pase explícitamente a
+    redist_map(adj=...) — sin esto, redist_map() recalcula su propia
+    adyacencia desde la geometría y puede quedar con islas desconectadas
+    que Python ya había conectado, causando "Adjacency graph not
+    contiguous" en redist_smc() (bug detectado en la verificación H5,
+    2026-09-03, con el ensemble nacional_comunal de 345 comunas).
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -265,6 +367,7 @@ def export_and_generate_script(
         n_sims=n_sims,
         scenario_name=scenario_name,
         extra_cols=extra_cols,
+        adj=adj,
         pop_tol=pop_tol,
     )
 
@@ -444,20 +547,45 @@ def _plot_ks_comparison(df_ks: pd.DataFrame, output_dir: str):
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _parse_region_token(value: str):
+    """type= para --regiones: acepta códigos INE (int) o los sentinelas
+    'nacional_comunal'/'comunal' (ensemble nacional contraído a ~345
+    comunas) y 'nacional' (ensemble nacional a nivel ID_DIST, no
+    implementado — ver main()), análogo a
+    scripts/redistritaje.py::parse_regiones()."""
+    if value in ("nacional_comunal", "comunal"):
+        return "nacional_comunal"
+    if value == "nacional":
+        return "nacional"
+    return int(value)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="H5 — Pipeline SMC (R/redist) y comparación con ReCom",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--base-dir", default=".", help="Directorio raíz del proyecto")
-    p.add_argument("--regiones", type=int, nargs="+", default=[13],
-                   help="Código(s) de región INE")
+    p.add_argument("--regiones", type=_parse_region_token, nargs="+", default=[13],
+                   help="Código(s) de región INE, o 'nacional_comunal' para "
+                        "cargar las 16 regiones y contraer a ~345 comunas "
+                        "(único modo nacional viable con SMC — ver "
+                        "LIMITACIÓN CONOCIDA en el docstring del módulo). "
+                        "No combinable con otros códigos.")
     p.add_argument("--scenario", default="apc_soft",
                    help="Nombre del escenario (prefijo para archivos)")
     p.add_argument("--layer", default="distrital",
                    help="Capa APC a cargar ('distrital' o 'apc')")
     p.add_argument("--id-col", default="ID_DIST",
                    help="Columna de ID de unidad")
+    p.add_argument("--contract-to-cut", action="store_true",
+                   help="Contraer ID_DIST → CUT antes de exportar a R. "
+                        "Requerido para comparar fielmente contra escenarios "
+                        "con decision_unit=CUT (legal_comunas, "
+                        "comunas_hard_region_soft, etc.) — ver LIMITACIÓN "
+                        "CONOCIDA en el docstring del módulo. Ignorado (la "
+                        "contracción se aplica siempre) con --regiones "
+                        "nacional_comunal.")
     p.add_argument("--pop-col", default="personas",
                    help="Columna de población")
     p.add_argument("--pop-source", default="censo2024",
@@ -497,9 +625,125 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _run_smc_pipeline(gdf, G, adj, id_list, id_col, output_dir, scenario_name, base, args):
+    """Pasos 3–6: exportar a R, generar script, y opcionalmente comparar con
+    ReCom. Compartido entre el modo por-región y --regiones nacional_comunal.
+
+    id_col debe ser el id_col EFECTIVO ya resuelto por el caller ("CUT" si
+    contract_to_cut o nacional_comunal, args.id_col en otro caso) — nunca
+    leer args.id_col directamente aquí, porque load_region_data() puede
+    haberlo reemplazado internamente por "CUT" sin devolverlo.
+    """
+    # ── Resolver n_districts: --n-districts explícito > scenario.n_districts ──
+    n_districts = args.n_districts
+    if n_districts is None:
+        n_districts = _resolve_scenario_n_districts(scenario_name, base)
+        if n_districts is None:
+            raise ValueError(
+                f"No se pudo resolver n_districts: --n-districts no fue "
+                f"pasado y '{scenario_name}' no es un escenario conocido "
+                f"(SCENARIOS={list(SCENARIOS.keys())}) ni existe "
+                f"scenarios/{scenario_name}.yml. Pasa --n-districts "
+                f"explícitamente o usa un --scenario resoluble."
+            )
+        print(f"  n_districts desde escenario '{scenario_name}': {n_districts}")
+
+    # ── Paso 3: exportar y generar script R ───────────────────────────────
+    r_path = export_and_generate_script(
+        gdf=gdf,
+        adj=adj,
+        id_list=id_list,
+        id_col=id_col,
+        pop_col=args.pop_col,
+        n_districts=n_districts,
+        n_sims=args.n_sims,
+        output_dir=output_dir,
+        scenario_name=scenario_name,
+        extra_cols=args.extra_cols,
+        pop_tol=args.pop_tol,
+    )
+
+    # ── Paso 4: instrucciones para R ──────────────────────────────────────
+    print_r_instructions(r_path, output_dir, scenario_name)
+
+    if not args.compare:
+        print("\n  Listo. Ejecuta el script R y vuelve con --compare para comparar.")
+        return
+
+    # ── Paso 5: importar planes SMC ───────────────────────────────────────
+    plans_csv = args.plans_csv or os.path.join(
+        output_dir, f"{scenario_name}_smc_planes.csv"
+    )
+    metrics_csv = os.path.join(output_dir, f"{scenario_name}_smc_metricas.csv")
+
+    if not os.path.exists(plans_csv):
+        print(f"\n  [WARN] No encontrado: {plans_csv}")
+        print("  Ejecuta primero el script R generado y vuelve a correr con --compare.")
+        return
+
+    df_smc = load_smc_ensemble(plans_csv, metrics_csv, id_list)
+
+    # ── Paso 6: comparar con ReCom ────────────────────────────────────────
+    if args.recom_ensemble:
+        if not os.path.exists(args.recom_ensemble):
+            print(f"\n  [WARN] No encontrado: {args.recom_ensemble}")
+        else:
+            df_recom = pd.read_csv(args.recom_ensemble)
+            print(f"  Ensemble ReCom: {len(df_recom)} planes  ({args.recom_ensemble})")
+            compare_smc_vs_recom(
+                df_smc=df_smc,
+                df_recom=df_recom,
+                output_dir=output_dir,
+                scenario_name=scenario_name,
+            )
+    else:
+        print("\n  [INFO] Sin --recom-ensemble: comparación SMC vs ReCom omitida.")
+        print("  Proporciona --recom-ensemble <ruta/ensemble_stats.csv> para comparar.")
+
+
 def main():
     args  = build_parser().parse_args()
     base  = os.path.abspath(args.base_dir)
+
+    if "nacional_comunal" in args.regiones or "nacional" in args.regiones:
+        if len(args.regiones) != 1:
+            raise ValueError(
+                "'nacional'/'nacional_comunal' no se puede combinar con "
+                "otros códigos de región en --regiones."
+            )
+        if args.regiones[0] == "nacional":
+            raise NotImplementedError(
+                "--regiones nacional (ensemble SMC a nivel ID_DIST, ~2768 "
+                "unidades) no está implementado en smc_pipeline.py — sin "
+                "ninguna preservación comunal a esa escala, redist_smc() "
+                "probablemente ni siquiera converge. Usa --regiones "
+                "nacional_comunal (contrae a ~345 comunas, análogo a "
+                "redistritaje.py) o una lista de códigos de región."
+            )
+
+        scenario_name = args.scenario
+        output_dir = os.path.join(base, "datos", "nacional_comunal", "smc", scenario_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        print(f"\n{'#'*70}")
+        print(f"  Nacional Comunal (CUT, 16 regiones)  |  SMC pipeline")
+        print(f"  Escenario: {scenario_name}")
+        print(f"  Salida: {output_dir}")
+        print(f"{'#'*70}")
+
+        gdf, G, adj, id_list = load_national_comunal_data(
+            base_dir=base,
+            pop_col=args.pop_col,
+            pop_source=args.pop_source,
+            census_path=args.census_path,
+            padron_path=args.padron_path,
+        )
+        _run_smc_pipeline(gdf, G, adj, id_list, id_col="CUT",
+                           output_dir=output_dir, scenario_name=scenario_name,
+                           base=base, args=args)
+
+        print("\nListo.")
+        return
 
     for region_code in args.regiones:
         scenario_name = args.scenario
@@ -522,73 +766,13 @@ def main():
             pop_source=args.pop_source,
             census_path=args.census_path,
             padron_path=args.padron_path,
+            contract_to_cut=args.contract_to_cut,
         )
+        effective_id_col = "CUT" if args.contract_to_cut else args.id_col
 
-        # ── Resolver n_districts: --n-districts explícito > scenario.n_districts ──
-        n_districts = args.n_districts
-        if n_districts is None:
-            n_districts = _resolve_scenario_n_districts(scenario_name, base)
-            if n_districts is None:
-                raise ValueError(
-                    f"No se pudo resolver n_districts: --n-districts no fue "
-                    f"pasado y '{scenario_name}' no es un escenario conocido "
-                    f"(SCENARIOS={list(SCENARIOS.keys())}) ni existe "
-                    f"scenarios/{scenario_name}.yml. Pasa --n-districts "
-                    f"explícitamente o usa un --scenario resoluble."
-                )
-            print(f"  n_districts desde escenario '{scenario_name}': {n_districts}")
-
-        # ── Paso 3: exportar y generar script R ───────────────────────────────
-        r_path = export_and_generate_script(
-            gdf=gdf,
-            adj=adj,
-            id_list=id_list,
-            id_col=args.id_col,
-            pop_col=args.pop_col,
-            n_districts=n_districts,
-            n_sims=args.n_sims,
-            output_dir=output_dir,
-            scenario_name=scenario_name,
-            extra_cols=args.extra_cols,
-            pop_tol=args.pop_tol,
-        )
-
-        # ── Paso 4: instrucciones para R ──────────────────────────────────────
-        print_r_instructions(r_path, output_dir, scenario_name)
-
-        if not args.compare:
-            print("\n  Listo. Ejecuta el script R y vuelve con --compare para comparar.")
-            continue
-
-        # ── Paso 5: importar planes SMC ───────────────────────────────────────
-        plans_csv = args.plans_csv or os.path.join(
-            output_dir, f"{scenario_name}_smc_planes.csv"
-        )
-        metrics_csv = os.path.join(output_dir, f"{scenario_name}_smc_metricas.csv")
-
-        if not os.path.exists(plans_csv):
-            print(f"\n  [WARN] No encontrado: {plans_csv}")
-            print("  Ejecuta primero el script R generado y vuelve a correr con --compare.")
-            continue
-
-        df_smc = load_smc_ensemble(plans_csv, metrics_csv, id_list)
-
-        # ── Paso 6: comparar con ReCom ────────────────────────────────────────
-        if args.recom_ensemble:
-            if not os.path.exists(args.recom_ensemble):
-                print(f"\n  [WARN] No encontrado: {args.recom_ensemble}")
-            else:
-                df_recom = pd.read_csv(args.recom_ensemble)
-                print(f"  Ensemble ReCom: {len(df_recom)} planes  ({args.recom_ensemble})")
-                compare_smc_vs_recom(
-                    df_smc=df_smc,
-                    df_recom=df_recom,
-                    output_dir=output_dir,
-                    scenario_name=scenario_name,
-                )
-        else:
-            print("\n  [INFO] Sin --recom-ensemble: comparación SMC vs ReCom omitida.")
-            print("  Proporciona --recom-ensemble <ruta/ensemble_stats.csv> para comparar.")
+        _run_smc_pipeline(gdf, G, adj, id_list, id_col=effective_id_col,
+                           output_dir=output_dir, scenario_name=scenario_name,
+                           base=base, args=args)
 
     print("\nListo.")
 

@@ -1,0 +1,2 @@
+region,region_name,scenario,status,reason,total_population,n_districts,ideal_population,largest_indivisible_unit,largest_indivisible_unit_id,minimum_required_tolerance,requested_tolerance
+13,R13_METROPOLITANA,comunas_hard_region_soft,infeasible_population,indivisible_unit_exceeds_population_bound,267629.0,8,33453.625,66697.0,13101,0.9937151803429374,0.05

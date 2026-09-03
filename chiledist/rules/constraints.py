@@ -96,11 +96,11 @@ def build_constraints_for_scenario(
     )
     constraints.append(pop_constraint)
 
-    if scenario.preserve_mode == "hard":
-        for col in scenario.preserve_units:
-            if col in gdf.columns:
-                constraints.append(make_preserve_constraint(col))
-                print(f"  Restricción dura: preservar '{col}' (Ley 18.700)")
+    resolved = scenario.resolved_preserve_mode()
+    for col in scenario.preserve_units:
+        if resolved[col] == "hard" and col in gdf.columns:
+            constraints.append(make_preserve_constraint(col))
+            print(f"  Restricción dura: preservar '{col}' (Ley 18.700)")
 
     # Modo soft: la penalización va al score (ver engines.samplers.accept)
     # Modo none: sin restricción de preservación

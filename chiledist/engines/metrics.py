@@ -722,6 +722,86 @@ def plan_split_metrics(
     }
 
 
+def multi_level_split_metrics(
+    assignment: dict,
+    gdf: gpd.GeoDataFrame,
+    levels: list[str],
+    id_col: str,
+    pop_col: str,
+) -> pd.DataFrame:
+    """
+    Calcula métricas de integridad administrativa para múltiples niveles
+    jerárquicos (ej. ["CUT", "COD_REGION"]) en un solo plan.
+
+    Llama plan_split_metrics() una vez por columna de levels — no
+    reimplementa el conteo de unidades partidas ni la fracción de
+    población afectada, que ya son genéricos sobre unit_col en
+    plan_split_metrics()/pop_afectada_pct(). Solo agrega, por nivel, el
+    total de unidades (n_total, no expuesto por plan_split_metrics()) y
+    la conversión de pop_afectada_pct() — que pese a su nombre devuelve
+    una FRACCIÓN en [0,1], no un porcentaje — a población absoluta
+    (pop_afectada) y a un porcentaje genuino en [0,100] (pop_afectada_pct).
+
+    No usar split_severity entre niveles sin normalizar: su cota superior
+    depende de cuántas unidades existen en ese nivel (ej. 52 comunas vs.
+    16 regiones), así que no es directamente comparable entre columnas de
+    levels — a diferencia de share_partidas/pop_afectada_pct, que sí lo
+    son (ambas en una escala fija [0,1] o [0,100] independiente del
+    número de unidades del nivel).
+
+    Parameters
+    ----------
+    assignment : dict
+        {id_col_value: district_id}.
+    gdf : gpd.GeoDataFrame
+        Con columnas id_col, pop_col, y todas las columnas de levels.
+    levels : list[str]
+        Columnas administrativas a evaluar, ej. ["CUT", "COD_REGION"].
+    id_col : str
+        Columna de la unidad de decisión (ej. "ID_DIST" o "CUT").
+    pop_col : str
+        Columna de población.
+
+    Returns
+    -------
+    pd.DataFrame — una fila por columna de levels, con columnas:
+        level             str    nombre de la columna evaluada
+        n_partidas        int    unidades partidas en este nivel
+        n_total           int    total de unidades en este nivel
+        share_partidas    float  n_partidas / n_total, en [0, 1]
+        pop_afectada      float  población en unidades partidas (absoluta)
+        pop_total         float  población total
+        pop_afectada_pct  float  pop_afectada / pop_total * 100, en [0, 100]
+    """
+    pop_total = float(gdf[pop_col].sum()) if pop_col in gdf.columns else 0.0
+
+    rows = []
+    for level in levels:
+        n_total = int(gdf[level].nunique()) if level in gdf.columns else 0
+        sm = plan_split_metrics(
+            assignment, gdf, unit_col=level, id_col=id_col, pop_col=pop_col,
+        )
+        # sm["pop_afectada_pct"] es una fracción [0,1] (ver pop_afectada_pct()
+        # más arriba) pese al nombre — de ahí se derivan pop_afectada
+        # (absoluta) y el porcentaje genuino, sin recalcular nada.
+        pop_afectada_frac = sm["pop_afectada_pct"]
+
+        rows.append({
+            "level":            level,
+            "n_partidas":       sm["n_comunas_partidas"],
+            "n_total":          n_total,
+            "share_partidas":   sm["share_comunas_partidas"],
+            "pop_afectada":     round(pop_afectada_frac * pop_total, 4),
+            "pop_total":        round(pop_total, 4),
+            "pop_afectada_pct": round(pop_afectada_frac * 100, 4),
+        })
+
+    return pd.DataFrame(rows, columns=[
+        "level", "n_partidas", "n_total", "share_partidas",
+        "pop_afectada", "pop_total", "pop_afectada_pct",
+    ])
+
+
 def _build_assignment_df(
     assignment: dict,
     gdf: gpd.GeoDataFrame,

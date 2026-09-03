@@ -115,6 +115,23 @@ def build_graph(
                 "Opciones: 'nearest', 'threshold', 'none'."
             )
 
+    # Componentes completos aislados (ej. archipiélagos con vecindad interna
+    # pero sin ningún borde al resto del país) — _connect_islands() de arriba
+    # solo detecta nodos de grado cero, así que esto va fuera del `if
+    # islands:`: un componente así puede no tener ningún nodo de grado cero.
+    # Solo con island_policy='nearest' (misma semántica que ahí: siempre
+    # conectar, sin restricción de distancia) — 'threshold'/'none' dejan
+    # deliberadamente piezas desconectadas y no deben tocarse aquí.
+    if island_policy == "nearest":
+        w, comp_connections = _connect_isolated_components(
+            gdf, id_col, id_index, w, crs_metric=crs_metric,
+        )
+        if comp_connections:
+            print(f"  Componentes aislados conectados: {len(comp_connections)}")
+            for c in comp_connections:
+                print(f"    {c['conectado_via'][0]} → {c['conectado_via'][1]} "
+                      f"(dist={c['dist_km']} km, {len(c['componente_aislado'])} unidades)")
+
     # Construir matriz sparse
     rows_idx, cols_idx = [], []
     for id_i, neighbors in w.neighbors.items():
@@ -221,6 +238,96 @@ def _connect_islands(
             break
 
     # Reconstruir weights desde lil
+    neighbors_new = {
+        gdf[id_col].iloc[i]: [gdf[id_col].iloc[j] for j in nb]
+        for i, nb in enumerate(w_lil)
+    }
+    w.neighbors = neighbors_new
+    return w, connections
+
+
+def _connect_isolated_components(
+    gdf: gpd.GeoDataFrame,
+    id_col: str,
+    id_index: dict,
+    w,
+    crs_metric: str = CRS_METRIC,
+) -> tuple:
+    """
+    Conecta componentes conexos completos que quedan aislados del
+    componente principal tras la contigüidad Queen/Rook (y, si aplica,
+    tras _connect_islands()).
+
+    A diferencia de _connect_islands() — que solo detecta nodos con grado
+    cero — esta función opera sobre COMPONENTES: un archipiélago de varias
+    unidades mutuamente contiguas entre sí (ej. las comunas de Chiloé, o
+    de Tierra del Fuego) no tiene ningún nodo de grado cero y por lo tanto
+    nunca aparece en la lista de "islas" de build_graph(), aunque el
+    archipiélago completo no tenga ningún borde hacia el resto del país
+    (bug detectado en la verificación H5, 2026-09-03, con el ensemble
+    nacional_comunal: island_policy='nearest' dejaba 4 componentes en vez
+    de 1, dos de ellos multi-nodo).
+
+    Para cada componente distinto del más grande, conecta el par de
+    unidades (nodo del componente aislado, nodo del componente principal)
+    geográficamente más cercano por distancia de centroides — igual
+    criterio que _connect_islands(), pero a nivel de componente en vez de
+    nodo individual. El componente principal se expande con cada
+    componente recién conectado, así que un archipiélago puede terminar
+    conectado a otro archipiélago ya conectado si eso resulta más cercano
+    que el continente.
+
+    Solo tiene efecto si el grafo tiene más de un componente conexo —
+    devuelve `w` sin modificar y `connections=[]` en el caso normal
+    (ya conexo).
+    """
+    n     = len(id_index)
+    w_lil = _weights_to_lil(w, id_index, n)
+
+    G_aux = nx.Graph()
+    G_aux.add_nodes_from(range(n))
+    for i, vecinos in enumerate(w_lil):
+        for j in vecinos:
+            G_aux.add_edge(i, j)
+
+    componentes = list(nx.connected_components(G_aux))
+    if len(componentes) <= 1:
+        return w, []
+
+    gdf_m     = gdf.to_crs(crs_metric).reset_index(drop=True)
+    centroids = gdf_m.geometry.centroid
+    cx        = centroids.x.to_numpy()
+    cy        = centroids.y.to_numpy()
+    ids_array = gdf_m[id_col].tolist()
+
+    componentes.sort(key=len, reverse=True)
+    principal   = componentes[0]
+    secundarios = componentes[1:]
+    connections = []
+
+    for comp in secundarios:
+        principal_list = list(principal)
+        px, py         = cx[principal_list], cy[principal_list]
+
+        mejor_dist = float("inf")
+        mejor_par  = None
+        for i in comp:
+            dist = np.sqrt((px - cx[i]) ** 2 + (py - cy[i]) ** 2)
+            k    = int(np.argmin(dist))
+            if dist[k] < mejor_dist:
+                mejor_dist = float(dist[k])
+                mejor_par  = (i, principal_list[k])
+
+        i, j = mejor_par
+        w_lil[i].append(j)
+        w_lil[j].append(i)
+        connections.append({
+            "componente_aislado": sorted(ids_array[k] for k in comp),
+            "conectado_via":      (ids_array[i], ids_array[j]),
+            "dist_km":            round(mejor_dist / 1000.0, 1),
+        })
+        principal = principal | comp
+
     neighbors_new = {
         gdf[id_col].iloc[i]: [gdf[id_col].iloc[j] for j in nb]
         for i, nb in enumerate(w_lil)

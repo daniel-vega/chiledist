@@ -363,10 +363,15 @@ def parse_args():
     return p.parse_args()
 
 
-def parse_regiones(regiones_str: str) -> list[int]:
-    if regiones_str.strip().lower() == "todas":
+def parse_regiones(regiones_str: str) -> list[int] | str:
+    s = regiones_str.strip().lower()
+    if s == "todas":
         return list(range(1, 17))
-    return [int(r.strip()) for r in regiones_str.split(",")]
+    if s == "nacional":
+        return "nacional"
+    if s in ("nacional_comunal", "comunal"):
+        return "nacional_comunal"
+    return [int(r.strip()) for r in s.split(",")]
 
 
 def enrich_population(
@@ -626,23 +631,19 @@ def analizar_region(
         seed=seed,
     )
 
-    # Identificador único de esta corrida
-    run_id          = new_run_id()
-    timestamp_start = datetime.datetime.now().isoformat(timespec="seconds")
-
     region_name = REGION_NOMBRES.get(region_code, f"R{region_code:02d}")
     # Subcarpeta por escenario dentro de redistritaje/
     out_dir = os.path.join(
         output_base, region_name, "redistritaje", scenario.name
     )
     os.makedirs(out_dir, exist_ok=True)
-
-    # Directorio de la corrida específica (timestamped + run_id prefix)
-    ts_str  = timestamp_start.replace(":", "").replace("-", "").replace("T", "_")
-    run_dir = os.path.join(out_dir, f"run_{ts_str}_{run_id[:8]}")
-    os.makedirs(run_dir, exist_ok=True)
-    run_dir_figuras = os.path.join(run_dir, "figuras")
-    os.makedirs(run_dir_figuras, exist_ok=True)
+    # run_id/timestamp_start/run_dir/run_dir_figuras se generan dentro de
+    # _run_recom_sobre_gdf() (ver más abajo) — antes vivían aquí, movidos
+    # sin cambio de comportamiento observable: siguen siendo un UUID nuevo
+    # y un timestamp de reloj de pared por corrida exitosa, solo que ahora
+    # se generan un poco más tarde en el flujo (tras la carga de datos, no
+    # antes) — no afecta ningún resultado numérico ni de reproducibilidad
+    # (run_id/timestamp no dependen de la semilla).
 
     print(f"\n{'#'*60}")
     print(f"  Región {region_code:02d} — {region_name}")
@@ -705,12 +706,43 @@ def analizar_region(
         distritos, pop_source, census_path, padron_path
     )
 
-    # Respetar pop_col del escenario si ya está definido y existe en el GDF;
-    # de lo contrario usar el resuelto por pop_source.
-    if scenario.pop_col != "viviendas" and scenario.pop_col in distritos.columns:
-        pass  # el escenario ya tenía pop_col correcto
-    elif _resolved_pop_col != "viviendas":
-        scenario = dataclasses.replace(scenario, pop_col=_resolved_pop_col)
+    # Resolver pop_col: priorizar la columna que enrich_population()
+    # efectivamente creó (_resolved_pop_col) sobre el default del escenario.
+    #
+    # Historial de bugs en este bloque:
+    # 1. (corregido antes, detectado por tests/test_integration_r11.py):
+    #    si el escenario ya traía pop_col="personas" (ej. SCENARIO_LEGAL)
+    #    pero --census-path no se pasaba, enrich_population() caía en
+    #    silencio a "viviendas" y scenario.pop_col quedaba apuntando a una
+    #    columna inexistente -> total_viv=0 -> "sin_poblacion" en vez de
+    #    correr con el fallback real.
+    # 2. (corregido ahora, detectado corriendo --regiones nacional_comunal
+    #    con --pop-source censo2024 sobre comunas_hard_region_soft): la
+    #    versión anterior de este fix priorizaba scenario.pop_col primero
+    #    ("if scenario.pop_col in distritos.columns: pass") — pero
+    #    "viviendas" (el default de ScenarioConfig) SIEMPRE está en
+    #    distritos.columns, porque se agrega desde manzanas más arriba sin
+    #    importar pop_source. Para cualquier escenario que no sobreescriba
+    #    pop_col explícitamente (ej. los 3 presets multinivel de la Etapa 4:
+    #    comunas_hard_region_soft/hard, region_soft_only), ese chequeo
+    #    siempre era verdadero de entrada, así que el "elif" que miraba
+    #    _resolved_pop_col nunca se alcanzaba — --pop-source censo2024
+    #    enriquecía "personas" correctamente, pero scenario.pop_col se
+    #    quedaba en "viviendas" igual. Invertida la prioridad: se confía
+    #    primero en lo que enrich_population() realmente resolvió.
+    if _resolved_pop_col in distritos.columns:
+        # enrich_population() creó esta columna — usarla aunque el
+        # escenario diga otra cosa.
+        if scenario.pop_col != _resolved_pop_col:
+            scenario = dataclasses.replace(scenario, pop_col=_resolved_pop_col)
+    elif "viviendas" in distritos.columns:
+        scenario = dataclasses.replace(scenario, pop_col="viviendas")
+    # else: ninguna columna de población disponible — no debería ocurrir,
+    # ya que "viviendas" se agrega incondicionalmente más arriba; si
+    # _resolved_pop_col difiere de "viviendas" sin estar realmente
+    # presente, sería un incumplimiento del propio contrato de
+    # enrich_population() (que solo devuelve un pop_col distinto de
+    # "viviendas" cuando efectivamente agregó esa columna).
 
     pop_col       = scenario.pop_col
     # Etiqueta de salida para la magnitud de población (CLI/tablas). Derivada
@@ -756,6 +788,114 @@ def analizar_region(
         return {"region": region_code, "status": "sin_poblacion",
                 "scenario": scenario.name}
 
+    return _run_recom_sobre_gdf(
+        gdf_dec=gdf_dec,
+        id_col=id_col,
+        pop_col=pop_col,
+        pop_label=pop_label,
+        scenario=scenario,
+        n_distritos=n_distritos,
+        pop_tol=pop_tol,
+        n_steps=n_steps,
+        seed=seed,
+        skip_viz=skip_viz,
+        out_dir=out_dir,
+        region_code=region_code,
+        region_name=region_name,
+        pop_source=pop_source,
+        magnitudes_region=magnitudes_region,
+        distritos_full=distritos,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Motor ReCom compartido (extraído de analizar_region() para reutilizarse
+# también desde analizar_nacional_comunal() — ver PARTE 3 del pedido de
+# implementación de --regiones nacional_comunal)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _run_recom_sobre_gdf(
+    gdf_dec,
+    id_col: str,
+    pop_col: str,
+    pop_label: str,
+    scenario: ScenarioConfig,
+    n_distritos: int,
+    pop_tol: float,
+    n_steps: int,
+    seed: int,
+    skip_viz: bool,
+    out_dir: str,
+    region_code,
+    region_name: str,
+    pop_source: str,
+    magnitudes_region: dict | None = None,
+    distritos_full=None,
+) -> dict:
+    """
+    Motor ReCom compartido: desde el preflight de factibilidad hasta
+    guardar CSVs/figuras/run_manifest.json — extraído tal cual de
+    analizar_region() (sin cambiar ninguna línea de lógica interna) para
+    que analizar_nacional_comunal() lo reutilice sin duplicar el motor de
+    muestreo. analizar_region() pasa a ser un wrapper que solo carga
+    datos, resuelve la fuente de población y contrae a la unidad de
+    decisión — la única parte que efectivamente difiere entre los dos
+    modos — y delega aquí el resto.
+
+    run_id/timestamp_start/run_dir/run_dir_figuras se generan aquí adentro
+    (antes vivían en analizar_region(), antes incluso de cargar datos) a
+    partir de out_dir, ya resuelto por el caller — mismo run_id (UUID) y
+    timestamp de reloj de pared que antes, solo que ahora se generan tras
+    la carga de datos exitosa en vez de antes; no afecta ningún resultado
+    numérico ni la reproducibilidad (ninguno de los dos depende de la
+    semilla).
+
+    Parameters
+    ----------
+    gdf_dec : gpd.GeoDataFrame
+        Ya contraído a la unidad de decisión (id_col), con pop_col.
+    distritos_full : gpd.GeoDataFrame, opcional
+        GDF pre-contracción (nivel ID_DIST) — solo se usa para el caso
+        preserve_mode="hard" en "CUT" con decision_unit != "CUT" (ej.
+        apc_strict), que construye ahí un grafo comunal auxiliar para la
+        partición inicial/warm-up. None es seguro cuando id_col == "CUT"
+        (ej. analizar_nacional_comunal(): esa rama nunca se alcanza
+        porque su propio decision_unit siempre es "CUT").
+    region_code, region_name
+        Van tal cual en los dicts de retorno y en run_manifest.json —
+        analizar_region() pasa el int/nombre real de la región;
+        analizar_nacional_comunal() pasa el string "nacional_comunal" /
+        "Nacional Comunal" (mismo patrón que ya usan sus propios
+        early-return de "sin_poblacion").
+
+    Returns
+    -------
+    dict — mismo contrato de resultado que analizar_region() siempre tuvo
+    (status: "infeasible_population" | "sin_gerrychain" | "sin_particion" |
+    "sin_convergencia_warmup" | "sin_planes" | "sin_planes_validos" |
+    "ok").
+    """
+    # Identificador único de esta corrida (antes en analizar_region(),
+    # antes incluso de cargar datos — ver docstring de arriba).
+    run_id          = new_run_id()
+    timestamp_start = datetime.datetime.now().isoformat(timespec="seconds")
+
+    # Directorio de la corrida específica (timestamped + run_id prefix)
+    ts_str  = timestamp_start.replace(":", "").replace("-", "").replace("T", "_")
+    run_dir = os.path.join(out_dir, f"run_{ts_str}_{run_id[:8]}")
+    os.makedirs(run_dir, exist_ok=True)
+    run_dir_figuras = os.path.join(run_dir, "figuras")
+    os.makedirs(run_dir_figuras, exist_ok=True)
+
+    # n_units/total_viv/n_comunas: recomputados aquí a partir de gdf_dec/
+    # pop_col (ya parámetros) — antes vivían en analizar_region(), antes
+    # del preflight de total_viv==0 que garantiza total_viv>0 al llegar
+    # aquí. Misma fórmula exacta, mismos insumos -> mismo resultado, no
+    # una redefinición nueva.
+    n_units    = len(gdf_dec)
+    total_viv  = gdf_dec[pop_col].sum() if pop_col in gdf_dec.columns else 0
+    n_comunas  = gdf_dec["CUT"].nunique() if "CUT" in gdf_dec.columns else 0
+
     # ── Preflight: factibilidad poblacional (con n_distritos ORIGINAL) ───────
     # Determinista, sin gerrychain: si una unidad de decisión indivisible por
     # sí sola excede pop_tol respecto del ideal, ningún recursive_tree_part
@@ -786,6 +926,42 @@ def analizar_region(
             "minimum_required_tolerance": feasibility.minimum_required_tolerance,
             "requested_tolerance": feasibility.requested_tolerance,
         }
+
+    # ── Preflight compuesto: columnas hard más gruesas que decision_unit ─────
+    # El preflight de arriba solo cubre decision_unit (la unidad que ReCom
+    # puede mover). Si además hay una columna más gruesa (ej. COD_REGION)
+    # con preserve_mode="hard" (preservación multinivel), esa columna
+    # también es indivisible para el análisis: una región entera funciona
+    # como "la comuna más grande" del chequeo de factibilidad — si su
+    # población excede ideal×(1+pop_tol), ningún plan puede respetar tanto
+    # la tolerancia como la frontera regional, sin importar decision_unit.
+    # check_population_feasibility() devuelve un PopulationFeasibilityResult
+    # (dataclass, no dict) — acceso por atributo, no por __getitem__/.get().
+    resolved = scenario.resolved_preserve_mode()
+    for col, mode in resolved.items():
+        if mode == "hard" and col != scenario.decision_unit:
+            if col not in gdf_dec.columns:
+                print(f"  ⚠ Columna '{col}' no encontrada en GDF "
+                      f"— preflight de factibilidad omitido para {col}")
+                continue
+            pop_by_unit = gdf_dec.groupby(col)[pop_col].sum()
+            feasibility_col = cd.check_population_feasibility(
+                pop_by_unit.to_dict(), n_distritos, pop_tol,
+            )
+            if not feasibility_col.feasible:
+                blocking = feasibility_col.largest_indivisible_unit_id
+                min_tol  = feasibility_col.minimum_required_tolerance
+                print(f"  ⚠ Escenario inviable: {col}='{blocking}' "
+                      f"supera el ideal×(1+pop_tol). "
+                      f"Tolerancia mínima requerida: ±{min_tol*100:.1f}%")
+                return {
+                    "region": region_code,
+                    "scenario": scenario.name,
+                    "status": "infeasible_population",
+                    "reason": f"preserve_hard_{col}_exceeds_bound",
+                    "blocking_unit": str(blocking),
+                    "col": col,
+                }
 
     # Ajustar n_distritos solo para regiones con muy pocas unidades de
     # decisión en términos ABSOLUTOS (topología de grafo: ReCom no puede
@@ -836,6 +1012,17 @@ def analizar_region(
     random.seed(seed)
 
     gdf_gc = gdf_dec.reset_index(drop=True).to_crs("EPSG:32719")
+    # cd.load_layer(fix_geometry=True) ya sanea geometrías inválidas al
+    # cargar (buffer(0) antes de reproyectar), pero eso no protege contra
+    # invalidez introducida por LA REPROYECCIÓN misma. Detectado corriendo
+    # --regiones nacional_comunal (345 comunas a la vez, EPSG:32719/UTM
+    # 19S): exactamente 1 comuna nacional queda inválida recién después de
+    # reproyectar (nunca antes) — un artefacto de la reproyección sobre esa
+    # geometría en particular, no un problema de los datos de origen ni de
+    # contract_to_decision_units(). buffer(0) sobre una geometría ya válida
+    # es un no-op (no cambia área/forma) — confirmado con las mismas
+    # geometrías regionales que ya se usaban antes de este fix.
+    gdf_gc["geometry"] = gdf_gc.geometry.buffer(0)
 
     # Columnas a añadir al grafo
     cols_gc = [id_col, pop_col]
@@ -870,13 +1057,16 @@ def analizar_region(
     # n_distritos_eff grupos de CUT; (2) expandir, cada ID_DIST hereda el
     # grupo de su CUT. Por construcción, ningún ID_DIST de un mismo CUT
     # puede terminar en grupos distintos.
-    if (scenario.preserve_mode == "hard"
-            and "CUT" in scenario.preserve_units
+    #
+    # scenario.resolved_preserve_mode().get("CUT") en vez de
+    # scenario.preserve_mode == "hard": con preserve_mode dict (multinivel)
+    # la comparación directa contra el string global nunca es cierta.
+    if (scenario.resolved_preserve_mode().get("CUT") == "hard"
             and id_col != "CUT"):
 
         # Paso 1: grafo comunal contraído
         gdf_cut = cd.contract_to_decision_units(
-            distritos, decision_unit="CUT",
+            distritos_full, decision_unit="CUT",
             agg_spec={pop_col: "sum"},
         )
         graph_cut = gc.Graph.from_geodataframe(
@@ -946,9 +1136,19 @@ def analizar_region(
     # Presupuesto escalado por n_units: menos unidades (ej. legal, CUT) implica
     # recombinaciones más "grandes"/costosas de balancear por paso, así que
     # necesitan más pasos de warm-up que apc_free/apc_soft (ID_DIST, más
-    # unidades y más finas).
-    _warmup_base = 2000 if n_units <= 100 else (
-                   1000 if n_units <= 200 else 500)
+    # unidades y más finas). Extendido para nacional_comunal (~345 CUT) y
+    # nacional APC (~2.768 ID_DIST): el tramo ">200 -> 500" original dejaba
+    # muy poco presupuesto de warm-up justo para las escalas más grandes,
+    # donde más se necesita (detectado corriendo --regiones nacional_comunal
+    # con n_steps=500: N_WARMUP=125, warm-up no convergió).
+    if n_units <= 100:
+        _warmup_base = 2000
+    elif n_units <= 200:
+        _warmup_base = 1000
+    elif n_units <= 400:
+        _warmup_base = 3000  # nacional comunal ~345
+    else:
+        _warmup_base = 5000  # nacional APC ~2768
     N_WARMUP       = min(_warmup_base, n_steps // 4)
 
     recom_kwargs_warmup = dict(
@@ -965,8 +1165,9 @@ def analizar_region(
 
     recom_warmup = partial(recom, **recom_kwargs_warmup)
 
-    if (scenario.preserve_mode == "hard"
-            and "CUT" in scenario.preserve_units
+    # scenario.resolved_preserve_mode().get("CUT") en vez de
+    # scenario.preserve_mode == "hard" — ver misma nota más arriba (paso 1).
+    if (scenario.resolved_preserve_mode().get("CUT") == "hard"
             and id_col != "CUT"):
         # apc_strict: warm-up sobre el grafo comunal contraído (graph_cut,
         # ya construido arriba para la partición inicial), no sobre el
@@ -1195,12 +1396,23 @@ def analizar_region(
     # del plan de referencia. Modo none/hard: aceptación incondicional, igual
     # que antes — misma población, tolerancia, n_distritos, datos y kwargs de
     # recom_proposal en ambos casos; solo cambia este criterio de aceptación.
-    if (scenario.preserve_mode == "soft"
-            and scenario.split_penalty > 0
+    #
+    # Preservación multinivel: en vez de leer scenario.preserve_mode/
+    # split_penalty como valor global (roto para preserve_mode dict — nunca
+    # es == "soft"), se detecta si ALGUNA columna tiene modo "soft" con
+    # penalización > 0 en el dict normalizado, y se le pasa ese dict
+    # completo a make_split_penalty_accept() para que pondere cada columna
+    # con su propio peso (ver engines.samplers.accept). Para un escenario
+    # de un solo nivel con preserve_mode/split_penalty uniformes (el caso
+    # histórico) esto reproduce exactamente el criterio anterior.
+    resolved         = scenario.resolved_preserve_mode()
+    resolved_penalty = scenario.resolved_split_penalty()
+    if (any(m == "soft" for m in resolved.values())
+            and any(p > 0 for p in resolved_penalty.values())
             and "split_severity" in warmed_state.updaters):
-        accept_main = cd.make_split_penalty_accept(scenario.split_penalty)
+        accept_main = cd.make_split_penalty_accept(resolved_penalty)
         print(f"  ✓ Aceptación penalizada por split_severity "
-              f"(split_penalty={scenario.split_penalty})")
+              f"(split_penalty={resolved_penalty})")
     else:
         accept_main = always_accept
 
@@ -1375,14 +1587,20 @@ def analizar_region(
     pp_norm  = (pp_col - pp_col.min()) / pp_range
     base_score = -dev_norm + pp_norm.fillna(0) - cut_norm
 
-    if (scenario.preserve_mode == "soft"
-            and scenario.split_penalty > 0
+    # df_ensemble["split_severity"] es siempre a nivel CUT (ver bloque
+    # "Métricas de comunas partidas" más arriba, unit_col="CUT" fijo) —
+    # el check correspondiente es sobre la columna "CUT" del dict
+    # normalizado, no sobre scenario.preserve_mode/split_penalty global
+    # (roto para preserve_mode dict).
+    cut_penalty = scenario.resolved_split_penalty().get("CUT", 0.0)
+    if (scenario.resolved_preserve_mode().get("CUT") == "soft"
+            and cut_penalty > 0
             and "split_severity" in df_ensemble.columns):
         sev = df_ensemble["split_severity"].fillna(
             df_ensemble["split_severity"].median()
         ).fillna(0)
         sev_norm = sev / (sev.max() + 1e-10)
-        df_ensemble["score"] = base_score - scenario.split_penalty * sev_norm
+        df_ensemble["score"] = base_score - cut_penalty * sev_norm
     else:
         df_ensemble["score"] = base_score
 
@@ -1699,6 +1917,181 @@ def analizar_region(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Modo nacional comunal (--regiones nacional_comunal): análogo al de
+# scripts/autocorrelacion.py, pero corriendo un ensemble ReCom (vía
+# _run_recom_sobre_gdf(), el mismo motor que analizar_region()) en vez de
+# estadísticas de autocorrelación espacial.
+# ──────────────────────────────────────────────────────────────────────────────
+
+def analizar_nacional_comunal(
+    base_dir: str,
+    output_base: str,
+    scenario: ScenarioConfig,
+    n_distritos: int,
+    pop_tol: float,
+    n_steps: int,
+    seed: int,
+    skip_viz: bool,
+    pop_source: str = "viviendas",
+    census_path: str | None = None,
+    padron_path: str | None = None,
+    assignment_path: str | None = None,
+) -> dict:
+    """
+    Modo nacional comunal: carga las 16 regiones, contrae a ~345 comunas,
+    corre ReCom con el escenario. Output en
+    datos/nacional/redistritaje_comunal/<escenario>/.
+
+    Wrapper análogo a analizar_region() — carga datos y resuelve la
+    fuente de población (única parte que difiere entre ambos modos) y
+    delega el motor de muestreo a _run_recom_sobre_gdf(), sin duplicarlo.
+    decision_unit es siempre "CUT" aquí (las comunas SON la unidad de
+    decisión de este modo) — la rama de _run_recom_sobre_gdf() para
+    decision_unit != "CUT" con CUT hard (ej. apc_strict) nunca se alcanza,
+    por eso distritos_full=None es seguro (ver docstring de esa función).
+    """
+    region_code = "nacional_comunal"
+    region_name = "Nacional Comunal"
+
+    # Sincronizar parámetros desde args (igual que analizar_region()) para
+    # que scenario.yml (guardado por _run_recom_sobre_gdf()) refleje los
+    # valores reales de esta corrida, no los defaults del preset.
+    scenario = dataclasses.replace(
+        scenario,
+        n_districts=n_distritos,
+        pop_tolerance=pop_tol,
+        n_steps=n_steps,
+        seed=seed,
+    )
+
+    out_dir = os.path.join(
+        output_base, "nacional", "redistritaje_comunal", scenario.name
+    )
+    os.makedirs(out_dir, exist_ok=True)
+
+    print(f"\n{'#'*60}")
+    print(f"  REDISTRITAJE NACIONAL COMUNAL")
+    print(f"  Escenario: {scenario.name}")
+    print(f"  ~345 comunas · {n_distritos} grupos · {n_steps} pasos")
+    print(f"  Output: {out_dir}")
+    print(f"{'#'*60}")
+
+    # ── Cargar datos APC de las 16 regiones ──────────────────────────────────
+    print("\n  Cargando capas nacionales (16 regiones)...")
+    try:
+        distritos = cd.load_layer("distrital", base_dir=base_dir)
+        mz_urb    = cd.load_layer("manzana_urbana", base_dir=base_dir)
+        mz_ald    = cd.load_layer("manzana_aldea",  base_dir=base_dir)
+    except FileNotFoundError as e:
+        print(f"  ⚠ {e}")
+        return {"region": region_code, "status": "error", "error": str(e)}
+
+    try:
+        puntos_rural = cd.load_layer("puntos_rural", base_dir=base_dir)
+    except FileNotFoundError:
+        puntos_rural = None
+
+    # Agregar población desde manzanas (idéntico a analizar_region())
+    pop_urb = cd.aggregate_population(mz_urb, level="distrito", source="urbana")
+    pop_ald = cd.aggregate_population(mz_ald, level="distrito", source="aldea")
+    pop = (
+        pop_urb.merge(pop_ald, on=["CUT", "COD_DISTRITO"],
+                      how="outer", suffixes=("_urb", "_ald"))
+        .fillna(0)
+    )
+    pop["viviendas"] = pop.get("viviendas_urb", 0) + pop.get("viviendas_ald", 0)
+    distritos = distritos.merge(
+        pop[["CUT", "COD_DISTRITO", "viviendas"]],
+        on=["CUT", "COD_DISTRITO"], how="left"
+    ).fillna({"viviendas": 0})
+    distritos["viviendas"] = distritos["viviendas"].astype(int)
+    distritos = cd.apply_rural_proxy_fallback(distritos, puntos_rural)
+    distritos["viviendas"] = distritos["viviendas"].astype(int)
+
+    # ── Enriquecer con fuente de población alternativa ────────────────────────
+    if pop_source != "viviendas":
+        print(f"\n  Enriqueciendo población: fuente='{pop_source}'...")
+    distritos, _resolved_pop_col = enrich_population(
+        distritos, pop_source, census_path, padron_path
+    )
+
+    # Mismo fix que analizar_region() (ver comentario ahí, incluido el
+    # historial de los 2 bugs): priorizar la columna que
+    # enrich_population() efectivamente creó (_resolved_pop_col) sobre el
+    # default del escenario — "viviendas" siempre está en
+    # distritos.columns, así que priorizarla primero (como hacía la
+    # versión anterior de este fix) ignoraba silenciosamente un
+    # --pop-source censo2024 exitoso para cualquier escenario que no
+    # sobreescriba pop_col explícitamente (ej. los 3 presets multinivel).
+    if _resolved_pop_col in distritos.columns:
+        if scenario.pop_col != _resolved_pop_col:
+            scenario = dataclasses.replace(scenario, pop_col=_resolved_pop_col)
+    elif "viviendas" in distritos.columns:
+        scenario = dataclasses.replace(scenario, pop_col="viviendas")
+    # else: ninguna columna de población disponible — ver nota en
+    # analizar_region().
+
+    pop_col   = scenario.pop_col
+    pop_label = POP_LABELS.get(pop_col, pop_col)
+
+    # ── Balance ponderado por magnitud (opcional — default None = uniforme) ──
+    magnitudes_region = None
+    if scenario.magnitudes is not None:
+        resolved_assignment_path = assignment_path or os.path.join(
+            base_dir, "datos", "asignacion_vigente.json"
+        )
+        distritos, pop_col, magnitudes_region = ponderar_poblacion_por_magnitud(
+            distritos, pop_col, scenario.magnitudes, resolved_assignment_path,
+        )
+
+    # ── Contraer a nivel comunal (decision_unit siempre "CUT" en este modo) ──
+    print("  Contrayendo distritos → comunas...")
+    agg_spec = {pop_col: "sum"}
+    if pop_col != "viviendas":
+        agg_spec["viviendas"] = "sum"
+    if magnitudes_region is not None and pop_label not in agg_spec:
+        agg_spec[pop_label] = "sum"
+    for col in ["COD_REGION", "COD_PROVINCIA", "N_REGION", "N_PROVINCIA", "N_COMUNA"]:
+        if col in distritos.columns:
+            agg_spec[col] = "first"
+    comunas = cd.contract_to_decision_units(
+        distritos, decision_unit="CUT", agg_spec=agg_spec,
+    )
+    id_col = "CUT"
+
+    n_comunas = len(comunas)
+    total_pop = comunas[pop_col].sum() if pop_col in comunas.columns else 0
+    print(f"  Comunas: {n_comunas} · Población: {total_pop:,}")
+
+    if total_pop == 0:
+        print("  ⚠ Sin datos de población — saltando redistritaje")
+        return {"region": region_code, "status": "sin_poblacion",
+                "scenario": scenario.name}
+
+    # Delegar en el motor ReCom compartido — decision_unit="CUT" siempre
+    # aquí, así que distritos_full=None es seguro (ver docstring de
+    # _run_recom_sobre_gdf: esa rama solo se usa cuando id_col != "CUT").
+    return _run_recom_sobre_gdf(
+        gdf_dec=comunas,
+        id_col=id_col,
+        pop_col=pop_col,
+        pop_label=pop_label,
+        scenario=scenario,
+        n_distritos=n_distritos,
+        pop_tol=pop_tol,
+        n_steps=n_steps,
+        seed=seed,
+        skip_viz=skip_viz,
+        out_dir=out_dir,
+        region_code=region_code,
+        region_name=region_name,
+        pop_source=pop_source,
+        magnitudes_region=magnitudes_region,
+        distritos_full=None,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1708,6 +2101,21 @@ def main():
     output_base = args.output_dir or os.path.join(base_dir, "datos")
     regiones    = parse_regiones(args.regiones)
     scenario    = build_scenario(args)
+
+    # validate() antes solo corría para --scenario-file (vía load_scenario());
+    # un escenario tomado del registro SCENARIOS (--scenario <key>) nunca
+    # pasaba por aquí, así que sus warnings (ej. el de fineness
+    # decision_unit-más-fino-que-columna-hard, o pop_col='viviendas') no se
+    # veían nunca vía CLI, para ningún escenario. Se llama una sola vez, para
+    # ambas fuentes por igual.
+    #
+    # El módulo tiene warnings.filterwarnings("ignore") global (arriba, para
+    # silenciar ruido de librerías como geopandas/shapely) — reactivar solo
+    # UserWarning, solo durante esta llamada, para que los warnings propios
+    # de validate() sí se muestren sin tocar ese filtro global.
+    with warnings.catch_warnings():
+        warnings.simplefilter("always", UserWarning)
+        scenario.validate()
 
     # pop_tol/n_steps/seed/pop_source: el CLI explícito tiene precedencia; si no
     # se pasa (None), se toma del escenario. build_scenario() ya aplicó
@@ -1744,32 +2152,71 @@ def main():
              else "  (balance ponderado por magnitud legal)"))
 
     resultados = []
-    for r in regiones:
+    if regiones == "nacional_comunal":
+        print(f"\nModo: NACIONAL COMUNAL")
         try:
-            res = analizar_region(
-                region_code=r,
+            res = analizar_nacional_comunal(
                 base_dir=base_dir,
                 output_base=output_base,
+                scenario=scenario,
                 n_distritos=scenario.n_districts,
                 pop_tol=pop_tol,
                 n_steps=n_steps,
                 seed=seed,
                 skip_viz=args.skip_viz,
-                scenario=scenario,
                 pop_source=pop_source,
                 census_path=getattr(args, "census_path", None),
                 padron_path=getattr(args, "padron_path", None),
                 assignment_path=getattr(args, "assignment_path", None),
             )
-            resultados.append(res)
         except Exception as e:
             import traceback
-            print(f"\n  ⚠ Error en región {r}: {e}")
+            print(f"\n  ⚠ Error en modo nacional_comunal: {e}")
             traceback.print_exc()
-            resultados.append({
-                "region": r, "scenario": scenario.name,
+            res = {
+                "region": "nacional_comunal", "scenario": scenario.name,
                 "status": "error", "error": str(e),
-            })
+            }
+        resultados.append(res)
+    elif regiones == "nacional":
+        # parse_regiones() reconoce "nacional" (ver PARTE 1), pero este modo
+        # (a diferencia de nacional_comunal) no tiene implementación en
+        # main() todavía — sin este guard, el "for r in regiones:" de abajo
+        # iteraría carácter por carácter sobre el string "nacional"
+        # (tratando 'n','a','c',... como region_code), un bug silencioso.
+        raise NotImplementedError(
+            "--regiones nacional (sin '_comunal') está reconocido por "
+            "parse_regiones() pero no tiene camino implementado en main() "
+            "todavía. Usa --regiones nacional_comunal (comunas, ~345 "
+            "nodos) o especifica regiones individuales."
+        )
+    else:
+        for r in regiones:
+            try:
+                res = analizar_region(
+                    region_code=r,
+                    base_dir=base_dir,
+                    output_base=output_base,
+                    n_distritos=scenario.n_districts,
+                    pop_tol=pop_tol,
+                    n_steps=n_steps,
+                    seed=seed,
+                    skip_viz=args.skip_viz,
+                    scenario=scenario,
+                    pop_source=pop_source,
+                    census_path=getattr(args, "census_path", None),
+                    padron_path=getattr(args, "padron_path", None),
+                    assignment_path=getattr(args, "assignment_path", None),
+                )
+                resultados.append(res)
+            except Exception as e:
+                import traceback
+                print(f"\n  ⚠ Error en región {r}: {e}")
+                traceback.print_exc()
+                resultados.append({
+                    "region": r, "scenario": scenario.name,
+                    "status": "error", "error": str(e),
+                })
 
     # Resumen final
     print(f"\n{'='*60}")

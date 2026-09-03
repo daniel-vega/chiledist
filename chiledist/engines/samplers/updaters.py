@@ -20,11 +20,19 @@ from typing import Callable, Optional
 def make_split_severity_updater(unit_cols: list[str], pop_col: str) -> Callable:
     """
     Construye un updater de gerrychain que calcula, en cada estado de la
-    cadena, el mismo índice que engines.metrics.split_severity_index
-    (sumado sobre todas las columnas de scenario.preserve_units, igual
-    que engines.samplers.accept.score_with_split_penalty):
+    cadena, el mismo índice que engines.metrics.split_severity_index, una
+    vez por columna de preservación:
 
-        severity = Σ_cols Σ_unidades [ (n_fragmentos - 1) × share_pob_unidad ]
+        severity_col = Σ_unidades [ (n_fragmentos - 1) × share_pob_unidad ]
+
+    Devuelve un dict {columna: severity_col} en vez de un escalar sumado
+    entre columnas — necesario para que engines.samplers.accept
+    (make_split_penalty_accept / score_with_split_penalty) pueda aplicar un
+    peso (split_penalty) distinto por columna vía
+    ScenarioConfig.resolved_split_penalty(), en vez de un único peso global
+    aplicado a la severidad total. Para preservación de un solo nivel
+    (unit_cols de un elemento — el caso histórico, ej. ["CUT"]), sumar el
+    dict resultante reproduce exactamente el escalar que se devolvía antes.
 
     Se apoya directamente en los atributos de nodo del grafo (unit_cols,
     pop_col), sin reconstruir el GeoDataFrame, para poder evaluarse en
@@ -39,7 +47,7 @@ def make_split_severity_updater(unit_cols: list[str], pop_col: str) -> Callable:
 
     Returns
     -------
-    Callable(partition) → float
+    Callable(partition) → dict[str, float]
     """
     def _severity_for_col(graph, assignment, unit_col: str) -> float:
         pop_by_unit: dict = {}
@@ -65,12 +73,12 @@ def make_split_severity_updater(unit_cols: list[str], pop_col: str) -> Callable:
             severity += (n_frags - 1) * (pop_by_unit[unit] / total_pop)
         return severity
 
-    def _split_severity(partition) -> float:
+    def _split_severity(partition) -> dict[str, float]:
         graph      = partition.graph
         assignment = partition.assignment
-        return sum(
-            _severity_for_col(graph, assignment, col) for col in unit_cols
-        )
+        return {
+            col: _severity_for_col(graph, assignment, col) for col in unit_cols
+        }
 
     return _split_severity
 
@@ -111,25 +119,32 @@ def build_updaters_for_scenario(
         "cut_edges":  gc.updaters.cut_edges,
     }
 
-    # Intentar agregar CountSplits para columnas de preservación
+    resolved         = scenario.resolved_preserve_mode()
+    resolved_penalty = scenario.resolved_split_penalty()
+
+    # Intentar agregar CountSplits para columnas hard-preservadas
     # (disponible en algunas versiones de gerrychain)
-    if scenario.preserve_mode == "hard" and scenario.preserve_units:
+    hard_cols = [c for c in scenario.preserve_units
+                 if resolved.get(c) == "hard" and c in gdf.columns]
+    if hard_cols:
         try:
-            for col in scenario.preserve_units:
-                if col in gdf.columns:
-                    updaters[f"splits_{col}"] = gc.updaters.CountSplits(col)
+            for col in hard_cols:
+                updaters[f"splits_{col}"] = gc.updaters.CountSplits(col)
         except AttributeError:
             # CountSplits no disponible en esta versión — usar constraint custom
             pass
 
-    # Modo soft: registrar severidad de partición para que
+    # Columnas soft con penalización > 0: registrar severidad de partición
+    # (por columna, ver make_split_severity_updater) para que
     # engines.samplers.accept.make_split_penalty_accept pueda penalizarla
     # en la aceptación de la cadena principal (ver run_recom_chain).
-    if (scenario.preserve_mode == "soft"
-            and scenario.split_penalty > 0
-            and scenario.preserve_units):
-        cols_presentes = [c for c in scenario.preserve_units if c in gdf.columns]
-        if cols_presentes:
-            updaters["split_severity"] = make_split_severity_updater(cols_presentes, pc)
+    soft_cols = [
+        c for c in scenario.preserve_units
+        if resolved.get(c) == "soft"
+        and resolved_penalty.get(c, 0) > 0
+        and c in gdf.columns
+    ]
+    if soft_cols:
+        updaters["split_severity"] = make_split_severity_updater(soft_cols, pc)
 
     return updaters

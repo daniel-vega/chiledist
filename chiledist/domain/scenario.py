@@ -16,6 +16,26 @@ from typing import Optional
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Jerarquía de unidades geográficas (más fino → más grueso)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Usada únicamente para advertir cuando decision_unit es más fino que una
+# columna con preserve_mode="hard" (ver ScenarioConfig.validate()) — el caso
+# que ya causó warm-up infinito con apc_strict (decision_unit="ID_DIST",
+# preserve_units=["CUT"], hard; ver SCIENTIFIC_HYPOTHESES.md § "Estado de
+# apc_strict"). Un nivel ausente de este dict simplemente no se compara (no
+# se asume ninguna relación de fineza para columnas no reconocidas, ej.
+# columnas ad-hoc de un YAML personalizado).
+_UNIT_HIERARCHY: dict[str, int] = {
+    "MANZENT":       0,  # manzana — unidad más fina
+    "ID_DIST":       1,  # distrito censal APC
+    "CUT":           2,  # comuna
+    "COD_PROVINCIA": 3,  # provincia
+    "COD_REGION":    4,  # región — unidad más gruesa
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Dataclass principal
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -46,16 +66,31 @@ class ScenarioConfig:
     # "contrafactual_fuerte"  → reforma sin restricción comunal
     # "contrafactual_intermedio" → reforma con penalización
     # "control_metodologico"  → apc_strict; para descomponer mecanismo
+    # "contrafactual_regional" → reforma con preservación a nivel regional
+    #                            (COD_REGION), además o en vez de comunal
     tipo_reforma: str = "vigente"
 
     # Unidades geográficas
     observation_unit: str = "ID_DIST"   # unidad de los datos de entrada
     decision_unit: str = "CUT"          # unidad mínima que ReCom puede mover
 
-    # Preservación de límites administrativos
+    # Preservación de límites administrativos.
+    #
+    # preserve_mode / split_penalty aceptan dos formas:
+    #   - str/float único → se aplica uniformemente a todas las columnas
+    #     de preserve_units (comportamiento histórico, sigue funcionando
+    #     tal cual para escenarios existentes).
+    #   - dict {columna: modo/peso} → modo/peso distinto por columna, para
+    #     preservación jerárquica multinivel (ej. {"CUT": "hard",
+    #     "COD_REGION": "soft"}). Debe declarar TODAS las columnas de
+    #     preserve_units explícitamente — ver validate().
+    #
+    # No leer preserve_mode/split_penalty directamente en código nuevo:
+    # usar resolved_preserve_mode()/resolved_split_penalty(), que
+    # normalizan ambas formas a dict — único punto de normalización.
     preserve_units: list[str] = field(default_factory=list)
-    preserve_mode: str = "hard"         # "hard" | "soft" | "none"
-    split_penalty: float = 0.0          # peso de la penalización en modo soft
+    preserve_mode: str | dict[str, str] = "hard"         # "hard" | "soft" | "none", o dict por columna
+    split_penalty: float | dict[str, float] = 0.0        # peso de la penalización en modo soft, o dict por columna
     min_fragment_pop_share: float = 0.0 # umbral mínimo de fragmento comunal
 
     # Parámetros demográficos
@@ -84,6 +119,49 @@ class ScenarioConfig:
     # CRS métrico (None = auto-detectar desde los datos)
     crs_metric: Optional[str] = None
 
+    def resolved_preserve_mode(self) -> dict[str, str]:
+        """
+        Normaliza preserve_mode a dict {columna: modo}.
+
+        Único punto de normalización: si preserve_mode ya es un dict, se
+        devuelve tal cual (una copia); si es un único str, se expande a
+        {col: preserve_mode for col in preserve_units} — el comportamiento
+        uniforme histórico. Todo código que necesite saber el modo de una
+        columna específica (rules.constraints, engines.samplers.{accept,
+        updaters}, scripts/redistritaje.py) debe llamar este método en vez
+        de leer self.preserve_mode directamente, para soportar modo
+        distinto por nivel sin duplicar la lógica de normalización en cada
+        punto de consumo.
+
+        Returns
+        -------
+        dict[str, str]
+        """
+        if isinstance(self.preserve_mode, dict):
+            return dict(self.preserve_mode)
+        return {col: self.preserve_mode for col in self.preserve_units}
+
+    def resolved_split_penalty(self) -> dict[str, float]:
+        """
+        Normaliza split_penalty a dict {columna: peso}, misma lógica que
+        resolved_preserve_mode(): un dict explícito se devuelve tal cual;
+        un único float se aplica a todas las columnas de preserve_units
+        cuyo modo resuelto (ver resolved_preserve_mode()) sea "soft" — las
+        columnas "hard"/"none" no tienen penalización, no tendría efecto.
+
+        Returns
+        -------
+        dict[str, float]
+        """
+        if isinstance(self.split_penalty, dict):
+            return dict(self.split_penalty)
+        modes = self.resolved_preserve_mode()
+        return {
+            col: self.split_penalty
+            for col in self.preserve_units
+            if modes.get(col) == "soft"
+        }
+
     def validate(self) -> None:
         """Verifica la coherencia interna de la configuración."""
         valid_units = {"CUT", "ID_DIST", "MANZENT"}
@@ -94,7 +172,8 @@ class ScenarioConfig:
             )
 
         valid_tipos = {"vigente", "contrafactual_fuerte",
-                       "contrafactual_intermedio", "control_metodologico"}
+                       "contrafactual_intermedio", "control_metodologico",
+                       "contrafactual_regional"}
         if self.tipo_reforma not in valid_tipos:
             raise ValueError(
                 f"tipo_reforma '{self.tipo_reforma}' no reconocido. "
@@ -102,19 +181,91 @@ class ScenarioConfig:
             )
 
         valid_modes = {"hard", "soft", "none"}
-        if self.preserve_mode not in valid_modes:
-            raise ValueError(
-                f"preserve_mode '{self.preserve_mode}' no reconocido. "
-                f"Opciones: {sorted(valid_modes)}"
-            )
 
-        if self.preserve_mode == "hard" and not self.preserve_units:
-            raise ValueError(
-                "preserve_mode='hard' requiere al menos un elemento en "
-                "preserve_units."
-            )
+        if isinstance(self.preserve_mode, dict):
+            mode_keys = set(self.preserve_mode.keys())
+            units_set = set(self.preserve_units)
 
-        if self.preserve_mode == "soft" and self.split_penalty == 0.0:
+            extra = mode_keys - units_set
+            if extra:
+                raise ValueError(
+                    f"preserve_mode (dict) declara modo para columnas que "
+                    f"no están en preserve_units: {sorted(extra)}."
+                )
+
+            missing = units_set - mode_keys
+            if missing:
+                raise ValueError(
+                    f"preserve_mode (dict) debe declarar modo explícito "
+                    f"para cada columna de preserve_units; faltan: "
+                    f"{sorted(missing)}. No se asume un default silencioso "
+                    f"— agrega la columna a preserve_mode o quítala de "
+                    f"preserve_units."
+                )
+
+            invalid = {m for m in self.preserve_mode.values() if m not in valid_modes}
+            if invalid:
+                raise ValueError(
+                    f"preserve_mode (dict) contiene modos no reconocidos: "
+                    f"{sorted(invalid)}. Opciones: {sorted(valid_modes)}"
+                )
+        else:
+            if self.preserve_mode not in valid_modes:
+                raise ValueError(
+                    f"preserve_mode '{self.preserve_mode}' no reconocido. "
+                    f"Opciones: {sorted(valid_modes)}"
+                )
+
+            if self.preserve_mode == "hard" and not self.preserve_units:
+                raise ValueError(
+                    "preserve_mode='hard' requiere al menos un elemento en "
+                    "preserve_units."
+                )
+
+        resolved_modes = self.resolved_preserve_mode()
+        hard_cols = [c for c, m in resolved_modes.items() if m == "hard"]
+        soft_cols = [c for c, m in resolved_modes.items() if m == "soft"]
+
+        # decision_unit más fino que una columna hard-preservada: mismo
+        # mecanismo de falla documentado para apc_strict (decision_unit=
+        # "ID_DIST" más fino que preserve_units=["CUT"] hard) — ReCom
+        # propone cortes de árbol de expansión sin sesgo hacia la frontera
+        # preservada, así que casi toda propuesta se rechaza y la cadena
+        # puede quedar atrapada indefinidamente en el warm-up. No aplica
+        # cuando decision_unit == columna (caso trivial, ej. legal_comunas:
+        # decision_unit="CUT", preserve_units=["CUT"] — no hay nada que
+        # partir por construcción).
+        dec_rank = _UNIT_HIERARCHY.get(self.decision_unit)
+        if dec_rank is not None:
+            for col in hard_cols:
+                col_rank = _UNIT_HIERARCHY.get(col)
+                if col_rank is not None and dec_rank < col_rank:
+                    warnings.warn(
+                        f"decision_unit='{self.decision_unit}' es más fino "
+                        f"que '{col}' (preserve_mode='hard' para '{col}'). "
+                        f"Este es el mismo patrón que causó warm-up "
+                        f"infinito con apc_strict (decision_unit='ID_DIST', "
+                        f"preserve_units=['CUT'], hard) — ver "
+                        f"SCIENTIFIC_HYPOTHESES.md § 'Estado de apc_strict "
+                        f"(control metodológico)'. ReCom no tiene sesgo "
+                        f"hacia la frontera preservada; probar con un "
+                        f"presupuesto de pasos acotado antes de comprometer "
+                        f"cómputo de producción.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
+        if isinstance(self.split_penalty, dict):
+            for col in soft_cols:
+                if self.split_penalty.get(col, 0.0) == 0.0:
+                    warnings.warn(
+                        f"preserve_mode='soft' para '{col}' con "
+                        f"split_penalty=0.0 (o no declarado) no tiene "
+                        f"efecto. Considera preserve_mode='none' para "
+                        f"'{col}' o un split_penalty > 0.",
+                        stacklevel=2,
+                    )
+        elif soft_cols and self.split_penalty == 0.0:
             warnings.warn(
                 "preserve_mode='soft' con split_penalty=0.0 no tiene efecto. "
                 "Considera usar preserve_mode='none' o establecer split_penalty > 0.",
@@ -173,8 +324,16 @@ class ScenarioConfig:
         ]
         if self.preserve_units:
             lines.append(f"  Preservar      : {', '.join(self.preserve_units)}")
-        if self.preserve_mode == "soft":
-            lines.append(f"  Split penalty  : {self.split_penalty}")
+        if isinstance(self.preserve_mode, str):
+            # Comportamiento histórico sin cambios para escenarios existentes.
+            if self.preserve_mode == "soft":
+                lines.append(f"  Split penalty  : {self.split_penalty}")
+        else:
+            soft_penalties = {
+                c: p for c, p in self.resolved_split_penalty().items()
+            }
+            if soft_penalties:
+                lines.append(f"  Split penalty  : {soft_penalties}")
         island_str = self.island_policy
         if self.island_policy == "threshold":
             island_str += f" ({self.island_threshold_km} km)"

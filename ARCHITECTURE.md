@@ -194,6 +194,22 @@ plana no cambió durante la refactorización, solo su implementación interna.
 `SCENARIOS`, `TOTAL_ESCANOS_CAMARA`, `MAGNITUDES_LEGALES_LEY20840`,
 `MAGNITUDES_CENSO2024_2026`
 
+> **Preservación jerárquica multinivel.** Los `ScenarioConfig` soportan
+> `preserve_mode` (y `split_penalty`) como `dict {columna: modo}` para
+> preservación diferenciada por nivel administrativo (`CUT`,
+> `COD_REGION`, `COD_PROVINCIA`), además de la forma histórica de un solo
+> `str`/`float` uniforme sobre todo `preserve_units`.
+> `ScenarioConfig.resolved_preserve_mode()`/`resolved_split_penalty()`
+> normalizan ambas formas a dict — todo el código de consumo (`rules.
+> constraints`, `engines.samplers.{accept,updaters}`,
+> `scripts/redistritaje.py`) lee ese dict resuelto, nunca el campo
+> original directamente. Ver `SCENARIO_COMUNAS_HARD_REGION_SOFT` y
+> variantes en `chiledist/rules/scenario_rules.py`.
+> ⚠ `preserve_mode="hard"` en una columna más gruesa que `decision_unit`
+> (ej. `COD_REGION` con `decision_unit="CUT"`) tiene riesgo de warm-up
+> infinito — `ScenarioConfig.validate()` emite un `UserWarning` explícito
+> en ese caso; ver § *apc_strict* en `SCIENTIFIC_HYPOTHESES.md`.
+
 **engines** — `polsby_popper`, `reock`, `population_balance`, `cut_edges`,
 `plan_split_metrics`, `count_split_units`, `dhondt`, `dhondt_binivel`,
 `assign_seat_magnitudes`, `run_recom`,

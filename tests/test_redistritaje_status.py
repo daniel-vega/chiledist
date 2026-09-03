@@ -163,7 +163,12 @@ class TestBuscarParticionInicial:
 class TestStatusReasonWiring:
 
     def test_infeasible_population_return_includes_reason(self, redistritaje):
-        source = importlib_getsource(redistritaje.analizar_region)
+        # Motor ReCom extraído a _run_recom_sobre_gdf() (analizar_region()
+        # pasa a ser un wrapper de carga de datos que delega ahí) — esta
+        # lógica de status/reason vive ahora en la función extraída, no en
+        # analizar_region() directamente. Ver scripts/redistritaje.py,
+        # sección "--regiones nacional_comunal".
+        source = importlib_getsource(redistritaje._run_recom_sobre_gdf)
         # The infeasible_population branch must set reason from the
         # feasibility result, not hardcode/omit it.
         assert re.search(
@@ -172,7 +177,7 @@ class TestStatusReasonWiring:
         )
 
     def test_sin_particion_return_includes_reason(self, redistritaje):
-        source = importlib_getsource(redistritaje.analizar_region)
+        source = importlib_getsource(redistritaje._run_recom_sobre_gdf)
         assert re.search(
             r'"status":\s*"sin_particion".*?"reason":\s*REASON_INITIALIZATION_SEARCH_EXHAUSTED',
             source, re.S,
@@ -183,10 +188,12 @@ class TestStatusReasonWiring:
         Structural guard: the population-feasibility preflight must appear
         (and therefore run, since it's an unconditional early return on
         failure) strictly before buscar_particion_inicial / recursive_tree_part
-        are invoked in analizar_region — i.e. infeasible_population always
-        terminates before recursive_tree_part is attempted.
+        are invoked in _run_recom_sobre_gdf (the motor ReCom extraído de
+        analizar_region(), que ahora es un wrapper que delega ahí) — i.e.
+        infeasible_population always terminates before recursive_tree_part
+        is attempted.
         """
-        source = importlib_getsource(redistritaje.analizar_region)
+        source = importlib_getsource(redistritaje._run_recom_sobre_gdf)
         preflight_pos = source.index("check_population_feasibility(")
         search_pos = source.index("buscar_particion_inicial(")
         assert preflight_pos < search_pos

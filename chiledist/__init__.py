@@ -55,6 +55,9 @@ from .rules.scenario_rules import (
     SCENARIO_APC_STRICT,
     SCENARIO_APC_SOFT,
     SCENARIO_APC_FREE,
+    SCENARIO_COMUNAS_HARD_REGION_SOFT,
+    SCENARIO_COMUNAS_HARD_REGION_HARD,
+    SCENARIO_REGION_SOFT_ONLY,
     SCENARIOS,
 )
 
@@ -154,6 +157,7 @@ from .engines.metrics import (
     small_fragment_count,
     pop_afectada_pct,
     plan_split_metrics,
+    multi_level_split_metrics,
 )
 
 # Fuentes de población externas (Censo 2024 + SERVEL) (capa 0 — domain)
@@ -352,6 +356,8 @@ __all__ = [
     "ScenarioConfig",
     "SCENARIO_LEGAL", "SCENARIO_APC_STRICT",
     "SCENARIO_APC_SOFT", "SCENARIO_APC_FREE", "SCENARIOS",
+    "SCENARIO_COMUNAS_HARD_REGION_SOFT", "SCENARIO_COMUNAS_HARD_REGION_HARD",
+    "SCENARIO_REGION_SOFT_ONLY",
     "load_scenario", "save_scenario", "reforma_context",
     # hierarchy
     "contract_to_decision_units", "build_decision_layer",
@@ -364,6 +370,7 @@ __all__ = [
     # split_metrics
     "count_split_units", "split_severity_index", "split_unit_summary",
     "small_fragment_count", "pop_afectada_pct", "plan_split_metrics",
+    "multi_level_split_metrics",
     # equivalence
     "get_equivalence_table", "get_unit", "get_analog",
     "describe_hierarchy", "print_equivalence", "get_optimal_crs",

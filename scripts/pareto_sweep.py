@@ -292,8 +292,14 @@ def ensemble_medians(df: pd.DataFrame, scenario: ScenarioConfig) -> dict:
     # sampling: all apc_soft_pX variants produce the same plan distribution.
     # Using the reference plan (argmax of score) lets different penalties select
     # genuinely different plans and trace a meaningful Pareto frontier.
+    #
+    # scenario.resolved_preserve_mode() en vez de scenario.preserve_mode ==
+    # "soft": con preserve_mode dict (preservación multinivel) la comparación
+    # directa contra el string global nunca es cierta (mismo patrón corregido
+    # en scripts/redistritaje.py) — se detecta si ALGUNA columna tiene modo
+    # "soft" en el dict normalizado.
     use_ref = (
-        scenario.preserve_mode == "soft"
+        any(mode == "soft" for mode in scenario.resolved_preserve_mode().values())
         and "score" in df.columns
         and df["score"].notna().any()
     )
